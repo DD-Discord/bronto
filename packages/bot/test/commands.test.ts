@@ -120,4 +120,21 @@ describe('runDeleteGuild', () => {
     expect(client.restToken).toBe('token-1');
     expect(client.loggedInWith).toBeNull();
   });
+
+  it('refuses a guild it does not know before any cleanup runs', async () => {
+    await setUpSchema(t.database);
+    const cleaned: string[] = [];
+    const module = widgetsModule({
+      hooks: {
+        deleteGuildData: (_ctx, guildId) => {
+          cleaned.push(guildId);
+        },
+      },
+    });
+    const { deps } = commandDeps({ '@test/widgets': module });
+    await expect(runDeleteGuild(await writeConfig(['@test/widgets']), 'g404', deps)).rejects.toThrow(
+      new CliError('Guild g404 is not known.'),
+    );
+    expect(cleaned).toEqual([]);
+  });
 });

@@ -1,3 +1,9 @@
+import { execFile } from 'node:child_process';
+import { mkdtemp, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 import { main, USAGE, type CliIo } from './cli.js';
 import type { CommandDeps } from './commands.js';
@@ -28,5 +34,20 @@ describe('main', () => {
     const cli = io();
     expect(await main(['purge', 'widgets', '--config', '/does/not/exist.yaml'], cli)).toBe(1);
     expect(cli.output.join('')).toContain('Config file not found: /does/not/exist.yaml');
+  });
+
+  it('runs when started through a symlink', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bronto-bin-'));
+    const link = join(dir, 'bronto.ts');
+    await symlink(fileURLToPath(new URL('./cli.ts', import.meta.url)), link);
+    const run = promisify(execFile)(process.execPath, ['--import', 'tsx', link], {
+      cwd: fileURLToPath(new URL('../../..', import.meta.url)),
+    });
+    const failure = (await run.then(
+      () => null,
+      (error: unknown) => error,
+    )) as { code?: number; stderr?: string } | null;
+    expect(failure?.code).toBe(2);
+    expect(failure?.stderr).toContain(USAGE);
   });
 });

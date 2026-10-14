@@ -1,6 +1,7 @@
 import {
   createBot,
   createDatabase,
+  guildExists,
   loadConfig,
   loadModules,
   purgeModuleSchema,
@@ -77,7 +78,10 @@ export async function runPurge(configPath: string, moduleName: string, deps: Com
   deps.log.info({ module: moduleName }, 'Purged the module schema');
 }
 
-/** Deletes all data of one guild now, after every module cleaned up. Does not connect to the gateway. */
+/**
+ * Deletes all data of one guild now, after every module cleaned up. Refuses guilds without a row. Does not connect to
+ * the gateway.
+ */
 export async function runDeleteGuild(configPath: string, guildId: string, deps: CommandDeps): Promise<void> {
   const config = await readConfig(configPath, deps.env);
   const modules = await loadModules(config.modules, deps.importer);
@@ -88,6 +92,7 @@ export async function runDeleteGuild(configPath: string, guildId: string, deps: 
   const bot = createBot({ config, modules, database, client, log: deps.log });
   try {
     await bot.prepare();
+    if (!(await guildExists(database.admin, guildId))) throw new CliError(`Guild ${guildId} is not known.`);
     await bot.lifecycle.deleteGuild(guildId);
   } finally {
     await bot.stop();
