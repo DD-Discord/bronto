@@ -4,6 +4,11 @@ import pg from 'pg';
 export type Db = NodePgDatabase;
 export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
+/** What the schema helpers need from a pool or a single checked-out client. */
+export interface Queryable {
+  query<R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, values?: unknown[]): Promise<pg.QueryResult<R>>;
+}
+
 /** Both connection pools: `admin` owns the schema and bypasses RLS; `app` is used by handlers and is subject to RLS. */
 export interface Database {
   admin: Db;
