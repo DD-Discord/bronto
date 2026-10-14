@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull, lte } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull, lte, notInArray } from 'drizzle-orm';
 import { GUILD_GRACE_DAYS } from './constants.js';
 import type { Db } from './database.js';
 import { guilds } from './core-schema.js';
@@ -18,6 +18,19 @@ export async function upsertGuild(db: Db, guildId: string): Promise<void> {
 /** Records that the bot left a guild; its data is kept until the grace period ends. */
 export async function markGuildLeft(db: Db, guildId: string, at: Date = new Date()): Promise<void> {
   await db.update(guilds).set({ leftAt: at }).where(eq(guilds.id, guildId));
+}
+
+/** Whether the guild has a row, whether or not the bot left it. */
+export async function guildExists(db: Db, guildId: string): Promise<boolean> {
+  const rows = await db.select({ id: guilds.id }).from(guilds).where(eq(guilds.id, guildId));
+  return rows.length > 0;
+}
+
+/** Records every guild not in `presentIds` that has not left yet as left at `at`. Returns those guilds. */
+export async function markMissingGuildsLeft(db: Db, presentIds: string[], at: Date = new Date()): Promise<string[]> {
+  const missing = presentIds.length > 0 ? and(isNull(guilds.leftAt), notInArray(guilds.id, presentIds)) : isNull(guilds.leftAt);
+  const rows = await db.update(guilds).set({ leftAt: at }).where(missing).returning({ id: guilds.id });
+  return rows.map((row) => row.id);
 }
 
 /** Guilds the bot left at least `graceDays` ago. */

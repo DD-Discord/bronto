@@ -5,7 +5,6 @@ import type { Database } from '../db/database.js';
 import { createScopedDb, type ScopedDb } from '../db/scoped.js';
 import type { LoadedModule } from './loader.js';
 import type { ApiOf, ModuleDefinition } from './module.js';
-import type { KeyedQueue } from './queue.js';
 import type { ModuleContext } from './types.js';
 
 /** Shared services every module context is built from. */
@@ -13,7 +12,6 @@ export interface RuntimeServices {
   client: Client;
   database: Database;
   log: Logger;
-  queue: KeyedQueue;
 }
 
 /** A loaded module together with its context and built API. */
@@ -53,7 +51,6 @@ function createRuntime(
     log: services.log.child({ module: name }),
     config: loaded.config,
     client: services.client,
-    queue: { run: (key, task) => services.queue.run(`${name}/${key}`, task) },
     modules: {
       get<M extends ModuleDefinition<any, any>>(definition: M): ApiOf<M> {
         if (!dependencies.has(definition.name)) {

@@ -5,6 +5,7 @@ import { createScopedDb } from '../db/scoped.js';
 import type { ModuleRuntime } from './context.js';
 import type { ModuleEnablement } from './enablement.js';
 import { eventLabel, type DiscordEventName, type EventDefinition, type Listener } from './events.js';
+import type { KeyedQueue } from './queue.js';
 import type { HandlerContext } from './types.js';
 
 type DiscordListener = Extract<Listener, { kind: 'discord' }>;
@@ -14,6 +15,18 @@ export interface DispatcherOptions {
   runtimes: ModuleRuntime[];
   database: Database;
   enablement: ModuleEnablement;
+  /** Runs the tasks modules queue with `ctx.queue.run`. */
+  queue: KeyedQueue;
+  /** Decides whether gateway events of a guild run handlers; resolving false drops the event. */
+  guildGate?: (guildId: string) => Promise<boolean>;
+}
+
+/** How a handler run ended; `error` is what the handler threw. */
+export type HandlerResult = { ok: true } | { ok: false; error: unknown };
+
+export interface RunHandlerOptions {
+  /** Errors for which this returns true are logged at debug level instead of as failures. */
+  expectedError?: (error: unknown) => boolean;
 }
 
 /** The guild a gateway event belongs to, or null for events outside a guild (DMs, user updates, ...). */
@@ -35,6 +48,8 @@ export function guildIdOf(value: unknown): string | null {
 export class Dispatcher {
   private readonly database: Database;
   private readonly enablement: ModuleEnablement;
+  private readonly queue: KeyedQueue;
+  private readonly guildGate: ((guildId: string) => Promise<boolean>) | undefined;
   private readonly discordListeners = new Map<DiscordEventName, Array<{ runtime: ModuleRuntime; listener: DiscordListener }>>();
   private readonly moduleListeners = new Map<EventDefinition<unknown>, Array<{ runtime: ModuleRuntime; listener: ModuleListener }>>();
   private readonly inFlight = new Set<Promise<unknown>>();
@@ -42,6 +57,8 @@ export class Dispatcher {
   constructor(options: DispatcherOptions) {
     this.database = options.database;
     this.enablement = options.enablement;
+    this.queue = options.queue;
+    this.guildGate = options.guildGate;
     for (const runtime of options.runtimes) {
       for (const listener of runtime.loaded.definition.listeners ?? []) {
         if (listener.kind === 'discord') {
@@ -62,16 +79,14 @@ export class Dispatcher {
     return [...this.discordListeners.keys()];
   }
 
-  /** Runs the listeners of enabled modules for a gateway event; events without a guild are ignored. */
+  /**
+   * Runs the listeners of enabled modules for a gateway event once the guild gate lets it through; events without a
+   * guild are ignored.
+   */
   handleDiscord(event: DiscordEventName, args: unknown[]): Promise<void> {
     const guildId = guildIdOf(args[0]) ?? guildIdOf(args[1]);
     if (guildId === null) return Promise.resolve();
-    const runs = (this.discordListeners.get(event) ?? [])
-      .filter(({ runtime }) => this.enablement.isEnabled(guildId, runtime.name))
-      .map(({ runtime, listener }) =>
-        this.runHandler(runtime, guildId, null, event, (ctx) => listener.handler(ctx, ...args)),
-      );
-    return this.track(Promise.all(runs).then(() => undefined));
+    return this.track(this.runDiscord(event, args, guildId));
   }
 
   /** Hands an event to every listening module enabled in the guild, without waiting for them. */
@@ -82,15 +97,20 @@ export class Dispatcher {
     }
   }
 
-  /** Runs `fn` as the module's handler for one guild. Returns false, after logging, when it throws. */
+  /**
+   * Runs `fn` as the module's handler for one guild. Its emitted events are delivered only when it succeeds; a thrown
+   * error is logged and returned.
+   */
   async runHandler(
     runtime: ModuleRuntime,
     guildId: string,
     actorId: string | null,
     label: string,
     fn: (ctx: HandlerContext) => unknown,
-  ): Promise<boolean> {
+    options: RunHandlerOptions = {},
+  ): Promise<HandlerResult> {
     const emitted: Array<() => void> = [];
+    let finished = false;
     const ctx: HandlerContext = {
       ...runtime.context,
       guildId,
@@ -100,7 +120,20 @@ export class Dispatcher {
         if (event.owner !== runtime.name) {
           throw new Error(`Module "${runtime.name}" cannot emit ${eventLabel(event)}; modules emit only their own events.`);
         }
+        if (finished) {
+          throw new Error(
+            `Module "${runtime.name}" emitted ${eventLabel(event)} after its handler finished; emit inside the handler or a queued task.`,
+          );
+        }
         emitted.push(() => this.deliver(event, payload, guildId, actorId));
+      },
+      queue: {
+        run: (key, task) =>
+          this.track(
+            this.queue.run(`${runtime.name}/${guildId}/${key}`, async () => {
+              await this.runHandler(runtime, guildId, actorId, `queue:${key}`, task);
+            }),
+          ),
       },
     };
     try {
@@ -109,18 +142,35 @@ export class Dispatcher {
         await fn(ctx);
       });
     } catch (error) {
-      runtime.context.log.error({ err: error, guildId, handler: label }, 'Handler failed');
-      return false;
+      const fields = { err: error, guildId, handler: label };
+      if (options.expectedError?.(error) === true) {
+        runtime.context.log.debug(fields, 'Handler stopped');
+      } else {
+        runtime.context.log.error(fields, 'Handler failed');
+      }
+      return { ok: false, error };
+    } finally {
+      finished = true;
     }
     for (const send of emitted) send();
-    return true;
+    return { ok: true };
   }
 
-  /** Resolves once no handler started through handleDiscord or deliver is still running. */
+  /** Resolves once no handler started through handleDiscord, deliver or a module queue is still running. */
   async idle(): Promise<void> {
     while (this.inFlight.size > 0) {
       await Promise.allSettled([...this.inFlight]);
     }
+  }
+
+  private async runDiscord(event: DiscordEventName, args: unknown[], guildId: string): Promise<void> {
+    if (this.guildGate !== undefined && !(await this.guildGate(guildId))) return;
+    const runs = (this.discordListeners.get(event) ?? [])
+      .filter(({ runtime }) => this.enablement.isEnabled(guildId, runtime.name))
+      .map(({ runtime, listener }) =>
+        this.runHandler(runtime, guildId, null, event, (ctx) => listener.handler(ctx, ...args)),
+      );
+    await Promise.all(runs);
   }
 
   private track<T>(promise: Promise<T>): Promise<T> {

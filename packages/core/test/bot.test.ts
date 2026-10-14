@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDatabase, type Database } from '../src/db/database.js';
 import { markGuildLeft, upsertGuild } from '../src/db/guilds.js';
-import { guilds } from '../src/db/schema.js';
+import { guildModules, guilds } from '../src/db/schema.js';
 import { createBot, StartupError, type Bot } from '../src/runtime/bot.js';
 import { coreEvents, on } from '../src/runtime/events.js';
 import type { ModuleDefinition } from '../src/runtime/module.js';
@@ -63,6 +63,17 @@ function recordingWidgets(calls: string[]): ModuleDefinition {
   });
 }
 
+/** Emits ClientReady and waits for the startup work, as discord.js does before most guild events. */
+async function ready(bot: Bot, client: FakeClient): Promise<void> {
+  client.emit(Events.ClientReady, client);
+  await bot.idle();
+}
+
+/** Adds a guild to the client cache, where discord.js keeps every guild it was sent. */
+function cache(client: FakeClient, id: string, available = true): void {
+  client.guilds.cache.set(id, { id, available });
+}
+
 async function schemaExists(name: string): Promise<boolean> {
   const { rows } = await t.database.adminPool.query('select 1 from pg_namespace where nspname = $1', [name]);
   return rows.length === 1;
@@ -107,21 +118,25 @@ describe('createBot', () => {
     const calls: string[] = [];
     const { bot, client } = makeBot([recordingWidgets(calls)]);
     await bot.start();
+    await ready(bot, client);
+    cache(client, 'g7');
     client.emit(Events.GuildAvailable, { id: 'g7' });
     await bot.idle();
     client.emit(Events.GuildUnavailable, { id: 'g7' });
     client.emit(Events.GuildAvailable, { id: 'g7' });
     await bot.idle();
-    expect(calls).toEqual(['ready:g7', 'ready:g7']);
+    expect(calls).toEqual(['start', 'ready:g7', 'ready:g7']);
   });
 
   it('announces joins and runs module listeners for gateway events', async () => {
     const calls: string[] = [];
     const { bot, client } = makeBot([recordingWidgets(calls)]);
     await bot.start();
+    await ready(bot, client);
+    cache(client, 'g2');
     client.emit(Events.GuildCreate, { id: 'g2' });
     await bot.idle();
-    expect([...calls].sort()).toEqual(['joined:g2', 'ready:g2']);
+    expect([...calls].sort()).toEqual(['joined:g2', 'ready:g2', 'start']);
     client.emit(Events.MessageCreate, { id: 'm1', guildId: 'g2' });
     await bot.idle();
     const [row] = await t.database.admin.select().from(widgetItems).where(eq(widgetItems.id, 'm1'));
@@ -131,6 +146,8 @@ describe('createBot', () => {
   it('records guilds the bot was removed from', async () => {
     const { bot, client } = makeBot([recordingWidgets([])]);
     await bot.start();
+    await ready(bot, client);
+    cache(client, 'g3');
     client.emit(Events.GuildAvailable, { id: 'g3' });
     await bot.idle();
     client.emit(Events.GuildDelete, { id: 'g3' });
@@ -154,14 +171,93 @@ describe('createBot', () => {
     expect(client.destroyed).toBe(true);
   });
 
+  it('removes its gateway listeners on stop', async () => {
+    const { bot, client } = makeBot([recordingWidgets([])]);
+    await bot.start();
+    expect(client.listenerCount(Events.MessageCreate)).toBe(1);
+    await bot.stop();
+    expect(client.eventNames()).toEqual([]);
+  });
+
+  it('sets up guilds announced before the client is ready only after the start hooks', async () => {
+    const calls: string[] = [];
+    const { bot, client } = makeBot([recordingWidgets(calls)]);
+    await bot.start();
+    cache(client, 'g1');
+    client.emit(Events.GuildAvailable, { id: 'g1' });
+    await new Promise((done) => setTimeout(done, 50));
+    expect(calls).toEqual([]);
+    await ready(bot, client);
+    expect(calls).toEqual(['start', 'ready:g1']);
+  });
+
+  it('runs gateway events of a guild only after it is set up', async () => {
+    const { bot, client } = makeBot([recordingWidgets([])]);
+    await bot.prepare();
+    await upsertGuild(t.database.admin, 'g5');
+    await t.database.admin.insert(guildModules).values({ guildId: 'g5', module: 'widgets', enabled: false });
+    await bot.start();
+    cache(client, 'g5');
+    await ready(bot, client);
+    bot.lifecycle.forget('g5');
+    client.emit(Events.GuildAvailable, { id: 'g5' });
+    client.emit(Events.MessageCreate, { id: 'm5', guildId: 'g5' });
+    await bot.idle();
+    expect(await t.database.admin.select().from(widgetItems).where(eq(widgetItems.id, 'm5'))).toEqual([]);
+  });
+
+  it('runs no handlers for a guild whose set-up failed and logs why', async () => {
+    const { bot, client, lines } = makeBot([recordingWidgets([])]);
+    await bot.start();
+    await ready(bot, client);
+    vi.spyOn(bot.enablement, 'load').mockRejectedValue(new Error('database down'));
+    cache(client, 'g6');
+    client.emit(Events.MessageCreate, { id: 'm6', guildId: 'g6' });
+    await bot.idle();
+    expect(await t.database.admin.select().from(widgetItems).where(eq(widgetItems.id, 'm6'))).toEqual([]);
+    expect(lines).toContainEqual(expect.objectContaining({ level: 50, msg: 'Setting up guild g6 failed' }));
+  });
+
+  it('logs gateway events that could not be dispatched', async () => {
+    const { bot, client, lines } = makeBot([recordingWidgets([])]);
+    await bot.start();
+    await ready(bot, client);
+    cache(client, 'g8');
+    client.emit(Events.GuildAvailable, { id: 'g8' });
+    await bot.idle();
+    vi.spyOn(bot.enablement, 'isEnabled').mockImplementation(() => {
+      throw new Error('broken switch');
+    });
+    client.emit(Events.MessageCreate, { id: 'm8', guildId: 'g8' });
+    await bot.idle();
+    expect(lines).toContainEqual(expect.objectContaining({ level: 50, msg: 'Dispatching messageCreate failed' }));
+  });
+
+  it('records guilds the bot was removed from while it was offline', async () => {
+    const { bot, client } = makeBot([recordingWidgets([])]);
+    await bot.prepare();
+    for (const id of ['kept', 'outage', 'removed']) await upsertGuild(t.database.admin, id);
+    cache(client, 'kept');
+    cache(client, 'outage', false);
+    await bot.start();
+    await ready(bot, client);
+    const rows = await t.database.admin.select().from(guilds);
+    const leftAtOf = (id: string) => rows.find((row) => row.id === id)?.leftAt;
+    expect(leftAtOf('removed')).toBeInstanceOf(Date);
+    expect(leftAtOf('kept')).toBeNull();
+    expect(leftAtOf('outage')).toBeNull();
+  });
+
   it('attaches the gateway listeners only once when started again', async () => {
     const calls: string[] = [];
     const { bot, client } = makeBot([recordingWidgets(calls)]);
     await bot.start();
     await bot.start();
+    await ready(bot, client);
+    cache(client, 'g9');
     client.emit(Events.GuildAvailable, { id: 'g9' });
     await bot.idle();
-    expect(calls).toEqual(['ready:g9']);
+    expect(calls).toEqual(['start', 'ready:g9']);
   });
 
   it('purges guilds past their grace period when ready and then on a schedule', async () => {

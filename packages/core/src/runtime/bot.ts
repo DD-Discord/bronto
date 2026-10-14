@@ -1,4 +1,4 @@
-import { Events, type Client } from 'discord.js';
+import { Events, type Client, type Guild } from 'discord.js';
 import type { Logger } from 'pino';
 import type { CoreConfig } from '../config/schema.js';
 import { checkRoles, formatSchemaProblems } from '../db/checks.js';
@@ -56,10 +56,33 @@ export function createBot(options: BotOptions): Bot {
   const { config, modules, database, client, log } = options;
   const queue = new KeyedQueue((key, error) => log.error({ err: error, key }, 'Queued task failed'));
   const enablement = new ModuleEnablement(database.admin);
-  const runtimes = createModuleRuntimes(modules, { client, database, log, queue });
-  const dispatcher = new Dispatcher({ runtimes, database, enablement });
+  const runtimes = createModuleRuntimes(modules, { client, database, log });
+  // Resolves once the start hooks finished (or the bot stopped); guild work waits for it.
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  const dispatcher = new Dispatcher({
+    runtimes,
+    database,
+    enablement,
+    queue,
+    // Gateway events run only once their guild is set up, so module switches are loaded.
+    guildGate: async (guildId) => {
+      await started;
+      if (stopped) return false;
+      try {
+        await lifecycle.ready(guildId);
+        return true;
+      } catch (error) {
+        log.error({ err: error }, `Setting up guild ${guildId} failed`);
+        return false;
+      }
+    },
+  });
   const lifecycle = new GuildLifecycle({ runtimes, dispatcher, enablement, database });
   const pending = new Set<Promise<void>>();
+  const listeners: Array<[string, (...args: any[]) => void]> = [];
   let prepared = false;
   let attached = false;
   let stopped = false;
@@ -101,7 +124,10 @@ export function createBot(options: BotOptions): Bot {
   }
 
   function setUp(guildId: string, joined: boolean): void {
-    track(lifecycle.setUp(guildId, joined), `Setting up guild ${guildId} failed`);
+    track(
+      started.then(() => (stopped ? undefined : lifecycle.setUp(guildId, joined))),
+      `Setting up guild ${guildId} failed`,
+    );
   }
 
   function runPurge(): void {
@@ -123,7 +149,11 @@ export function createBot(options: BotOptions): Bot {
         runtime.context.log.error({ err: error }, 'Start hook failed');
       }
     }
+    markStarted();
     if (stopped) return;
+    // The cache lists every guild of this (single-shard) client, unavailable ones included; guilds missing from it
+    // removed the bot while it was offline.
+    track(lifecycle.reconcile([...client.guilds.cache.keys()]), 'Recording guilds the bot left while offline failed');
     for (const guild of client.guilds.cache.values()) {
       if (guild.available) setUp(guild.id, false);
     }
@@ -132,19 +162,30 @@ export function createBot(options: BotOptions): Bot {
     purgeTimer.unref();
   }
 
+  function listen(event: string, listener: (...args: any[]) => void): void {
+    listeners.push([event, listener]);
+    client.on(event, listener);
+  }
+
   function attach(): void {
     if (attached) return;
     attached = true;
-    client.on(Events.ClientReady, () => track(onReady(), 'Startup work failed'));
-    client.on(Events.GuildAvailable, (guild) => setUp(guild.id, false));
-    client.on(Events.GuildCreate, (guild) => setUp(guild.id, true));
-    client.on(Events.GuildUnavailable, (guild) => lifecycle.forget(guild.id));
-    client.on(Events.GuildDelete, (guild) => track(lifecycle.leave(guild.id), `Leaving guild ${guild.id} failed`));
+    listen(Events.ClientReady, () => track(onReady(), 'Startup work failed'));
+    listen(Events.GuildAvailable, (guild: Guild) => setUp(guild.id, false));
+    listen(Events.GuildCreate, (guild: Guild) => setUp(guild.id, true));
+    listen(Events.GuildUnavailable, (guild: Guild) => lifecycle.forget(guild.id));
+    listen(Events.GuildDelete, (guild: Guild) => track(lifecycle.leave(guild.id), `Leaving guild ${guild.id} failed`));
     for (const event of dispatcher.discordEvents()) {
-      client.on(event, (...args: unknown[]) => {
-        void dispatcher.handleDiscord(event, args);
+      listen(event, (...args: unknown[]) => {
+        dispatcher.handleDiscord(event, args).catch((error: unknown) => {
+          log.error({ err: error }, `Dispatching ${event} failed`);
+        });
       });
     }
+  }
+
+  function detach(): void {
+    for (const [event, listener] of listeners.splice(0)) client.off(event, listener);
   }
 
   async function idle(): Promise<void> {
@@ -169,7 +210,9 @@ export function createBot(options: BotOptions): Bot {
     idle,
     async stop() {
       stopped = true;
+      markStarted();
       clearInterval(purgeTimer);
+      detach();
       await idle();
       clearInterval(purgeTimer);
       await client.destroy();

@@ -4,9 +4,12 @@ import type { ScopedDb } from '../db/scoped.js';
 import type { EventDefinition } from './events.js';
 import type { ApiOf, ModuleDefinition } from './module.js';
 
-/** Per-key serial queue of one module; keys are prefixed with the module name. */
+/**
+ * Per-key serial queue of one module in one guild. Each task runs as a handler with its own context for the guild
+ * and actor that queued it; a newer task replaces one still waiting for the same key.
+ */
 export interface ModuleQueue {
-  run(key: string, task: () => Promise<void>): Promise<void>;
+  run(key: string, task: (ctx: HandlerContext) => Promise<void>): Promise<void>;
 }
 
 export interface ModuleApis {
@@ -20,7 +23,6 @@ export interface ModuleContext<TConfig = any> {
   readonly log: Logger;
   readonly config: TConfig;
   readonly client: Client;
-  readonly queue: ModuleQueue;
   readonly modules: ModuleApis;
 }
 
@@ -32,6 +34,7 @@ export interface HandlerContext<TConfig = any> extends ModuleContext<TConfig> {
   readonly db: ScopedDb;
   /** Queues one of this module's events; it is delivered only if the handler succeeds. */
   emit<P>(event: EventDefinition<P>, payload: P): void;
+  readonly queue: ModuleQueue;
 }
 
 /** Context an API factory receives; API functions run inside the calling handler's guild scope. */

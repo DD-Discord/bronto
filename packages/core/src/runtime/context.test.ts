@@ -1,12 +1,11 @@
 import type { Client } from 'discord.js';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { captureLog } from '../../test/log.js';
 import { runInScope } from '../db/context.js';
 import type { Database } from '../db/database.js';
 import { createModuleRuntimes, type RuntimeServices } from './context.js';
 import type { LoadedModule } from './loader.js';
 import { defineModule, type ModuleDefinition } from './module.js';
-import type { KeyedQueue } from './queue.js';
 
 const loaded = (definition: ModuleDefinition, config: unknown = {}): LoadedModule => ({
   packageName: `@test/${definition.name}`,
@@ -14,15 +13,12 @@ const loaded = (definition: ModuleDefinition, config: unknown = {}): LoadedModul
   config,
 });
 
-function services(): RuntimeServices & { run: ReturnType<typeof vi.fn>; lines: ReturnType<typeof captureLog>['lines'] } {
+function services(): RuntimeServices & { lines: ReturnType<typeof captureLog>['lines'] } {
   const { log, lines } = captureLog();
-  const run = vi.fn(async () => undefined);
   return {
     client: {} as Client,
     database: { app: {} } as unknown as Database,
     log,
-    queue: { run } as unknown as KeyedQueue,
-    run,
     lines,
   };
 }
@@ -39,12 +35,9 @@ describe('createModuleRuntimes', () => {
     expect(shared.lines[0]).toMatchObject({ module: 'plain', msg: 'hello' });
   });
 
-  it('prefixes queue keys with the module name', async () => {
-    const shared = services();
-    const [runtime] = createModuleRuntimes([loaded(plain)], shared);
-    const task = async () => undefined;
-    await runtime?.context.queue.run('channel-1', task);
-    expect(shared.run).toHaveBeenCalledWith('plain/channel-1', task);
+  it('leaves the queue to handler contexts', () => {
+    const [runtime] = createModuleRuntimes([loaded(plain)], services());
+    expect(runtime?.context).not.toHaveProperty('queue');
   });
 
   it('gives a module the APIs of its dependencies', () => {

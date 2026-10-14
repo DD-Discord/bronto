@@ -1,6 +1,12 @@
 export { createBot, StartupError, type Bot, type BotOptions } from './bot.js';
 export { createModuleRuntimes, type ModuleRuntime, type RuntimeServices } from './context.js';
-export { Dispatcher, guildIdOf, type DispatcherOptions } from './dispatcher.js';
+export {
+  Dispatcher,
+  guildIdOf,
+  type DispatcherOptions,
+  type HandlerResult,
+  type RunHandlerOptions,
+} from './dispatcher.js';
 export { ModuleEnablement } from './enablement.js';
 export {
   coreEvents,

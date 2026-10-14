@@ -1,6 +1,14 @@
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { deleteGuildRow, guildsDueForPurge, markGuildLeft, purgeGuildIfDue, upsertGuild } from '../src/db/guilds.js';
+import {
+  deleteGuildRow,
+  guildExists,
+  guildsDueForPurge,
+  markGuildLeft,
+  markMissingGuildsLeft,
+  purgeGuildIfDue,
+  upsertGuild,
+} from '../src/db/guilds.js';
 import { guildModules, guilds } from '../src/db/schema.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
 import { createTestDatabase, setUpSchema, type TestDatabase } from './test-db.js';
@@ -82,5 +90,48 @@ describe('guild lifecycle', () => {
       expect(await purgeGuildIfDue(t.database.admin, 'fresh', now)).toBe(false);
       expect(await leftAt('fresh')).toBeInstanceOf(Date);
     });
+  });
+});
+
+describe('guildExists', () => {
+  it('tells known guilds from unknown ones, including guilds the bot left', async () => {
+    await upsertGuild(t.database.admin, 'known');
+    await markGuildLeft(t.database.admin, 'known');
+    expect(await guildExists(t.database.admin, 'known')).toBe(true);
+    expect(await guildExists(t.database.admin, 'never-seen')).toBe(false);
+  });
+});
+
+describe('markMissingGuildsLeft', () => {
+  let own: TestDatabase;
+
+  beforeAll(async () => {
+    own = await createTestDatabase();
+    await setUpSchema(own.database);
+  });
+
+  afterAll(async () => {
+    await own.drop();
+  });
+
+  it('marks guilds that are not present as left and returns them', async () => {
+    const earlier = new Date('2026-09-01T00:00:00Z');
+    const now = new Date('2026-10-14T12:00:00Z');
+    for (const id of ['here', 'gone-a', 'gone-b', 'left-before']) await upsertGuild(own.database.admin, id);
+    await markGuildLeft(own.database.admin, 'left-before', earlier);
+    expect((await markMissingGuildsLeft(own.database.admin, ['here', 'not-registered'], now)).sort()).toEqual([
+      'gone-a',
+      'gone-b',
+    ]);
+    const rows = await own.database.admin.select().from(guilds);
+    const leftAtOf = (id: string) => rows.find((row) => row.id === id)?.leftAt;
+    expect(leftAtOf('here')).toBeNull();
+    expect(leftAtOf('gone-a')).toEqual(now);
+    expect(leftAtOf('gone-b')).toEqual(now);
+    expect(leftAtOf('left-before')).toEqual(earlier);
+  });
+
+  it('marks every remaining guild when none is present', async () => {
+    expect(await markMissingGuildsLeft(own.database.admin, [])).toEqual(['here']);
   });
 });

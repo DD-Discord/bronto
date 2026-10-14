@@ -1,6 +1,6 @@
 import type { Client } from 'discord.js';
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { markGuildLeft, upsertGuild } from '../src/db/guilds.js';
 import { guilds } from '../src/db/schema.js';
 import { createModuleRuntimes } from '../src/runtime/context.js';
@@ -29,6 +29,7 @@ afterEach(async () => {
 interface Options {
   failCleanupFor?: string;
   onAlphaCleanup?: (guildId: string) => Promise<void>;
+  onBetaCleanup?: (guildId: string) => Promise<void>;
 }
 
 function build(options: Options = {}) {
@@ -60,18 +61,19 @@ function build(options: Options = {}) {
       guildReady: (ctx) => {
         calls.push(`beta:ready:${ctx.guildId}`);
       },
-      deleteGuildData: (_ctx, guildId) => {
+      deleteGuildData: async (_ctx, guildId) => {
         calls.push(`beta:cleanup:${guildId}`);
         if (guildId === options.failCleanupFor) throw new Error('cleanup failed');
+        await options.onBetaCleanup?.(guildId);
       },
     },
   });
   const enablement = new ModuleEnablement(t.database.admin);
   const runtimes = createModuleRuntimes(
     [alpha, beta].map((definition) => ({ packageName: `@test/${definition.name}`, definition, config: {} })),
-    { client: {} as Client, database: t.database, log: captureLog().log, queue: new KeyedQueue(() => undefined) },
+    { client: {} as Client, database: t.database, log: captureLog().log },
   );
-  const dispatcher = new Dispatcher({ runtimes, database: t.database, enablement });
+  const dispatcher = new Dispatcher({ runtimes, database: t.database, enablement, queue: new KeyedQueue(() => undefined) });
   const lifecycle = new GuildLifecycle({ runtimes, dispatcher, enablement, database: t.database });
   return { calls, enablement, dispatcher, lifecycle };
 }
@@ -187,5 +189,66 @@ describe('GuildLifecycle', () => {
     await upsertGuild(t.database.admin, 'g6');
     await expect(lifecycle.deleteGuild('g6')).rejects.toThrow('Cleanup failed for guild g6; its data was kept.');
     expect(await guildRow('g6')).toBeDefined();
+  });
+
+  it('stops cleaning up a guild that came back during its own purge', async () => {
+    const { calls, lifecycle } = build({
+      onBetaCleanup: async (guildId) => {
+        await upsertGuild(t.database.admin, guildId);
+      },
+    });
+    await leaveAgo('returning', 31);
+    expect(await lifecycle.purgeDueGuilds(NOW)).toEqual([]);
+    expect(calls).toEqual(['beta:cleanup:returning']);
+    expect((await guildRow('returning'))?.leftAt).toBeNull();
+  });
+
+  it('runs set-up once for ready() and shares it with setUp()', async () => {
+    const { calls, lifecycle } = build();
+    await Promise.all([lifecycle.ready('g1'), lifecycle.setUp('g1', false), lifecycle.ready('g1')]);
+    await lifecycle.ready('g1');
+    expect(calls).toEqual(['alpha:ready:g1', 'beta:ready:g1']);
+  });
+
+  it('retries set-up on the next ready() after it failed', async () => {
+    const { calls, enablement, lifecycle } = build();
+    vi.spyOn(enablement, 'load').mockRejectedValueOnce(new Error('database down'));
+    await expect(lifecycle.ready('g1')).rejects.toThrow('database down');
+    expect(calls).toEqual([]);
+    await lifecycle.ready('g1');
+    expect(calls).toEqual(['alpha:ready:g1', 'beta:ready:g1']);
+  });
+
+  it('keeps a newer set-up when an older one of the same guild fails', async () => {
+    const { calls, enablement, lifecycle } = build();
+    let failFirst: ((error: Error) => void) | undefined;
+    vi.spyOn(enablement, 'load').mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          failFirst = reject;
+        }),
+    );
+    const first = lifecycle.setUp('g1', false);
+    await vi.waitFor(() => expect(failFirst).toBeDefined());
+    lifecycle.forget('g1');
+    await lifecycle.setUp('g1', false);
+    failFirst?.(new Error('late failure'));
+    await expect(first).rejects.toThrow('late failure');
+    await lifecycle.ready('g1');
+    expect(calls).toEqual(['alpha:ready:g1', 'beta:ready:g1']);
+  });
+
+  it('records guilds that disappeared while the bot was offline', async () => {
+    const { calls, dispatcher, lifecycle } = build();
+    await lifecycle.setUp('present', false);
+    await lifecycle.setUp('removed', false);
+    calls.length = 0;
+    expect(await lifecycle.reconcile(['present'], NOW)).toEqual(['removed']);
+    await dispatcher.idle();
+    expect((await guildRow('removed'))?.leftAt).toEqual(NOW);
+    expect((await guildRow('present'))?.leftAt).toBeNull();
+    expect(calls).toEqual(['alpha:left:removed']);
+    await lifecycle.ready('removed');
+    expect((await guildRow('removed'))?.leftAt).toBeNull();
   });
 });

@@ -8,7 +8,7 @@ describe('@bronto/core exports', () => {
       'createDatabase', 'prepareDatabase', 'migrateAll', 'coreMigrationTarget', 'grantAppRole', 'createScopedDb',
       'guildTable', 'globalTable', 'globalTableNames', 'auditColumns', 'runInScope', 'currentGuildId', 'currentActor',
       'core', 'guilds', 'guildModules',
-      'upsertGuild', 'markGuildLeft', 'guildsDueForPurge', 'purgeGuildIfDue', 'deleteGuildRow',
+      'upsertGuild', 'markGuildLeft', 'markMissingGuildsLeft', 'guildExists', 'guildsDueForPurge', 'purgeGuildIfDue', 'deleteGuildRow',
       'checkSchemas', 'checkRoles', 'formatSchemaProblems', 'purgeModuleSchema', 'listMigratedModules',
       'assertModuleName', 'quoteIdent', 'MIGRATIONS_SCHEMA', 'GUILD_GRACE_DAYS',
     ]) {
