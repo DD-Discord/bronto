@@ -1,7 +1,8 @@
 import { Events } from 'discord.js';
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDatabase, type Database } from '../src/db/database.js';
+import { markGuildLeft, upsertGuild } from '../src/db/guilds.js';
 import { guilds } from '../src/db/schema.js';
 import { createBot, StartupError, type Bot } from '../src/runtime/bot.js';
 import { coreEvents, on } from '../src/runtime/events.js';
@@ -24,7 +25,7 @@ afterEach(async () => {
   await t.drop();
 });
 
-function makeBot(modules: ModuleDefinition[], database: Database = t.database) {
+function makeBot(modules: ModuleDefinition[], database: Database = t.database, purgeIntervalMs?: number) {
   const client = new FakeClient();
   const { log, lines } = captureLog();
   const bot = createBot({
@@ -33,6 +34,7 @@ function makeBot(modules: ModuleDefinition[], database: Database = t.database) {
     database,
     client: client.asClient(),
     log,
+    purgeIntervalMs,
   });
   bots.push(bot);
   return { bot, client, lines };
@@ -150,5 +152,54 @@ describe('createBot', () => {
     await bot.start();
     await bot.stop();
     expect(client.destroyed).toBe(true);
+  });
+
+  it('attaches the gateway listeners only once when started again', async () => {
+    const calls: string[] = [];
+    const { bot, client } = makeBot([recordingWidgets(calls)]);
+    await bot.start();
+    await bot.start();
+    client.emit(Events.GuildAvailable, { id: 'g9' });
+    await bot.idle();
+    expect(calls).toEqual(['ready:g9']);
+  });
+
+  it('purges guilds past their grace period when ready and then on a schedule', async () => {
+    const cleaned: string[] = [];
+    const module = widgetsModule({ hooks: { deleteGuildData: (_ctx, guildId) => { cleaned.push(guildId); } } });
+    const { bot, client } = makeBot([module], t.database, 20);
+    await bot.prepare();
+    await upsertGuild(t.database.admin, 'gone-1');
+    await markGuildLeft(t.database.admin, 'gone-1', new Date(Date.now() - 31 * 86_400_000));
+    await bot.start();
+    client.emit(Events.ClientReady, client);
+    await bot.idle();
+    expect(cleaned).toEqual(['gone-1']);
+    await upsertGuild(t.database.admin, 'gone-2');
+    await markGuildLeft(t.database.admin, 'gone-2', new Date(Date.now() - 31 * 86_400_000));
+    await vi.waitFor(() => expect(cleaned).toEqual(['gone-1', 'gone-2']), { timeout: 2_000 });
+  });
+
+  it('does not schedule purges when stopped while starting up', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((done) => { release = done; });
+    const cleaned: string[] = [];
+    const module = widgetsModule({
+      hooks: {
+        start: () => gate,
+        deleteGuildData: (_ctx, guildId) => { cleaned.push(guildId); },
+      },
+    });
+    const { bot, client } = makeBot([module], t.database, 20);
+    await bot.prepare();
+    await upsertGuild(t.database.admin, 'gone-3');
+    await markGuildLeft(t.database.admin, 'gone-3', new Date(Date.now() - 31 * 86_400_000));
+    await bot.start();
+    client.emit(Events.ClientReady, client);
+    const stopping = bot.stop();
+    release();
+    await stopping;
+    await new Promise((done) => setTimeout(done, 100));
+    expect(cleaned).toEqual([]);
   });
 });

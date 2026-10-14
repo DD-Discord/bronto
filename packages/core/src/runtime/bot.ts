@@ -61,6 +61,8 @@ export function createBot(options: BotOptions): Bot {
   const lifecycle = new GuildLifecycle({ runtimes, dispatcher, enablement, database });
   const pending = new Set<Promise<void>>();
   let prepared = false;
+  let attached = false;
+  let stopped = false;
   let purgeTimer: NodeJS.Timeout | undefined;
 
   // An idle pool client that errors (e.g. Postgres restarting) would otherwise crash the process.
@@ -121,6 +123,7 @@ export function createBot(options: BotOptions): Bot {
         runtime.context.log.error({ err: error }, 'Start hook failed');
       }
     }
+    if (stopped) return;
     for (const guild of client.guilds.cache.values()) {
       if (guild.available) setUp(guild.id, false);
     }
@@ -130,6 +133,8 @@ export function createBot(options: BotOptions): Bot {
   }
 
   function attach(): void {
+    if (attached) return;
+    attached = true;
     client.on(Events.ClientReady, () => track(onReady(), 'Startup work failed'));
     client.on(Events.GuildAvailable, (guild) => setUp(guild.id, false));
     client.on(Events.GuildCreate, (guild) => setUp(guild.id, true));
@@ -163,8 +168,10 @@ export function createBot(options: BotOptions): Bot {
     },
     idle,
     async stop() {
+      stopped = true;
       clearInterval(purgeTimer);
       await idle();
+      clearInterval(purgeTimer);
       await client.destroy();
     },
   };
