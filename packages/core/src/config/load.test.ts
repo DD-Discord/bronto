@@ -66,6 +66,12 @@ describe('parseConfig', () => {
     ]);
   });
 
+  it('rejects unknown keys with their path', () => {
+    expect(problemsOf(() => parseConfig(`${YAML}\nmodule: {}\n`, ENV))).toEqual(['(root): Unrecognized key: "module"']);
+    const typo = YAML.replace('adminUrl:', 'adminUrl: postgres://a@b/c\n  admnUrl:');
+    expect(problemsOf(() => parseConfig(typo, ENV))).toEqual(['database: Unrecognized key: "admnUrl"']);
+  });
+
   it('reports invalid YAML', () => {
     const problems = problemsOf(() => parseConfig('discord: [unclosed', ENV));
     expect(problems[0]).toMatch(/^YAML: /);
