@@ -71,7 +71,9 @@ describe('audit columns', () => {
   });
 
   it('apply to core tables too', async () => {
-    await runInScope({ actorId: 'u9' }, () => t.database.admin.insert(guilds).values({ id: 'g9' }));
+    await runInScope({ actorId: 'u9' }, async () => {
+      await t.database.admin.insert(guilds).values({ id: 'g9' });
+    });
     const [guild] = await t.database.admin.select().from(guilds).where(eq(guilds.id, 'g9'));
     expect(guild?.createdBy).toBe('u9');
   });
