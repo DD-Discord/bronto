@@ -16,6 +16,16 @@ describe('@bronto/core exports', () => {
     }
   });
 
+  it('exposes the module runtime', () => {
+    for (const name of [
+      'defineModule', 'defineEvent', 'eventLabel', 'on', 'coreEvents', 'loadModules', 'createBot', 'StartupError',
+      'KeyedQueue', 'ModuleEnablement', 'Dispatcher', 'GuildLifecycle', 'createModuleRuntimes', 'guildIdOf',
+      'migrationTargets', 'schemaExpectations', 'isGuildDue',
+    ]) {
+      expect(core, name).toHaveProperty(name);
+    }
+  });
+
   it('keeps connection-level helpers internal', () => {
     for (const name of ['withMigrationLock', 'applyMigrations', 'grantAppRoleWith', 'checkSchemasWith']) {
       expect(core, name).not.toHaveProperty(name);
