@@ -50,6 +50,20 @@ describe('globalTable', () => {
   });
 });
 
+describe('helper column keys', () => {
+  it.each(['guildId', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy'])('guildTable rejects a %s column', (key) => {
+    expect(() => guildTable(demo, 'clash', { id: text('id'), [key]: text('x') })).toThrow(
+      new RegExp(`demo\\.clash.*"${key}"`),
+    );
+  });
+
+  it.each(['createdAt', 'updatedAt', 'createdBy', 'updatedBy'])('globalTable rejects a %s column', (key) => {
+    expect(() => globalTable(demo, 'clash', { id: text('id'), [key]: text('x') })).toThrow(
+      new RegExp(`demo\\.clash.*"${key}"`),
+    );
+  });
+});
+
 describe('globalTableNames', () => {
   it('lists only tables declared global', () => {
     expect(globalTableNames({ items, shared, other: 1 })).toEqual(['shared']);

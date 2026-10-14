@@ -16,6 +16,11 @@ export interface Database {
 }
 
 export function createDatabase({ adminUrl, appUrl }: { adminUrl: string; appUrl: string }): Database {
+  // Grants and role checks need the app role's name, so it cannot come from PGUSER or other defaults.
+  const appRole = decodeURIComponent(new URL(appUrl).username);
+  if (appRole === '') {
+    throw new Error('The app database URL has no user name; it must name the app role, e.g. postgres://bot_app:...@host/db.');
+  }
   const adminPool = new pg.Pool({ connectionString: adminUrl });
   const appPool = new pg.Pool({ connectionString: appUrl });
   return {
@@ -23,7 +28,7 @@ export function createDatabase({ adminUrl, appUrl }: { adminUrl: string; appUrl:
     app: drizzle({ client: appPool }),
     adminPool,
     appPool,
-    appRole: decodeURIComponent(new URL(appUrl).username),
+    appRole,
     async end() {
       await Promise.all([adminPool.end(), appPool.end()]);
     },

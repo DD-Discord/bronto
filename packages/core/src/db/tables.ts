@@ -28,6 +28,21 @@ function guildColumns() {
   };
 }
 
+/** Joins module and helper columns; a module column must not silently replace a helper column. */
+function withHelperColumns<TColumns extends object, THelpers extends object>(
+  schema: PgSchema<string>,
+  name: string,
+  columns: TColumns,
+  helpers: THelpers,
+): TColumns & THelpers {
+  for (const key of Object.keys(helpers)) {
+    if (Object.hasOwn(columns, key)) {
+      throw new Error(`Table ${schema.schemaName}.${name} must not declare column "${key}"; it is added automatically.`);
+    }
+  }
+  return { ...columns, ...helpers };
+}
+
 type GuildColumns = ReturnType<typeof guildColumns>;
 type AuditColumns = ReturnType<typeof auditColumns>;
 
@@ -46,7 +61,7 @@ export function guildTable<
   extra?: (self: BuildExtraConfigColumns<TName, TColumns & GuildColumns, 'pg'>) => PgTableExtraConfigValue[],
 ) {
   return schema
-    .table(name, { ...columns, ...guildColumns() }, (t) => [
+    .table(name, withHelperColumns(schema, name, columns, guildColumns()), (t) => [
       index(`${name}_guild_id_idx`).on(t.guildId),
       pgPolicy(`${name}_guild_isolation`, {
         as: 'permissive',
@@ -70,5 +85,5 @@ export function globalTable<
   columns: TColumns,
   extra?: (self: BuildExtraConfigColumns<TName, TColumns & AuditColumns, 'pg'>) => PgTableExtraConfigValue[],
 ) {
-  return markGlobalTable(schema.table(name, { ...columns, ...auditColumns() }, extra));
+  return markGlobalTable(schema.table(name, withHelperColumns(schema, name, columns, auditColumns()), extra));
 }
