@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { MIGRATION_LOCK_KEY } from '../src/db/constants.js';
 import { coreMigrationTarget, migrateAll } from '../src/db/migrate.js';
 import { listMigratedModules, purgeModuleSchema } from '../src/db/purge.js';
 import { createTestDatabase, setUpSchema, widgetsTarget, type TestDatabase } from './test-db.js';
@@ -34,6 +35,26 @@ describe('module purge', () => {
     await migrateAll(t.database, [coreMigrationTarget, widgetsTarget]);
     expect(await schemaExists('widgets')).toBe(true);
     expect(await listMigratedModules(t.database)).toEqual(['core', 'widgets']);
+  });
+
+  it('waits for the migration lock', async () => {
+    const holder = await t.database.adminPool.connect();
+    try {
+      await holder.query('select pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);
+      let done = false;
+      const purge = purgeModuleSchema(t.database, 'widgets').then(() => {
+        done = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(done).toBe(false);
+      expect(await schemaExists('widgets')).toBe(true);
+      await holder.query('select pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]);
+      await purge;
+      expect(await schemaExists('widgets')).toBe(false);
+    } finally {
+      holder.release();
+    }
+    await migrateAll(t.database, [coreMigrationTarget, widgetsTarget]);
   });
 
   it('refuses to purge core', async () => {

@@ -1,17 +1,23 @@
 import { MIGRATIONS_SCHEMA } from './constants.js';
 import type { Database } from './database.js';
+import { withMigrationLock } from './lock.js';
 import { assertModuleName, quoteIdent } from './names.js';
 
-/** Drops a module's schema and migration history. Callers make sure no loaded module depends on it. */
+/**
+ * Drops a module's schema and migration history. Callers make sure no loaded module depends on it. Holds the
+ * migration lock so a concurrent start cannot migrate the module while it is being dropped.
+ */
 export async function purgeModuleSchema(database: Database, name: string): Promise<void> {
   assertModuleName(name);
   if (name === 'core') {
     throw new Error('The core schema cannot be purged.');
   }
-  await database.adminPool.query(`
-    drop schema if exists ${quoteIdent(name)} cascade;
-    drop table if exists ${quoteIdent(MIGRATIONS_SCHEMA)}.${quoteIdent(name)};
-  `);
+  await withMigrationLock(database, (client) =>
+    client.query(`
+      drop schema if exists ${quoteIdent(name)} cascade;
+      drop table if exists ${quoteIdent(MIGRATIONS_SCHEMA)}.${quoteIdent(name)};
+    `),
+  );
 }
 
 /** Modules that have a migration history in this database, including core. */

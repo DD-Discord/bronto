@@ -5,14 +5,20 @@ describe('@bronto/core exports', () => {
   it('exposes the config and db API', () => {
     for (const name of [
       'loadConfig', 'parseConfig', 'ConfigError', 'substituteEnv',
-      'createDatabase', 'migrateAll', 'coreMigrationTarget', 'grantAppRole', 'createScopedDb',
+      'createDatabase', 'prepareDatabase', 'migrateAll', 'coreMigrationTarget', 'grantAppRole', 'createScopedDb',
       'guildTable', 'globalTable', 'globalTableNames', 'auditColumns', 'runInScope', 'currentGuildId', 'currentActor',
       'core', 'guilds', 'guildModules',
-      'upsertGuild', 'markGuildLeft', 'guildsDueForPurge', 'deleteGuildRow',
-      'checkSchemas', 'formatSchemaProblems', 'purgeModuleSchema', 'listMigratedModules',
+      'upsertGuild', 'markGuildLeft', 'guildsDueForPurge', 'purgeGuildIfDue', 'deleteGuildRow',
+      'checkSchemas', 'checkRoles', 'formatSchemaProblems', 'purgeModuleSchema', 'listMigratedModules',
       'assertModuleName', 'quoteIdent', 'MIGRATIONS_SCHEMA', 'GUILD_GRACE_DAYS',
     ]) {
       expect(core, name).toHaveProperty(name);
+    }
+  });
+
+  it('keeps connection-level helpers internal', () => {
+    for (const name of ['withMigrationLock', 'applyMigrations', 'grantAppRoleWith', 'checkSchemasWith']) {
+      expect(core, name).not.toHaveProperty(name);
     }
   });
 

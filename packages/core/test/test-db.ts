@@ -3,8 +3,12 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { inject } from 'vitest';
 import { createDatabase, type Database } from '../src/db/database.js';
-import { grantAppRole } from '../src/db/grants.js';
-import { coreMigrationTarget, migrateAll, type MigrationTarget } from '../src/db/migrate.js';
+import { formatSchemaProblems, type SchemaExpectation } from '../src/db/checks.js';
+import type { MigrationTarget } from '../src/db/migrate.js';
+import { prepareDatabase } from '../src/db/prepare.js';
+import { globalTableNames } from '../src/db/registry.js';
+import * as coreSchema from '../src/db/schema.js';
+import * as widgetsSchema from './fixtures/widgets/schema.js';
 
 export interface TestDatabase {
   database: Database;
@@ -37,10 +41,20 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   };
 }
 
-/** Migrates core and the widgets fixture, then grants the app role. */
+/** Expectations for core and the widgets fixture, as a bot would derive them from its schema files. */
+export function schemaExpectations(): SchemaExpectation[] {
+  return [
+    { schema: 'core', globalTables: globalTableNames(coreSchema) },
+    { schema: 'widgets', globalTables: globalTableNames(widgetsSchema) },
+  ];
+}
+
+/** Prepares core and the widgets fixture the way a bot does at startup. */
 export async function setUpSchema(database: Database): Promise<void> {
-  await migrateAll(database, [coreMigrationTarget, widgetsTarget]);
-  await grantAppRole(database, ['core', 'widgets']);
+  const problems = await prepareDatabase(database, { modules: [widgetsTarget], expectations: schemaExpectations() });
+  if (problems.length > 0) {
+    throw new Error(`Test schema has problems:\n${formatSchemaProblems(problems)}`);
+  }
 }
 
 /** Message of an error and its cause; drizzle wraps driver errors. */

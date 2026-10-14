@@ -5,4 +5,5 @@
 - Before pinning a new dependency, check its current version on the registry (`npm view <pkg> version`). Pin exact versions.
 - Write concise comments that explain current behavior, constraints or intent. Don't document refactor history.
 - Tables holding per-guild data are created with `guildTable()`; tables shared by all guilds with `globalTable()`. Never create tables any other way: startup checks reject them.
+- Startup schema work goes through `prepareDatabase()`: it migrates core and the modules, grants the app role and checks guild isolation under one advisory lock. Don't call the migration, grant or check steps separately at startup. Global tables are read-only for the app role; write them with the admin connection.
 - Database access in handlers goes through `ScopedDb.run()`; one `run` is one transaction.
