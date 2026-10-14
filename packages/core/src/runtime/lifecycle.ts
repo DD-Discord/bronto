@@ -22,36 +22,24 @@ export interface LifecycleOptions {
 /** Registers guilds as the bot sees them, records when it leaves, and deletes data once the grace period ends. */
 export class GuildLifecycle {
   private readonly options: LifecycleOptions;
-  private readonly ready = new Set<string>();
+  private readonly setups = new Map<string, Promise<void>>();
 
   constructor(options: LifecycleOptions) {
     this.options = options;
   }
 
-  /** Registers a guild and runs guildReady for its enabled modules; a guild already set up is skipped. */
-  async setUp(guildId: string, joined: boolean): Promise<void> {
-    if (this.ready.has(guildId)) return;
-    this.ready.add(guildId);
-    const { database, enablement, dispatcher, runtimes } = this.options;
-    try {
-      await upsertGuild(database.admin, guildId);
-      await enablement.load(guildId);
-    } catch (error) {
-      // Not set up yet, so the next event for this guild tries again.
-      this.ready.delete(guildId);
-      throw error;
-    }
-    if (joined) dispatcher.deliver(coreEvents.guildJoined, { guildId }, guildId);
-    for (const runtime of runtimes) {
-      const hook = runtime.loaded.definition.hooks?.guildReady;
-      if (hook === undefined || !enablement.isEnabled(guildId, runtime.name)) continue;
-      await dispatcher.runHandler(runtime, guildId, null, 'guildReady', (ctx) => hook(ctx));
-    }
+  /** Registers a guild and runs guildReady for its enabled modules; concurrent and repeated calls share one run. */
+  setUp(guildId: string, joined: boolean): Promise<void> {
+    const existing = this.setups.get(guildId);
+    if (existing !== undefined) return existing;
+    const setup = this.runSetUp(guildId, joined);
+    this.setups.set(guildId, setup);
+    return setup;
   }
 
   /** Forgets a guild that became unavailable, so it is set up again when it returns. */
   forget(guildId: string): void {
-    this.ready.delete(guildId);
+    this.setups.delete(guildId);
     this.options.enablement.forget(guildId);
   }
 
@@ -69,6 +57,7 @@ export class GuildLifecycle {
     for (const guildId of await guildsDueForPurge(admin, now)) {
       // The guild may have come back while earlier guilds were cleaned up.
       if (!(await isGuildDue(admin, guildId, now))) continue;
+      // A guild that returns during its own cleanup keeps its rows (the delete re-checks), but its modules already cleaned up.
       if (!(await this.cleanUp(guildId))) continue;
       if (await purgeGuildIfDue(admin, guildId, now)) deleted.push(guildId);
     }
@@ -81,6 +70,24 @@ export class GuildLifecycle {
       throw new Error(`Cleanup failed for guild ${guildId}; its data was kept.`);
     }
     await deleteGuildRow(this.options.database.admin, guildId);
+  }
+
+  private async runSetUp(guildId: string, joined: boolean): Promise<void> {
+    const { database, enablement, dispatcher, runtimes } = this.options;
+    try {
+      await upsertGuild(database.admin, guildId);
+      await enablement.load(guildId);
+    } catch (error) {
+      // Not set up yet, so the next event for this guild tries again.
+      this.setups.delete(guildId);
+      throw error;
+    }
+    if (joined) dispatcher.deliver(coreEvents.guildJoined, { guildId }, guildId);
+    for (const runtime of runtimes) {
+      const hook = runtime.loaded.definition.hooks?.guildReady;
+      if (hook === undefined || !enablement.isEnabled(guildId, runtime.name)) continue;
+      await dispatcher.runHandler(runtime, guildId, null, 'guildReady', (ctx) => hook(ctx));
+    }
   }
 
   // Dependents clean up before the modules they depend on; every module runs even if one fails.

@@ -112,6 +112,15 @@ describe('GuildLifecycle', () => {
     expect(calls).toEqual(['alpha:ready:g1', 'beta:ready:g1', 'alpha:ready:g1', 'beta:ready:g1']);
   });
 
+  it('lets a second set-up of the same guild wait for the first', async () => {
+    const { calls, lifecycle } = build();
+    const first = lifecycle.setUp('g8', false);
+    await lifecycle.setUp('g8', false);
+    expect(await guildRow('g8')).toBeDefined();
+    await first;
+    expect(calls).toEqual(['alpha:ready:g8', 'beta:ready:g8']);
+  });
+
   it('announces joins, but not guilds that were already there', async () => {
     const { calls, dispatcher, lifecycle } = build();
     await lifecycle.setUp('joined', true);
