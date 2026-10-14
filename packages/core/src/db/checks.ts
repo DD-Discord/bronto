@@ -77,11 +77,20 @@ export function formatSchemaProblems(problems: SchemaProblem[]): string {
 /** Finds app role setups that would make RLS ineffective. Returns one message per problem. */
 export async function checkRoles(database: Database): Promise<string[]> {
   const role = database.appRole;
-  const { rows } = await database.adminPool.query<{ admin: string; exists: boolean; super: boolean; bypass: boolean }>(
+  const { rows } = await database.adminPool.query<{
+    admin: string;
+    exists: boolean;
+    super: boolean;
+    bypass: boolean;
+    member: boolean;
+  }>(
     `select current_user as "admin",
             r.rolname is not null as "exists",
             coalesce(r.rolsuper, false) as "super",
-            coalesce(r.rolbypassrls, false) as "bypass"
+            coalesce(r.rolbypassrls, false) as "bypass",
+            coalesce(r.rolname <> current_user
+                     and pg_has_role(r.oid, (select oid from pg_roles where rolname = current_user), 'MEMBER'),
+                     false) as "member"
        from (select 1) as one
        left join pg_roles r on r.rolname = $1`,
     [role],
@@ -92,5 +101,12 @@ export async function checkRoles(database: Database): Promise<string[]> {
   if (state.admin === role) problems.push(`App role "${role}" is the admin role; use a separate role for the app.`);
   if (state.super) problems.push(`App role "${role}" is a superuser, which bypasses RLS.`);
   if (state.bypass) problems.push(`App role "${role}" has BYPASSRLS.`);
+  // Members of the owning role pass ownership checks, and table owners are not subject to RLS.
+  // Skip this check if already a superuser, since superusers already bypass RLS completely.
+  if (state.member && !state.super) {
+    problems.push(
+      `App role "${role}" is a member of the admin role "${state.admin}", so it bypasses RLS on the admin role's tables.`,
+    );
+  }
   return problems;
 }

@@ -30,6 +30,20 @@ export async function guildsDueForPurge(
   return rows.map((row) => row.id);
 }
 
+/** Whether one guild has left and its grace period has passed. */
+export async function isGuildDue(
+  db: Db,
+  guildId: string,
+  now: Date = new Date(),
+  graceDays: number = GUILD_GRACE_DAYS,
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: guilds.id })
+    .from(guilds)
+    .where(and(eq(guilds.id, guildId), isDue(now, graceDays)));
+  return rows.length > 0;
+}
+
 /**
  * Deletes the guild if it is still due for purge; foreign keys cascade the delete into every guild table.
  * Re-checking in the delete keeps a guild that came back since it was found due. Returns whether it was deleted.

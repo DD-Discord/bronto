@@ -4,7 +4,8 @@ import { assertModuleName, quoteIdent } from './names.js';
 /**
  * Gives the app role data access, but no DDL, to the tables that exist in each schema now; run it after every
  * migration. Tables with RLS get read and write access. Tables without RLS (global tables such as core.guilds) are
- * read-only, since writes there are not limited to one guild.
+ * read-only, since writes there are not limited to one guild. Not safe to run concurrently: at startup use
+ * prepareDatabase, which runs it under the migration lock.
  */
 export async function grantAppRole(database: Database, schemas: string[]): Promise<void> {
   await grantAppRoleWith(database.adminPool, database.appRole, schemas);
