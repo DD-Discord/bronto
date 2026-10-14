@@ -1,0 +1,9 @@
+# Copy to config.yaml next to your .env. Values like ${NAME} come from the environment.
+discord:
+  token: ${DISCORD_TOKEN}
+database:
+  # The app role is subject to row-level security; the admin role owns the schema and runs migrations.
+  appUrl: ${DATABASE_APP_URL}
+  adminUrl: ${DATABASE_ADMIN_URL}
+# One key per module package to load; an empty value loads the module with its defaults.
+modules: {}
