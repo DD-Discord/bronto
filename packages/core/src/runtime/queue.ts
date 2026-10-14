@@ -20,7 +20,7 @@ export class KeyedQueue {
   private readonly draining = new Set<Promise<void>>();
   private readonly onError: QueueErrorHandler;
 
-  /** `onError` receives the errors of failed tasks and must not throw. */
+  /** `onError` receives the errors of failed tasks; errors it throws are ignored. */
   constructor(onError: QueueErrorHandler) {
     this.onError = onError;
   }
@@ -57,7 +57,11 @@ export class KeyedQueue {
       try {
         await request.task();
       } catch (error) {
-        this.onError(key, error);
+        try {
+          this.onError(key, error);
+        } catch {
+          // A throwing error handler must not leave the key stuck.
+        }
       }
       for (const resolve of request.waiters) resolve();
       request = slot.pending;

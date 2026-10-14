@@ -107,4 +107,31 @@ describe('KeyedQueue', () => {
     await idle;
     expect(done).toBe(true);
   });
+
+  it('keeps a key usable when the error handler throws', async () => {
+    const queue = new KeyedQueue(() => {
+      throw new Error('handler broke');
+    });
+    const ran: string[] = [];
+    await queue.run('k', async () => {
+      throw new Error('boom');
+    });
+    await queue.run('k', async () => {
+      ran.push('after');
+    });
+    expect(ran).toEqual(['after']);
+  });
+
+  it('reuses a key after it drained', async () => {
+    const queue = new KeyedQueue(() => undefined);
+    const ran: string[] = [];
+    await queue.run('k', async () => {
+      ran.push('first');
+    });
+    await queue.idle();
+    await queue.run('k', async () => {
+      ran.push('second');
+    });
+    expect(ran).toEqual(['first', 'second']);
+  });
 });
