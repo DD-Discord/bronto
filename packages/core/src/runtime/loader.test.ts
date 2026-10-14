@@ -108,4 +108,30 @@ describe('loadModules', () => {
     const problems = await problemsOf(loadModules({ '@x/owner': {} }, importerOf({ '@x/owner': asPackage(owner) })));
     expect(problems).toEqual(['modules.@x/owner: table "other.things" is outside the module\'s schema "owner"']);
   });
+
+  it('reports a missing dependency together with other problems', async () => {
+    const problems = await problemsOf(
+      loadModules(
+        { '@x/dependent': {}, '@x/configured': {} },
+        importerOf({ '@x/dependent': asPackage(dependent), '@x/configured': asPackage(configured) }),
+      ),
+    );
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toMatch(/^modules\.@x\/configured\.webhookName: /);
+    expect(problems[1]).toBe('modules.@x/dependent: depends on module "base", which is not loaded');
+  });
+
+  it('reports only the modules that form a cycle', async () => {
+    const first = defineModule({ name: 'loop_a' });
+    const second = defineModule({ name: 'loop_b', dependsOn: [first] });
+    first.dependsOn = [second];
+    const entry = defineModule({ name: 'loop_entry', dependsOn: [first] });
+    const problems = await problemsOf(
+      loadModules(
+        { '@x/entry': {}, '@x/a': {}, '@x/b': {} },
+        importerOf({ '@x/entry': asPackage(entry), '@x/a': asPackage(first), '@x/b': asPackage(second) }),
+      ),
+    );
+    expect(problems).toEqual(['modules: dependency cycle loop_a -> loop_b -> loop_a']);
+  });
 });

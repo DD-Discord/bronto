@@ -42,7 +42,7 @@ export async function loadModules(
     }
     loaded.push({ packageName, definition, config: parseSection(definition, section, path, problems) });
   }
-  problems.push(...duplicateNames(loaded), ...foreignTables(loaded));
+  problems.push(...duplicateNames(loaded), ...foreignTables(loaded), ...missingDependencies(loaded));
   if (problems.length > 0) throw new ConfigError(problems);
   return sortByDependencies(loaded);
 }
@@ -99,17 +99,21 @@ function foreignTables(modules: LoadedModule[]): string[] {
   return problems;
 }
 
-function sortByDependencies(modules: LoadedModule[]): LoadedModule[] {
+function missingDependencies(modules: LoadedModule[]): string[] {
   const byName = new Map(modules.map((module) => [module.definition.name, module]));
-  const missing: string[] = [];
+  const problems: string[] = [];
   for (const { packageName, definition } of modules) {
     for (const dependency of definition.dependsOn ?? []) {
       if (!byName.has(dependency.name)) {
-        missing.push(`${formatPath(['modules', packageName])}: depends on module "${dependency.name}", which is not loaded`);
+        problems.push(`${formatPath(['modules', packageName])}: depends on module "${dependency.name}", which is not loaded`);
       }
     }
   }
-  if (missing.length > 0) throw new ConfigError(missing);
+  return problems;
+}
+
+function sortByDependencies(modules: LoadedModule[]): LoadedModule[] {
+  const byName = new Map(modules.map((module) => [module.definition.name, module]));
 
   const sorted: LoadedModule[] = [];
   const state = new Map<string, 'visiting' | 'done'>();
@@ -118,11 +122,13 @@ function sortByDependencies(modules: LoadedModule[]): LoadedModule[] {
     const current = state.get(name);
     if (current === 'done') return;
     if (current === 'visiting') {
-      throw new ConfigError([`modules: dependency cycle ${[...path, name].join(' -> ')}`]);
+      const cycleStart = path.findIndex((n) => n === name);
+      const cycle = [...path.slice(cycleStart), name];
+      throw new ConfigError([`modules: dependency cycle ${cycle.join(' -> ')}`]);
     }
     state.set(name, 'visiting');
     for (const dependency of module.definition.dependsOn ?? []) {
-      visit(byName.get(dependency.name)!, [...path, name]);
+      visit(byName.get(dependency.name)!, [...path, name]); // All dependencies are guaranteed to be present.
     }
     state.set(name, 'done');
     sorted.push(module);
