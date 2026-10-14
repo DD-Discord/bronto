@@ -1,3 +1,4 @@
+import { Collection, Guild } from 'discord.js';
 import { runInScope } from '../db/context.js';
 import type { Database } from '../db/database.js';
 import { createScopedDb } from '../db/scoped.js';
@@ -17,6 +18,8 @@ export interface DispatcherOptions {
 
 /** The guild a gateway event belongs to, or null for events outside a guild (DMs, user updates, ...). */
 export function guildIdOf(value: unknown): string | null {
+  if (value instanceof Guild) return value.id;
+  if (value instanceof Collection) return guildIdOf(value.first());
   if (typeof value !== 'object' || value === null) return null;
   const candidate = value as { guildId?: unknown; guild?: { id?: unknown } | null; message?: { guildId?: unknown } | null };
   if (typeof candidate.guildId === 'string') return candidate.guildId;
@@ -61,7 +64,7 @@ export class Dispatcher {
 
   /** Runs the listeners of enabled modules for a gateway event; events without a guild are ignored. */
   handleDiscord(event: DiscordEventName, args: unknown[]): Promise<void> {
-    const guildId = guildIdOf(args[0]);
+    const guildId = guildIdOf(args[0]) ?? guildIdOf(args[1]);
     if (guildId === null) return Promise.resolve();
     const runs = (this.discordListeners.get(event) ?? [])
       .filter(({ runtime }) => this.enablement.isEnabled(guildId, runtime.name))
@@ -113,7 +116,7 @@ export class Dispatcher {
     return true;
   }
 
-  /** Resolves once no handler started by this dispatcher is still running. */
+  /** Resolves once no handler started through handleDiscord or deliver is still running. */
   async idle(): Promise<void> {
     while (this.inFlight.size > 0) {
       await Promise.allSettled([...this.inFlight]);

@@ -1,4 +1,4 @@
-import { Events, type Client } from 'discord.js';
+import { Collection, Events, Guild, type Client } from 'discord.js';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { guilds } from '../src/db/schema.js';
@@ -141,6 +141,12 @@ describe('Dispatcher', () => {
     const failure = lines.find((line) => line.module === 'beta' && line.msg === 'Handler failed');
     expect((failure?.err as { message: string }).message).toMatch(/cannot emit alpha\.counted/);
   });
+
+  it('finds the guild in the second argument when the first has none', async () => {
+    const guild = Object.assign(Object.create(Guild.prototype) as Guild, { id: 'g1' });
+    await dispatcher.handleDiscord(Events.MessageCreate, [{ id: 'm9', guildId: null, content: '' }, guild]);
+    expect(seen.map((entry) => entry.guildId)).toEqual(['g1', 'g1']);
+  });
 });
 
 describe('guildIdOf', () => {
@@ -153,5 +159,15 @@ describe('guildIdOf', () => {
     [undefined, null],
   ])('finds the guild of %j', (value, expected) => {
     expect(guildIdOf(value)).toBe(expected);
+  });
+
+  it('reads the id of a Guild', () => {
+    const guild = Object.assign(Object.create(Guild.prototype) as Guild, { id: 'g5' });
+    expect(guildIdOf(guild)).toBe('g5');
+  });
+
+  it('reads the guild of the first item of a Collection', () => {
+    expect(guildIdOf(new Collection([['m1', { guildId: 'g6' }]]))).toBe('g6');
+    expect(guildIdOf(new Collection())).toBeNull();
   });
 });
