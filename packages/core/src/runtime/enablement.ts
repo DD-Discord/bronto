@@ -31,9 +31,13 @@ export class ModuleEnablement {
       .insert(guildModules)
       .values({ guildId, module, enabled })
       .onConflictDoUpdate({ target: [guildModules.guildId, guildModules.module], set: { enabled } });
-    const switches = this.cache.get(guildId) ?? new Map<string, boolean>();
-    switches.set(module, enabled);
-    this.cache.set(guildId, switches);
+    if (this.cache.has(guildId)) {
+      // Guild already loaded, just update this switch
+      this.cache.get(guildId)!.set(module, enabled);
+    } else {
+      // Guild not loaded yet, load all switches including the one just written
+      await this.load(guildId);
+    }
   }
 
   forget(guildId: string): void {

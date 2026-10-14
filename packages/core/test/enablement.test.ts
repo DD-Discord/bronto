@@ -71,4 +71,12 @@ describe('ModuleEnablement', () => {
     });
     expect((await row('g1', 'epsilon'))?.updatedBy).toBe('u1');
   });
+
+  it('keeps the other switches of a guild that was not loaded yet', async () => {
+    await new ModuleEnablement(t.database.admin).set('g2', 'zeta', false);
+    const fresh = new ModuleEnablement(t.database.admin);
+    await fresh.set('g2', 'eta', false);
+    expect(fresh.isEnabled('g2', 'zeta')).toBe(false);
+    expect(fresh.isEnabled('g2', 'eta')).toBe(false);
+  });
 });
