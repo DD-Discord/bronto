@@ -1,0 +1,20 @@
+{
+  "name": "@bronto/bot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/commands.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@bronto/core": "workspace:*",
+    "discord.js": "14.27.0",
+    "pino": "10.4.0"
+  },
+  "devDependencies": {
+    "drizzle-orm": "0.45.4"
+  }
+}
