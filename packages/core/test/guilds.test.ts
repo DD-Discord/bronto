@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { deleteGuildRow, guildsDueForPurge, markGuildLeft, upsertGuild } from '../src/db/guilds.js';
+import { deleteGuildRow, guildsDueForPurge, markGuildLeft, purgeGuildIfDue, upsertGuild } from '../src/db/guilds.js';
 import { guildModules, guilds } from '../src/db/schema.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
 import { createTestDatabase, setUpSchema, type TestDatabase } from './test-db.js';
@@ -53,5 +53,34 @@ describe('guild lifecycle', () => {
     expect(await t.database.admin.select().from(guilds).where(eq(guilds.id, 'gone'))).toEqual([]);
     expect(await t.database.admin.select().from(widgetItems).where(eq(widgetItems.guildId, 'gone'))).toEqual([]);
     expect(await t.database.admin.select().from(guildModules).where(eq(guildModules.guildId, 'gone'))).toEqual([]);
+  });
+
+  describe('purgeGuildIfDue', () => {
+    const now = new Date('2026-10-14T12:00:00Z');
+
+    it('deletes a guild whose grace period has passed', async () => {
+      await upsertGuild(t.database.admin, 'due');
+      await t.database.admin.insert(widgetItems).values({ id: 'w-due', guildId: 'due', label: 'x' });
+      await markGuildLeft(t.database.admin, 'due', new Date(now.getTime() - 30 * DAY));
+      expect(await purgeGuildIfDue(t.database.admin, 'due', now)).toBe(true);
+      expect(await leftAt('due')).toBeUndefined();
+      expect(await t.database.admin.select().from(widgetItems).where(eq(widgetItems.guildId, 'due'))).toEqual([]);
+    });
+
+    it('keeps a guild that came back after it was found due', async () => {
+      await upsertGuild(t.database.admin, 'back');
+      await markGuildLeft(t.database.admin, 'back', new Date(now.getTime() - 31 * DAY));
+      expect(await guildsDueForPurge(t.database.admin, now)).toContain('back');
+      await upsertGuild(t.database.admin, 'back');
+      expect(await purgeGuildIfDue(t.database.admin, 'back', now)).toBe(false);
+      expect(await leftAt('back')).toBeNull();
+    });
+
+    it('keeps a guild that left recently', async () => {
+      await upsertGuild(t.database.admin, 'fresh');
+      await markGuildLeft(t.database.admin, 'fresh', new Date(now.getTime() - 29 * DAY));
+      expect(await purgeGuildIfDue(t.database.admin, 'fresh', now)).toBe(false);
+      expect(await leftAt('fresh')).toBeInstanceOf(Date);
+    });
   });
 });

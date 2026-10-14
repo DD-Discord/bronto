@@ -5,6 +5,11 @@ import { guilds } from './core-schema.js';
 
 const DAY_MS = 86_400_000;
 
+function isDue(now: Date, graceDays: number) {
+  const cutoff = new Date(now.getTime() - graceDays * DAY_MS);
+  return and(isNotNull(guilds.leftAt), lte(guilds.leftAt, cutoff));
+}
+
 /** Registers a guild, or marks it present again after the bot left it. */
 export async function upsertGuild(db: Db, guildId: string): Promise<void> {
   await db.insert(guilds).values({ id: guildId }).onConflictDoUpdate({ target: guilds.id, set: { leftAt: null } });
@@ -21,16 +26,28 @@ export async function guildsDueForPurge(
   now: Date = new Date(),
   graceDays: number = GUILD_GRACE_DAYS,
 ): Promise<string[]> {
-  const cutoff = new Date(now.getTime() - graceDays * DAY_MS);
-  const rows = await db
-    .select({ id: guilds.id })
-    .from(guilds)
-    .where(and(isNotNull(guilds.leftAt), lte(guilds.leftAt, cutoff)))
-    .orderBy(asc(guilds.id));
+  const rows = await db.select({ id: guilds.id }).from(guilds).where(isDue(now, graceDays)).orderBy(asc(guilds.id));
   return rows.map((row) => row.id);
 }
 
-/** Deletes the guild row; foreign keys cascade the delete into every guild table. */
+/**
+ * Deletes the guild if it is still due for purge; foreign keys cascade the delete into every guild table.
+ * Re-checking in the delete keeps a guild that came back since it was found due. Returns whether it was deleted.
+ */
+export async function purgeGuildIfDue(
+  db: Db,
+  guildId: string,
+  now: Date = new Date(),
+  graceDays: number = GUILD_GRACE_DAYS,
+): Promise<boolean> {
+  const deleted = await db
+    .delete(guilds)
+    .where(and(eq(guilds.id, guildId), isDue(now, graceDays)))
+    .returning({ id: guilds.id });
+  return deleted.length > 0;
+}
+
+/** Deletes the guild row unconditionally; foreign keys cascade the delete into every guild table. */
 export async function deleteGuildRow(db: Db, guildId: string): Promise<void> {
   await db.delete(guilds).where(eq(guilds.id, guildId));
 }
