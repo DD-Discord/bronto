@@ -77,8 +77,8 @@ export interface StickyDiscord {
   deleteWebhook(webhook: WebhookCredentials): Promise<void>;
   /** Deletes a webhook with the bot's permissions; an unknown webhook counts as deleted. */
   deleteWebhookById(webhookId: string): Promise<void>;
-  /** Null when the channel is gone or the bot cannot see it. */
-  channelInfo(channelId: string): Promise<ChannelInfo | null>;
+  /** 'gone' when the channel no longer exists, 'forbidden' when the bot cannot see it. */
+  channelInfo(channelId: string): Promise<ChannelInfo | 'gone' | 'forbidden'>;
   /** Posts through the webhook and returns the new message's ID. */
   send(target: PostTarget, message: StickyMessage, options: PostOptions): Promise<string>;
   deleteMessage(target: PostTarget, messageId: string): Promise<void>;
@@ -201,7 +201,8 @@ export function createRestStickyDiscord(client: Pick<Client, 'rest' | 'applicati
           parentId: 'parent_id' in channel ? (channel.parent_id ?? null) : null,
         };
       } catch (error) {
-        if (codeOf(error) === RESTJSONErrorCodes.UnknownChannel || isPermissionError(error)) return null;
+        if (codeOf(error) === RESTJSONErrorCodes.UnknownChannel) return 'gone';
+        if (isPermissionError(error)) return 'forbidden';
         throw error;
       }
     },

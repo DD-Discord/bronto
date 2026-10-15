@@ -49,7 +49,7 @@ export class FakeStickyDiscord implements StickyDiscord {
   tokensVisible = true;
   private readonly live = new Map<string, FakePost>();
   private readonly templates = new Map<string, { guildId: string; message: StickyMessage }>();
-  private readonly channels = new Map<string, ChannelInfo>();
+  private readonly channels = new Map<string, ChannelInfo | 'forbidden'>();
   private nextId = 100000000000005000n;
 
   newId(): string {
@@ -74,6 +74,11 @@ export class FakeStickyDiscord implements StickyDiscord {
 
   addChannel(channelId: string, info: ChannelInfo): void {
     this.channels.set(channelId, info);
+  }
+
+  /** A channel that exists but that the bot cannot see. */
+  forbidChannel(channelId: string): void {
+    this.channels.set(channelId, 'forbidden');
   }
 
   /** Posts still in Discord, optionally of one channel or thread. */
@@ -127,9 +132,9 @@ export class FakeStickyDiscord implements StickyDiscord {
     this.deletedWebhooks.push(webhookId);
   }
 
-  async channelInfo(channelId: string): Promise<ChannelInfo | null> {
+  async channelInfo(channelId: string): Promise<ChannelInfo | 'gone' | 'forbidden'> {
     this.calls.push('channelInfo');
-    return this.channels.get(channelId) ?? null;
+    return this.channels.get(channelId) ?? 'gone';
   }
 
   async send(target: PostTarget, message: StickyMessage, options: PostOptions): Promise<string> {

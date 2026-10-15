@@ -167,11 +167,15 @@ describe('createRestStickyDiscord', () => {
     expect(await discord.findWebhookToken('100000000000000010', '100000000000000045')).toBeNull();
   });
 
-  it('describes channels and treats unknown ones as gone', async () => {
+  it('describes channels and tells gone ones from hidden ones', async () => {
     const thread = fakeRest(() => ({ status: 200, json: { id: '11', type: 11, guild_id: '1', parent_id: '10' } }));
     expect(await thread.discord.channelInfo('11')).toEqual({ guildId: '1', isThread: true, parentId: '10' });
     const gone = fakeRest(() => error(10003));
-    expect(await gone.discord.channelInfo('11')).toBeNull();
+    expect(await gone.discord.channelInfo('11')).toBe('gone');
+    const hidden = fakeRest(() => error(50001, 403));
+    expect(await hidden.discord.channelInfo('11')).toBe('forbidden');
+    const denied = fakeRest(() => error(50013, 403));
+    expect(await denied.discord.channelInfo('11')).toBe('forbidden');
   });
 
   it('deletes webhooks and messages, treating unknown ones as deleted', async () => {

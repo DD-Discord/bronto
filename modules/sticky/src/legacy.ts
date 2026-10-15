@@ -97,9 +97,16 @@ async function importOne(
   path: string,
   file: string,
 ): Promise<Outcome> {
+  let text: string;
+  try {
+    text = await readFile(join(path, file), 'utf8');
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'unknown error';
+    return { kind: 'skipped', label: file, note: `the file cannot be read: ${code}` };
+  }
   let raw: unknown;
   try {
-    raw = JSON.parse(await readFile(join(path, file), 'utf8'), reviveLegacyDates);
+    raw = JSON.parse(text, reviveLegacyDates);
   } catch {
     return { kind: 'skipped', label: file, note: 'unreadable JSON' };
   }
@@ -116,9 +123,11 @@ async function importOne(
   }
 
   const channel = await discord.channelInfo(record.channelId);
-  if (channel === null || channel.guildId === null) {
-    return { kind: 'skipped', label, note: 'the channel no longer exists or the bot cannot see it' };
+  if (channel === 'gone') return { kind: 'skipped', label, note: 'the channel no longer exists' };
+  if (channel === 'forbidden') {
+    return { kind: 'skipped', label, note: 'the bot cannot see this channel or thread; give it access there and run the import again' };
   }
+  if (channel.guildId === null) return { kind: 'skipped', label, note: 'the channel is not in a server' };
   if (record.guildId !== null && record.guildId !== channel.guildId) {
     return { kind: 'skipped', label, note: 'the channel is in another server than recorded' };
   }
@@ -207,8 +216,9 @@ export async function importLegacyStickies(
     counts[outcome.kind] += 1;
     lines.push(`${outcome.label}: ${outcome.kind === 'skipped' ? `skipped (${outcome.note})` : outcome.note}`);
   }
+  const imported = `${counts.imported} ${ctx.dryRun ? 'would import' : 'imported'}`;
   lines.push(
-    `${files.length} records: ${counts.imported} imported, ${counts.repaired} repaired, ${counts.skipped} skipped, ${counts.failed} failed` +
+    `${files.length} records: ${imported}, ${counts.repaired} repaired, ${counts.skipped} skipped, ${counts.failed} failed` +
       (ctx.dryRun ? ' (dry run, nothing written)' : ''),
   );
   return lines;

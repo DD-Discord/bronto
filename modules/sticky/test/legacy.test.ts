@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createScopedDb, runLegacyImport } from '@bronto/core';
@@ -16,6 +16,7 @@ const THREAD_ID = '100000000000000130';
 const GONE = '100000000000000140';
 const MOVED = '100000000000000150';
 const PARENT = '100000000000000121';
+const HIDDEN = '100000000000000160';
 
 let t: TestDatabase;
 let discord: FakeStickyDiscord;
@@ -31,6 +32,7 @@ beforeEach(async () => {
   discord.addChannel(NESTED, { guildId: GUILD, isThread: false, parentId: null });
   discord.addChannel(THREAD_ID, { guildId: GUILD, isThread: true, parentId: PARENT });
   discord.addChannel(MOVED, { guildId: OTHER_GUILD, isThread: false, parentId: null });
+  discord.forbidChannel(HIDDEN);
 });
 
 afterEach(async () => {
@@ -97,6 +99,7 @@ describe('importLegacy', () => {
       }),
       // A channel the fake does not know.
       [`${GONE}.json`]: { ...flatRecord('100000000000000141'), channelId: GONE },
+      [`${HIDDEN}.json`]: { ...flatRecord('100000000000000161'), channelId: HIDDEN },
       'broken.json': '{ not json',
       [`${MOVED}.json`]: nestedRecord(MOVED, discord.addWebhook(MOVED, { owned: false })),
     });
@@ -106,10 +109,11 @@ describe('importLegacy', () => {
       `${FLAT}: imported (webhook token from Discord)`,
       `${NESTED}: imported`,
       `${THREAD_ID}: imported`,
-      `${GONE}: skipped (the channel no longer exists or the bot cannot see it)`,
+      `${GONE}: skipped (the channel no longer exists)`,
       `${MOVED}: skipped (the channel is in another server than recorded)`,
+      `${HIDDEN}: skipped (the bot cannot see this channel or thread; give it access there and run the import again)`,
       'broken.json: skipped (unreadable JSON)',
-      '6 records: 3 imported, 0 repaired, 3 skipped, 0 failed',
+      '7 records: 3 imported, 0 repaired, 4 skipped, 0 failed',
     ]);
     const report = lines.join('\n');
     expect(report).not.toContain('fake-token');
@@ -179,10 +183,44 @@ describe('importLegacy', () => {
     expect(await runImport(true)).toEqual([
       `${FLAT}: would import (webhook needs its token looked up or replaced)`,
       `${NESTED}: would import`,
-      '2 records: 2 imported, 0 repaired, 0 skipped, 0 failed (dry run, nothing written)',
+      '2 records: 2 would import, 0 repaired, 0 skipped, 0 failed (dry run, nothing written)',
     ]);
     expect(discord.calls).toEqual([]);
     expect(await stickyRows(t)).toEqual([]);
+  });
+
+  // Root reads any file regardless of its mode.
+  it.skipIf(process.getuid?.() === 0)('reports a file it cannot read apart from broken JSON', async () => {
+    await write({ [`${FLAT}.json`]: flatRecord('100000000000000112') });
+    await chmod(join(dir, `${FLAT}.json`), 0o000);
+    expect(await runImport()).toEqual([
+      `${FLAT}.json: skipped (the file cannot be read: EACCES)`,
+      '1 records: 0 imported, 0 repaired, 1 skipped, 0 failed',
+    ]);
+  });
+
+  it('puts a flat thread record on the thread, posting through its parent channel', async () => {
+    const shown = discord.addWebhook(PARENT, { owned: false });
+    await write({ [`${THREAD_ID}.json`]: { ...flatRecord(shown.id), channelId: THREAD_ID } });
+    expect(await runImport()).toEqual([
+      `${THREAD_ID}: imported (webhook token from Discord)`,
+      '1 records: 1 imported, 0 repaired, 0 skipped, 0 failed',
+    ]);
+    const [row] = await stickyRows(t);
+    expect(row).toMatchObject({ channelId: THREAD_ID, parentChannelId: PARENT, webhookId: shown.id, webhookToken: shown.token });
+  });
+
+  it('replaces the webhook of a flat thread record on the parent channel', async () => {
+    discord.tokensVisible = false;
+    const old = discord.addWebhook(PARENT, { owned: false });
+    await write({ [`${THREAD_ID}.json`]: { ...flatRecord(old.id), channelId: THREAD_ID } });
+    expect(await runImport()).toEqual([
+      `${THREAD_ID}: repaired (new webhook; the next message posts a fresh sticky)`,
+      '1 records: 0 imported, 1 repaired, 0 skipped, 0 failed',
+    ]);
+    const [row] = await stickyRows(t);
+    expect(row).toMatchObject({ channelId: THREAD_ID, parentChannelId: PARENT });
+    expect(discord.webhooks.get(row!.webhookId)?.channelId).toBe(PARENT);
   });
 
   it('imports stickies that work once the bot runs', async () => {
