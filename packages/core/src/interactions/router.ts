@@ -106,11 +106,12 @@ export class InteractionRouter {
     const handler = entry === undefined ? null : findHandler(entry.value, group, subcommand);
     const responder = new Responder(interaction as ResponseTarget, handler?.ephemeral ?? false);
     const label = ['/' + interaction.commandName, subcommandPath(group, subcommand)].filter((part) => part !== '').join(' ');
-    if (!(await this.ready(interaction.guildId))) return this.answer(responder.fail(NOT_READY), label);
+    const stopTimer = this.startDeferTimer(responder, label);
+    if (!(await this.ready(interaction.guildId))) return this.answer(responder.fail(NOT_READY), label, stopTimer);
     if (entry === undefined || handler === null || !this.enabled(entry.source, interaction.guildId)) {
-      return this.answer(responder.fail(NOT_AVAILABLE), label);
+      return this.answer(responder.fail(NOT_AVAILABLE), label, stopTimer);
     }
-    await this.run(entry.source, interaction, responder, label, (ctx) => {
+    await this.run(entry.source, interaction, responder, label, stopTimer, (ctx) => {
       const options = readOptions(handler.options ?? {}, interaction.options);
       const context: CommandContext = {
         ...interactionContext(ctx, interaction.channelId, responder),
@@ -147,11 +148,14 @@ export class InteractionRouter {
     const entry = parsed === null ? undefined : this.components.get(componentKey(parsed.module, kind, parsed.name));
     const responder = new Responder(interaction as ResponseTarget, entry?.value.ephemeral ?? false);
     const label = `${kind}:${parsed?.name ?? interaction.customId}`;
-    if (!(await this.ready(interaction.guildId))) return this.answer(responder.fail(NOT_READY), label);
-    if (entry === undefined || parsed === null) return this.answer(responder.fail(COMPONENT_GONE), label);
-    if (!this.enabled(entry.source, interaction.guildId)) return this.answer(responder.fail(COMPONENT_UNAVAILABLE), label);
+    const stopTimer = this.startDeferTimer(responder, label);
+    if (!(await this.ready(interaction.guildId))) return this.answer(responder.fail(NOT_READY), label, stopTimer);
+    if (entry === undefined || parsed === null) return this.answer(responder.fail(COMPONENT_GONE), label, stopTimer);
+    if (!this.enabled(entry.source, interaction.guildId)) {
+      return this.answer(responder.fail(COMPONENT_UNAVAILABLE), label, stopTimer);
+    }
     const component = entry.value;
-    await this.run(entry.source, interaction, responder, label, (ctx) => {
+    await this.run(entry.source, interaction, responder, label, stopTimer, (ctx) => {
       const base = interactionContext(ctx, interaction.channelId, responder);
       if (component.kind === 'button') {
         const context: ButtonContext = {
@@ -176,25 +180,31 @@ export class InteractionRouter {
     interaction: ChatInputCommandInteraction<'cached'> | ComponentInteraction,
     responder: Responder,
     label: string,
+    stopTimer: () => void,
     fn: (ctx: HandlerContext) => unknown,
   ): Promise<void> {
-    const timer = setTimeout(() => {
-      responder.defer().catch((error: unknown) => {
-        this.log.warn({ err: error, handler: label }, 'Answering an interaction failed');
-      });
-    }, this.deferAfterMs);
     let result;
     try {
       result = await this.dispatcher.runHandler(source.runtime, interaction.guildId, interaction.user.id, label, fn, {
         expectedError: isUserError,
       });
     } finally {
-      clearTimeout(timer);
+      stopTimer();
     }
     const answer = result.ok
       ? responder.finish()
       : responder.fail(isUserError(result.error) ? result.error.message : GENERIC_FAILURE);
     await this.answer(answer, label);
+  }
+
+  /** Starts the defer clock when handling begins, so waiting for the guild gate counts against Discord's 3 s window. */
+  private startDeferTimer(responder: Responder, label: string): () => void {
+    const timer = setTimeout(() => {
+      responder.defer().catch((error: unknown) => {
+        this.log.warn({ err: error, handler: label }, 'Answering an interaction failed');
+      });
+    }, this.deferAfterMs);
+    return () => clearTimeout(timer);
   }
 
   private async respond(interaction: AutocompleteInteraction<'cached'>, choices: Choice[]): Promise<void> {
@@ -205,7 +215,8 @@ export class InteractionRouter {
     await this.answer(interaction.respond(valid), `/${interaction.commandName} autocomplete`);
   }
 
-  private async answer(work: Promise<unknown>, label: string): Promise<void> {
+  private async answer(work: Promise<unknown>, label: string, stopTimer?: () => void): Promise<void> {
+    stopTimer?.();
     try {
       await work;
     } catch (error) {

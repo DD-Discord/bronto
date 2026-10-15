@@ -87,8 +87,9 @@ const demoCommand = defineCommand({
           autocomplete: (_ctx, query) => {
             if (query === 'fail') throw new Error('autocomplete broke');
             return [
-              ...Array.from({ length: 30 }, (_, i) => ({ name: `${query}-${i}`, value: `v${i}` })),
               { name: 'long value', value: 'x'.repeat(101) },
+              { name: 'n'.repeat(150), value: 'long-name' },
+              ...Array.from({ length: 30 }, (_, i) => ({ name: `${query}-${i}`, value: `v${i}` })),
             ];
           },
         }),
@@ -122,6 +123,7 @@ let enablement: ModuleEnablement;
 let runtimes: ModuleRuntime[];
 let dispatcher: Dispatcher;
 let gateOpen: boolean;
+let gateDelayMs: number;
 
 function makeRouter(sources?: InteractionSource[], deferAfterMs = 40): InteractionRouter {
   const captured = captureLog();
@@ -130,7 +132,10 @@ function makeRouter(sources?: InteractionSource[], deferAfterMs = 40): Interacti
     sources: sources ?? [{ runtime: runtimes[0]!, commands: [demoCommand], components: [press, form] }],
     dispatcher,
     enablement,
-    guildGate: async () => gateOpen,
+    guildGate: async () => {
+      if (gateDelayMs > 0) await sleep(gateDelayMs);
+      return gateOpen;
+    },
     log: captured.log,
     deferAfterMs,
   });
@@ -170,6 +175,7 @@ afterAll(async () => {
 beforeEach(async () => {
   ran.length = 0;
   gateOpen = true;
+  gateDelayMs = 0;
   await enablement.set('g1', 'demo', true);
 });
 
@@ -239,6 +245,23 @@ describe('InteractionRouter commands', () => {
     expect(ran).toEqual([]);
   });
 
+  it('defers while waiting for a slow guild gate', async () => {
+    gateDelayMs = 120;
+    const fake = await run(makeRouter(), fakeCommand({ command: 'demo', subcommand: 'echo', options: { text: 'hi' } }));
+    expect(fake.responses).toEqual([
+      { kind: 'deferReply', payload: {} },
+      { kind: 'editReply', payload: { content: 'hi x1', allowedMentions: { parse: [] } } },
+    ]);
+  });
+
+  it('reports a guild that is still not ready after a slow gate', async () => {
+    gateDelayMs = 120;
+    gateOpen = false;
+    const fake = await run(makeRouter(), fakeCommand({ command: 'demo', subcommand: 'echo', options: { text: 'hi' } }));
+    expect(fake.responses.map((response) => response.kind)).toEqual(['deferReply', 'editReply']);
+    expect(fake.responses[1]!.payload).toMatchObject({ content: NOT_READY });
+  });
+
   it('logs answers Discord rejects instead of throwing', async () => {
     const router = makeRouter();
     await run(router, fakeCommand({ command: 'demo', subcommand: 'echo', options: { text: 'x' }, rejectResponses: true }));
@@ -259,7 +282,10 @@ describe('InteractionRouter autocomplete', () => {
     );
     const choices = fake.responses[0]!.payload as Array<{ name: string; value: string }>;
     expect(choices).toHaveLength(25);
-    expect(choices[0]).toEqual({ name: 'ab-0', value: 'v0' });
+    expect(choices.some((choice) => choice.name === 'long value')).toBe(false);
+    expect(choices[0]).toEqual({ name: `${'n'.repeat(99)}…`, value: 'long-name' });
+    expect(choices[0]!.name).toHaveLength(100);
+    expect(choices[1]).toEqual({ name: 'ab-0', value: 'v0' });
   });
 
   it('answers with no choices on failure, for disabled modules and for options without autocomplete', async () => {
