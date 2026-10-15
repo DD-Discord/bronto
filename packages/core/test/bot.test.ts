@@ -1,6 +1,8 @@
 import { Events } from 'discord.js';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ConfigError } from '../src/config/errors.js';
+import { defineCommand } from '../src/interactions/commands.js';
 import { createDatabase, type Database } from '../src/db/database.js';
 import { markGuildLeft, upsertGuild } from '../src/db/guilds.js';
 import { guildModules, guilds } from '../src/db/schema.js';
@@ -8,6 +10,7 @@ import { createBot, StartupError, type Bot } from '../src/runtime/bot.js';
 import { coreEvents, on } from '../src/runtime/events.js';
 import type { ModuleDefinition } from '../src/runtime/module.js';
 import { FakeClient } from '../src/testing/fake-client.js';
+import { fakeCommand } from '../src/testing/interactions.js';
 import { widgetsModule } from './fixtures/widgets/module.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
 import { captureLog } from '../src/testing/log.js';
@@ -39,6 +42,29 @@ function makeBot(modules: ModuleDefinition[], database: Database = t.database, p
   bots.push(bot);
   return { bot, client, lines };
 }
+
+/** Widgets with a /widgets command and recorded guildReady calls. */
+function commandWidgets(calls: string[]): ModuleDefinition {
+  return widgetsModule({
+    commands: [
+      defineCommand({
+        name: 'widgets',
+        description: 'Widgets',
+        execute: async (ctx) => {
+          await ctx.reply(`widgets in ${ctx.guildId} for ${ctx.actorId}`);
+        },
+      }),
+    ],
+    hooks: {
+      guildReady: (ctx) => {
+        calls.push(`ready:${ctx.guildId}`);
+      },
+    },
+  });
+}
+
+const commandNames = (client: FakeClient, guildId: string) =>
+  (client.registered.get(guildId) as Array<{ name: string }> | undefined)?.map((command) => command.name);
 
 function recordingWidgets(calls: string[]): ModuleDefinition {
   return widgetsModule({
@@ -297,5 +323,53 @@ describe('createBot', () => {
     await stopping;
     await new Promise((done) => setTimeout(done, 100));
     expect(cleaned).toEqual([]);
+  });
+
+  it('registers core and module commands when a guild is set up, and only once', async () => {
+    const { bot, client } = makeBot([commandWidgets([])]);
+    cache(client, 'g1');
+    await bot.start();
+    await ready(bot, client);
+    expect(commandNames(client, 'g1')).toEqual(['modules', 'widgets']);
+    expect(client.commandWrites).toHaveLength(1);
+    bot.lifecycle.forget('g1');
+    client.emit(Events.GuildAvailable, { id: 'g1' });
+    await bot.idle();
+    expect(client.commandWrites).toHaveLength(1);
+  });
+
+  it('answers commands once their guild is set up', async () => {
+    const { bot, client } = makeBot([commandWidgets([])]);
+    await bot.start();
+    await ready(bot, client);
+    const fake = fakeCommand({ command: 'widgets', guildId: 'g2', userId: 'u7' });
+    client.emit(Events.InteractionCreate, fake);
+    await bot.idle();
+    expect(fake.responses).toEqual([
+      { kind: 'reply', payload: { content: 'widgets in g2 for u7', allowedMentions: { parse: [] } } },
+    ]);
+  });
+
+  it('removes and restores module commands with /modules and runs guildReady on enable', async () => {
+    const calls: string[] = [];
+    const { bot, client } = makeBot([commandWidgets(calls)]);
+    cache(client, 'g1');
+    await bot.start();
+    await ready(bot, client);
+    const say = async (subcommand: string) => {
+      client.emit(Events.InteractionCreate, fakeCommand({ command: 'modules', subcommand, options: { module: 'widgets' } }));
+      await bot.idle();
+    };
+    await say('disable');
+    expect(commandNames(client, 'g1')).toEqual(['modules']);
+    await say('enable');
+    expect(commandNames(client, 'g1')).toEqual(['modules', 'widgets']);
+    expect(calls).toEqual(['ready:g1', 'ready:g1']);
+  });
+
+  it('refuses two modules defining the same command', () => {
+    const clash = defineCommand({ name: 'widgets', description: 'Clash', execute: () => undefined });
+    const other = widgetsModule({ name: 'gadgets', db: undefined, commands: [clash] });
+    expect(() => makeBot([commandWidgets([]), other])).toThrow(ConfigError);
   });
 });

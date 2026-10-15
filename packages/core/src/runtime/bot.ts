@@ -1,11 +1,15 @@
-import { Events, type Client, type Guild } from 'discord.js';
+import { Events, type Client, type Guild, type Interaction } from 'discord.js';
 import type { Logger } from 'pino';
 import type { CoreConfig } from '../config/schema.js';
 import { checkRoles, formatSchemaProblems } from '../db/checks.js';
 import type { Database } from '../db/database.js';
 import { prepareDatabase } from '../db/prepare.js';
 import { listMigratedModules } from '../db/purge.js';
-import { createModuleRuntimes, type ModuleRuntime } from './context.js';
+import { commandToJson } from '../interactions/commands.js';
+import { createModulesCommand } from '../interactions/modules-command.js';
+import { InteractionRouter } from '../interactions/router.js';
+import { CommandSync, restCommandRegistry } from '../interactions/sync.js';
+import { createCoreRuntime, createModuleRuntimes, type ModuleRuntime } from './context.js';
 import { Dispatcher } from './dispatcher.js';
 import { ModuleEnablement } from './enablement.js';
 import { GuildLifecycle } from './lifecycle.js';
@@ -35,6 +39,8 @@ export interface BotOptions {
   log: Logger;
   /** Time between purges of guilds past their grace period; one day by default. */
   purgeIntervalMs?: number;
+  /** Time after which an unanswered interaction is deferred; 2 s by default. */
+  deferAfterMs?: number;
 }
 
 export interface Bot {
@@ -42,6 +48,8 @@ export interface Bot {
   readonly dispatcher: Dispatcher;
   readonly enablement: ModuleEnablement;
   readonly lifecycle: GuildLifecycle;
+  readonly router: InteractionRouter;
+  readonly commands: CommandSync;
   /** Migrates, grants and checks the database; throws StartupError when it is unsafe to run. */
   prepare(): Promise<void>;
   /** Prepares the database, attaches the gateway listeners and logs in. */
@@ -62,25 +70,53 @@ export function createBot(options: BotOptions): Bot {
   const started = new Promise<void>((resolve) => {
     markStarted = resolve;
   });
-  const dispatcher = new Dispatcher({
+  // Gateway events and interactions run only once their guild is set up, so module switches are loaded.
+  const guildGate = async (guildId: string): Promise<boolean> => {
+    await started;
+    if (stopped) return false;
+    try {
+      await lifecycle.ready(guildId);
+      return true;
+    } catch (error) {
+      log.error({ err: error }, `Setting up guild ${guildId} failed`);
+      return false;
+    }
+  };
+  const dispatcher = new Dispatcher({ runtimes, database, enablement, queue, guildGate });
+  const modulesCommand = createModulesCommand({
     runtimes,
-    database,
     enablement,
-    queue,
-    // Gateway events run only once their guild is set up, so module switches are loaded.
-    guildGate: async (guildId) => {
-      await started;
-      if (stopped) return false;
-      try {
-        await lifecycle.ready(guildId);
-        return true;
-      } catch (error) {
-        log.error({ err: error }, `Setting up guild ${guildId} failed`);
-        return false;
-      }
-    },
+    setModuleEnabled: (guildId, module, enabled, actorId) => lifecycle.setModuleEnabled(guildId, module, enabled, actorId),
   });
-  const lifecycle = new GuildLifecycle({ runtimes, dispatcher, enablement, database, commands: { sync: async () => undefined } });
+  const router = new InteractionRouter({
+    sources: [
+      { runtime: createCoreRuntime({ client, database, log }), commands: [modulesCommand], components: [], alwaysEnabled: true },
+      ...runtimes.map((runtime) => ({
+        runtime,
+        commands: runtime.loaded.definition.commands ?? [],
+        components: runtime.loaded.definition.components ?? [],
+      })),
+    ],
+    dispatcher,
+    enablement,
+    guildGate,
+    log,
+    deferAfterMs: options.deferAfterMs,
+  });
+  const commands = new CommandSync({
+    registry: restCommandRegistry(client),
+    desired: (guildId) => router.commandsFor(guildId).map(commandToJson),
+    log,
+  });
+  const lifecycle = new GuildLifecycle({
+    runtimes,
+    dispatcher,
+    enablement,
+    database,
+    commands,
+    // Optional chaining on members too: test clients cache plain guild objects.
+    botPermissions: (guildId) => client.guilds.cache.get(guildId)?.members?.me?.permissions ?? null,
+  });
   const pending = new Set<Promise<void>>();
   const listeners: Array<[string, (...args: any[]) => void]> = [];
   let prepared = false;
@@ -175,6 +211,9 @@ export function createBot(options: BotOptions): Bot {
     listen(Events.GuildCreate, (guild: Guild) => setUp(guild.id, true));
     listen(Events.GuildUnavailable, (guild: Guild) => lifecycle.forget(guild.id));
     listen(Events.GuildDelete, (guild: Guild) => track(lifecycle.leave(guild.id), `Leaving guild ${guild.id} failed`));
+    listen(Events.InteractionCreate, (interaction: Interaction) =>
+      track(router.handle(interaction), 'Handling an interaction failed'),
+    );
     for (const event of dispatcher.discordEvents()) {
       listen(event, (...args: unknown[]) => {
         dispatcher.handleDiscord(event, args).catch((error: unknown) => {
@@ -194,6 +233,7 @@ export function createBot(options: BotOptions): Bot {
     }
     await dispatcher.idle();
     await queue.idle();
+    await commands.idle();
   }
 
   return {
@@ -201,6 +241,8 @@ export function createBot(options: BotOptions): Bot {
     dispatcher,
     enablement,
     lifecycle,
+    router,
+    commands,
     prepare,
     async start() {
       await prepare();

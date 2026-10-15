@@ -35,4 +35,14 @@ describe('@bronto/core exports', () => {
   it('does not load drizzle-kit at runtime', () => {
     expect(core).not.toHaveProperty('defineModuleDrizzleConfig');
   });
+
+  it('exposes the interaction API', () => {
+    for (const name of [
+      'defineCommand', 'defineSubcommand', 'defineButton', 'defineModal', 'opt', 'UserError', 'isUserError',
+      'InteractionRouter', 'CommandSync', 'restCommandRegistry', 'createModulesCommand', 'commandToJson', 'Responder',
+      'batchLines', 'truncate', 'plainText', 'createCoreRuntime',
+    ]) {
+      expect(core, name).toHaveProperty(name);
+    }
+  });
 });
