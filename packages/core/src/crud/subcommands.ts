@@ -43,7 +43,10 @@ export type CrudValues<TFields, TKeyName extends string, TKeyValue> = { [K in ke
 };
 
 export interface CrudHooks<TTable extends PgTable, TValues> {
-  /** Runs in `create` and `edit` before validation, outside any transaction; returns extra column values. */
+  /**
+   * Runs in `create` and `edit` outside any transaction and returns extra column values. It runs before `validate` and
+   * before the write, which can still fail (e.g. on a duplicate key); side effects it makes are not rolled back.
+   */
   prepare?: (
     ctx: CommandContext,
     values: TValues,
@@ -178,8 +181,15 @@ export function crudSubcommands<
   const edit = async (ctx: CommandContext, raw: Record<string, unknown>): Promise<void> => {
     const recordKey = keyFrom(ctx, raw, false);
     const existing = await load(ctx, recordKey);
-    const changes = { ...columnValues(raw), ...((await hooks.prepare?.(ctx, raw as Values, existing)) ?? {}) };
-    if (Object.keys(changes).length === 0) throw new UserError('Nothing to change; pass at least one option.');
+    const nothingToChange = 'Nothing to change; pass at least one option.';
+    // Checked before prepare, which may have side effects such as Discord calls.
+    if (Object.keys(fields).every((name) => raw[name] === null || raw[name] === undefined)) throw new UserError(nothingToChange);
+    const changes: Record<string, unknown> = {
+      ...columnValues(raw),
+      ...((await hooks.prepare?.(ctx, raw as Values, existing)) ?? {}),
+    };
+    delete changes[entity.key];
+    if (Object.keys(changes).length === 0) throw new UserError(nothingToChange);
     check({ ...existing, ...changes } as Partial<Row>);
     const row = await ctx.db.run(async (tx) => {
       const updated = (await tx
@@ -214,9 +224,10 @@ export function crudSubcommands<
     const recordKey = keyFrom(ctx, raw, true);
     const record = await load(ctx, recordKey);
     await hooks.beforeDelete?.(ctx, record);
-    await ctx.db.run(async (tx) => {
-      await tx.delete(entity.table).where(eq(entity.keyColumn, recordKey));
+    const deleted = await ctx.db.run(async (tx) => {
+      return (await tx.delete(entity.table).where(eq(entity.keyColumn, recordKey)).returning()).length;
     });
+    if (deleted === 0) throw new UserError(notFound(recordKey));
     await ctx.reply(`**${singular} deleted:** ${entity.formatShort(record)}`);
   };
 

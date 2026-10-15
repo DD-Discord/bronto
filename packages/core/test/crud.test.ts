@@ -42,14 +42,21 @@ const widgetCommand = defineCommand({
       prepare: (_ctx, values, existing) => {
         calls.push(`prepare:${values.id}:${existing?.label ?? 'new'}:${values.count}`);
         if (values.label === 'refuse') throw new UserError('Prepare refused.');
+        if (values.label === 'rekey') return { id: 'stolen', label: 'rekeyed' };
         return values.label === 'shout' ? { label: 'SHOUT' } : undefined;
       },
       validate: (record) => (record.count !== undefined && record.count < 0 ? ['Count must not be negative.'] : []),
       afterWrite: (_ctx, record, action) => {
         calls.push(`${action}:${record.id}`);
       },
-      beforeDelete: (_ctx, record) => {
+      beforeDelete: async (ctx, record) => {
         calls.push(`delete:${record.id}`);
+        // Simulates another delete winning the race.
+        if (record.label === 'vanish') {
+          await ctx.db.run(async (tx) => {
+            await tx.delete(widgetItems).where(eq(widgetItems.id, record.id));
+          });
+        }
       },
     },
   }),
@@ -220,8 +227,14 @@ describe('edit', () => {
     expect((await rows())[0]).toMatchObject({ label: 'Blue', count: 5, updatedBy: 'u5' });
   });
 
-  it('refuses an edit without changes', async () => {
+  it('refuses an edit without changes before running prepare', async () => {
     expect(contents(await say('widget', 'edit', { id: 'w1' }))).toEqual(['Nothing to change; pass at least one option.']);
+    expect(calls).toEqual([]);
+  });
+
+  it('never changes the key, even when prepare returns one', async () => {
+    expect((await say('widget', 'edit', { id: 'w1', label: 'rekey' }))[0]!.content).toBe('**Widget updated.**');
+    expect((await rows()).map((row) => [row.id, row.label])).toEqual([['w1', 'rekeyed']]);
   });
 
   it('validates the merged record', async () => {
@@ -264,6 +277,12 @@ describe('show, list and delete', () => {
     expect(payloads.length).toBeGreaterThan(1);
     expect(payloads.every((payload) => (payload.content ?? '').length <= 2000)).toBe(true);
     expect(payloads.map((payload) => payload.content).join('\n').match(/^- /gm)).toHaveLength(150);
+  });
+
+  it('reports a record that disappeared before the delete', async () => {
+    await say('widget', 'create', { id: 'w1', label: 'vanish' });
+    expect(contents(await say('widget', 'delete', { id: 'w1' }))).toEqual(['There is no widget for `w1`.']);
+    expect(await rows()).toEqual([]);
   });
 
   it('deletes a record after beforeDelete', async () => {
