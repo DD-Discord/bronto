@@ -10,7 +10,7 @@ import { defineModule } from '../src/runtime/module.js';
 import { KeyedQueue } from '../src/runtime/queue.js';
 import type { HandlerContext } from '../src/runtime/types.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
-import { captureLog, type LogLine } from './log.js';
+import { captureLog, type LogLine } from '../src/testing/log.js';
 import { createTestDatabase, setUpSchema, type TestDatabase } from './test-db.js';
 
 interface Seen {

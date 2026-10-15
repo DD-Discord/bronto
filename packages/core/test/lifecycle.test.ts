@@ -10,7 +10,7 @@ import { coreEvents, on } from '../src/runtime/events.js';
 import { GuildLifecycle } from '../src/runtime/lifecycle.js';
 import { defineModule } from '../src/runtime/module.js';
 import { KeyedQueue } from '../src/runtime/queue.js';
-import { captureLog } from './log.js';
+import { captureLog } from '../src/testing/log.js';
 import { createTestDatabase, setUpSchema, type TestDatabase } from './test-db.js';
 
 const DAY = 86_400_000;

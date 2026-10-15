@@ -1,6 +1,6 @@
 import type { Client } from 'discord.js';
 import { describe, expect, it } from 'vitest';
-import { captureLog } from '../../test/log.js';
+import { captureLog } from '../testing/log.js';
 import { runInScope } from '../db/context.js';
 import type { Database } from '../db/database.js';
 import { createModuleRuntimes, type RuntimeServices } from './context.js';

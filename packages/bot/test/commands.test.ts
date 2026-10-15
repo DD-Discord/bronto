@@ -4,10 +4,9 @@ import { join } from 'node:path';
 import { guilds, StartupError, type ModuleDefinition, type ModuleImporter } from '@bronto/core';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { FakeClient } from '../../core/test/fake-client.js';
+import { FakeClient, captureLog } from '@bronto/core/testing';
 import { widgetsModule } from '../../core/test/fixtures/widgets/module.js';
 import { widgetItems } from '../../core/test/fixtures/widgets/schema.js';
-import { captureLog } from '../../core/test/log.js';
 import { createTestDatabase, setUpSchema, type TestDatabase } from '../../core/test/test-db.js';
 import { CliError, runDeleteGuild, runPurge, runStart, type CommandDeps } from '../src/commands.js';
 

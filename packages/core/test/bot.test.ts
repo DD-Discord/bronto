@@ -7,10 +7,10 @@ import { guildModules, guilds } from '../src/db/schema.js';
 import { createBot, StartupError, type Bot } from '../src/runtime/bot.js';
 import { coreEvents, on } from '../src/runtime/events.js';
 import type { ModuleDefinition } from '../src/runtime/module.js';
-import { FakeClient } from './fake-client.js';
+import { FakeClient } from '../src/testing/fake-client.js';
 import { widgetsModule } from './fixtures/widgets/module.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
-import { captureLog } from './log.js';
+import { captureLog } from '../src/testing/log.js';
 import { createTestDatabase, type TestDatabase } from './test-db.js';
 
 let t: TestDatabase;

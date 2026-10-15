@@ -10,4 +10,4 @@
 - Modules are `defineModule()` definitions. They declare listeners (`on(...)`) and hooks; they never call `client.on` themselves.
 - Handlers `await` all database work inside the handler. A Drizzle query awaited outside the handler's scope loses the guild and the acting user.
 - A module emits only its own events, uses other modules only through their `api` (declared in `dependsOn`), and never touches another module's tables.
-- Tests never connect to Discord; use `FakeClient` from `packages/core/test/fake-client.ts`.
+- Tests never connect to Discord; use `FakeClient` and the fake interactions from `@bronto/core/testing`.
