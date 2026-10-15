@@ -1,0 +1,116 @@
+import { MessageFlags } from 'discord.js';
+import { describe, expect, it } from 'vitest';
+import { fakeCommand, type FakeInteraction } from '../testing/interactions.js';
+import { DONE, Responder, type ResponseTarget } from './responder.js';
+
+const NO_PINGS = { parse: [] };
+
+function responder(ephemeral = false): { fake: FakeInteraction; responder: Responder } {
+  const fake = fakeCommand({ command: 'x' });
+  return { fake, responder: new Responder(fake as unknown as ResponseTarget, ephemeral) };
+}
+
+const kinds = (fake: FakeInteraction) => fake.responses.map((response) => response.kind);
+
+describe('Responder', () => {
+  it('answers with a reply, then follow-ups', async () => {
+    const { fake, responder: r } = responder();
+    await r.send('first');
+    await r.send({ content: 'second', ephemeral: true });
+    expect(fake.responses).toEqual([
+      { kind: 'reply', payload: { content: 'first', allowedMentions: NO_PINGS } },
+      { kind: 'followUp', payload: { content: 'second', allowedMentions: NO_PINGS, flags: MessageFlags.Ephemeral } },
+    ]);
+  });
+
+  it('uses its default visibility', async () => {
+    const { fake, responder: r } = responder(true);
+    await r.send('private');
+    expect(fake.responses[0]!.payload).toMatchObject({ flags: MessageFlags.Ephemeral });
+  });
+
+  it('edits a deferred answer before following up', async () => {
+    const { fake, responder: r } = responder(true);
+    await r.defer();
+    await r.defer();
+    await r.send('result');
+    await r.send('more');
+    expect(kinds(fake)).toEqual(['deferReply', 'editReply', 'followUp']);
+    expect(fake.responses[0]!.payload).toEqual({ flags: MessageFlags.Ephemeral });
+    expect(fake.responses[1]!.payload).toEqual({ content: 'result', allowedMentions: NO_PINGS });
+  });
+
+  it('serializes a defer and a reply started together', async () => {
+    const { fake, responder: r } = responder();
+    await Promise.all([r.defer(), r.send('result')]);
+    expect(kinds(fake)).toEqual(['deferReply', 'editReply']);
+  });
+
+  it('does not defer once answered', async () => {
+    const { fake, responder: r } = responder();
+    await r.send('done');
+    await r.defer();
+    expect(kinds(fake)).toEqual(['reply']);
+  });
+
+  it('reports failures privately in every state', async () => {
+    const open = responder();
+    await open.responder.fail('nope');
+    expect(open.fake.responses).toEqual([
+      { kind: 'reply', payload: { content: 'nope', allowedMentions: NO_PINGS, flags: MessageFlags.Ephemeral } },
+    ]);
+
+    const deferred = responder();
+    await deferred.responder.defer();
+    await deferred.responder.fail('nope');
+    expect(kinds(deferred.fake)).toEqual(['deferReply', 'editReply']);
+
+    const answered = responder();
+    await answered.responder.send('partial');
+    await answered.responder.fail('nope');
+    expect(answered.fake.responses[1]).toEqual({
+      kind: 'followUp',
+      payload: { content: 'nope', allowedMentions: NO_PINGS, flags: MessageFlags.Ephemeral },
+    });
+  });
+
+  it('finishes unanswered interactions with Done', async () => {
+    const open = responder();
+    await open.responder.finish();
+    expect(open.fake.responses[0]).toEqual({
+      kind: 'reply',
+      payload: { content: DONE, allowedMentions: NO_PINGS, flags: MessageFlags.Ephemeral },
+    });
+
+    const deferred = responder();
+    await deferred.responder.defer();
+    await deferred.responder.finish();
+    expect(kinds(deferred.fake)).toEqual(['deferReply', 'editReply']);
+
+    const answered = responder();
+    await answered.responder.send('x');
+    await answered.responder.finish();
+    expect(kinds(answered.fake)).toEqual(['reply']);
+  });
+
+  it('shows a modal only as the first answer', async () => {
+    const first = responder();
+    await first.responder.showModal({ custom_id: 'a:b', title: 'T', components: [] });
+    expect(kinds(first.fake)).toEqual(['showModal']);
+    await first.responder.finish();
+    expect(kinds(first.fake)).toEqual(['showModal']);
+
+    const late = responder();
+    await late.responder.send('x');
+    await expect(late.responder.showModal({ custom_id: 'a:b', title: 'T', components: [] })).rejects.toThrow(
+      'only be the first answer',
+    );
+  });
+
+  it('keeps working after a rejected call', async () => {
+    const fake = fakeCommand({ command: 'x', rejectResponses: true });
+    const r = new Responder(fake as unknown as ResponseTarget, false);
+    await expect(r.send('x')).rejects.toThrow('Unknown interaction');
+    await expect(r.fail('y')).rejects.toThrow('Unknown interaction');
+  });
+});
