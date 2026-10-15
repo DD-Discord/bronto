@@ -73,6 +73,12 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
 // Node runs the resolved file, so compare against the real path of argv[1] (it may be a symlink, e.g. a bin link).
 const entry = process.argv[1];
 if (entry !== undefined && import.meta.url === pathToFileURL(realpathSync(entry)).href) {
+  // A local .env is convenient in development; variables already set (compose, CI) are never overridden.
+  try {
+    process.loadEnvFile();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
   const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
   const io: CliIo = {
     deps: { importer: createImporter(), env: process.env, log, createClient: createDiscordClient },

@@ -6,4 +6,5 @@ database:
   appUrl: ${DATABASE_APP_URL}
   adminUrl: ${DATABASE_ADMIN_URL}
 # One key per module package to load; an empty value loads the module with its defaults.
-modules: {}
+modules:
+  "@bronto/example-notes": {}

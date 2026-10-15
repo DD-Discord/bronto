@@ -11,3 +11,7 @@
 - Handlers `await` all database work inside the handler. A Drizzle query awaited outside the handler's scope loses the guild and the acting user.
 - A module emits only its own events, uses other modules only through their `api` (declared in `dependsOn`), and never touches another module's tables.
 - Tests never connect to Discord; use `FakeClient` and the fake interactions from `@bronto/core/testing`.
+- Interaction handlers answer only through `ctx.reply`/`ctx.followUp`/`ctx.defer`/`ctx.showModal`, and throw `UserError` for messages meant for the user.
+- Module schema files import `guildTable`/`globalTable` from `@bronto/core/tables`; drizzle-kit loads schema files, so they must not import discord.js.
+- Never keep a transaction (`ctx.db.run`) open across a Discord API call.
+- A queued task (`ctx.queue.run`) never waits for a task of its own key.
