@@ -86,6 +86,16 @@ const demoCommand = defineCommand({
           description: 'Thing',
           autocomplete: (_ctx, query) => {
             if (query === 'fail') throw new Error('autocomplete broke');
+            if (query === 'refuse') throw new UserError('No suggestions.');
+            if (query === 'blank') {
+              return [
+                { name: ' ', value: 'v-blank' },
+                { name: '', value: '' },
+                { name: '', value: 42 },
+                { name: '', value: 'y'.repeat(100) },
+                { name: 'ok', value: 'ok' },
+              ];
+            }
             return [
               { name: 'long value', value: 'x'.repeat(101) },
               { name: 'n'.repeat(150), value: 'long-name' },
@@ -272,6 +282,21 @@ describe('InteractionRouter commands', () => {
     const fake = await run(makeRouter(), fakeCommand({ command: 'demo', subcommand: 'echo', guildId: null }));
     expect(fake.responses).toEqual([]);
   });
+
+  it('tells the user to wait in a guild that is not cached yet', async () => {
+    const router = makeRouter();
+    const command = await run(router, fakeCommand({ command: 'demo', subcommand: 'echo', options: { text: 'x' }, cached: false }));
+    const button = await run(router, fakeButton({ customId: press.customId(), cached: false }));
+    for (const fake of [command, button]) {
+      expect(fake.responses).toEqual([{ kind: 'reply', payload: privately(NOT_READY) }]);
+    }
+    const autocomplete = await run(
+      router,
+      fakeAutocomplete({ command: 'demo', subcommand: 'pick', focused: 'thing', options: { thing: 'ab' }, cached: false }),
+    );
+    expect(autocomplete.responses).toEqual([{ kind: 'respond', payload: [] }]);
+    expect(ran).toEqual([]);
+  });
 });
 
 describe('InteractionRouter autocomplete', () => {
@@ -286,6 +311,29 @@ describe('InteractionRouter autocomplete', () => {
     expect(choices[0]).toEqual({ name: `${'n'.repeat(99)}…`, value: 'long-name' });
     expect(choices[0]!.name).toHaveLength(100);
     expect(choices[1]).toEqual({ name: 'ab-0', value: 'v0' });
+  });
+
+  it('names choices without a name after their value and drops those without either', async () => {
+    const fake = await run(
+      makeRouter(),
+      fakeAutocomplete({ command: 'demo', subcommand: 'pick', focused: 'thing', options: { thing: 'blank' } }),
+    );
+    expect(fake.responses[0]!.payload).toEqual([
+      { name: 'v-blank', value: 'v-blank' },
+      { name: '42', value: 42 },
+      { name: 'y'.repeat(100), value: 'y'.repeat(100) },
+      { name: 'ok', value: 'ok' },
+    ]);
+  });
+
+  it('logs a UserError from autocomplete at debug level only', async () => {
+    handlerLines.length = 0;
+    const fake = await run(
+      makeRouter(),
+      fakeAutocomplete({ command: 'demo', subcommand: 'pick', focused: 'thing', options: { thing: 'refuse' } }),
+    );
+    expect(fake.responses).toEqual([{ kind: 'respond', payload: [] }]);
+    expect(handlerLines.map((line) => [line.level, line.msg])).toEqual([[20, 'Handler stopped']]);
   });
 
   it('answers with no choices on failure, for disabled modules and for options without autocomplete', async () => {

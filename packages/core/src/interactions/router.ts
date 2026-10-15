@@ -99,7 +99,15 @@ export class InteractionRouter {
   }
 
   async handle(interaction: Interaction): Promise<void> {
-    if (!interaction.inCachedGuild()) return;
+    if (!interaction.inCachedGuild()) {
+      // Direct messages are not supported; a guild the client has not cached yet gets a polite "not ready".
+      if (!interaction.inGuild()) return;
+      if (interaction.isAutocomplete()) return this.answer(interaction.respond([]), `/${interaction.commandName} autocomplete`);
+      if (interaction.isRepliable()) {
+        return this.answer(new Responder(interaction as ResponseTarget, true).fail(NOT_READY), 'uncached guild');
+      }
+      return;
+    }
     if (interaction.isChatInputCommand()) return this.command(interaction);
     if (interaction.isAutocomplete()) return this.autocomplete(interaction);
     if (interaction.isButton() || interaction.isModalSubmit()) return this.component(interaction);
@@ -144,7 +152,7 @@ export class InteractionRouter {
     const label = `/${[interaction.commandName, subcommandPath(group, subcommand)].filter((part) => part !== '').join(' ')} ${focused.name}`;
     const result = await this.dispatcher.runHandler(entry.source.runtime, interaction.guildId, interaction.user.id, label, async (ctx) => {
       choices = await suggest(ctx, String(focused.value));
-    });
+    }, { expectedError: isUserError });
     await this.respond(interaction, result.ok ? choices : []);
   }
 
@@ -214,10 +222,15 @@ export class InteractionRouter {
   }
 
   private async respond(interaction: AutocompleteInteraction<'cached'>, choices: Choice[]): Promise<void> {
+    // Discord rejects the whole list if any choice has an empty name, so such choices are named after their value.
     const valid = choices
       .filter((choice) => typeof choice.value !== 'string' || choice.value.length <= MAX_CHOICE_LENGTH)
-      .slice(0, MAX_CHOICES)
-      .map((choice) => ({ name: truncate(choice.name, MAX_CHOICE_LENGTH), value: choice.value }));
+      .map((choice) => {
+        const name = choice.name.trim() === '' ? String(choice.value) : choice.name;
+        return { name: truncate(name, MAX_CHOICE_LENGTH), value: choice.value };
+      })
+      .filter((choice) => choice.name.trim() !== '')
+      .slice(0, MAX_CHOICES);
     await this.answer(interaction.respond(valid), `/${interaction.commandName} autocomplete`);
   }
 

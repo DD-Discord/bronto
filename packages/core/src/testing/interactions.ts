@@ -13,6 +13,8 @@ export interface FakeInteractionBase {
   userId: string;
   /** Makes every response method reject, as Discord does for an expired interaction. */
   rejectResponses: boolean;
+  /** Whether the guild is in the client's cache; true by default. False fakes a guild the bot has not loaded yet. */
+  cached: boolean;
 }
 
 export type FakeCommandInput = Partial<FakeInteractionBase> & {
@@ -56,6 +58,7 @@ export class FakeInteraction {
   readonly fields: { getTextInputValue(customId: string): string };
   private readonly kind: Kind;
   private readonly rejectResponses: boolean;
+  private readonly cached: boolean;
 
   constructor(kind: Kind, base: Partial<FakeInteractionBase>, details: Details) {
     this.kind = kind;
@@ -63,6 +66,7 @@ export class FakeInteraction {
     this.channelId = base.channelId ?? 'c1';
     this.user = { id: base.userId ?? 'u1' };
     this.rejectResponses = base.rejectResponses ?? false;
+    this.cached = base.cached ?? true;
     this.commandName = details.command;
     this.customId = details.customId;
     const values = details.options ?? {};
@@ -92,7 +96,7 @@ export class FakeInteraction {
   }
 
   inCachedGuild(): boolean {
-    return this.guildId !== null;
+    return this.guildId !== null && this.cached;
   }
 
   inGuild(): boolean {
