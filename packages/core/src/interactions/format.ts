@@ -19,18 +19,21 @@ export function truncate(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
 }
 
-/** Strips Discord markdown, for places that show plain text such as autocomplete choices. */
+/**
+ * Strips Discord markdown, for places that show plain text such as autocomplete choices. Emphasis markers count only
+ * at word boundaries and `#` only as a heading marker, so `snake_case`, `2 * 3` and mentions such as `<#id>` stay.
+ */
 export function plainText(value: string): string {
   return value
     .replace(/```([\s\S]*?)```/g, '$1')
     .replace(/`([^`]*)`/g, '$1')
-    .replace(/\*\*([^*]*)\*\*/g, '$1')
-    .replace(/\*([^*]*)\*/g, '$1')
-    .replace(/__([^_]*)__/g, '$1')
-    .replace(/_([^_]*)_/g, '$1')
+    .replace(/(?<![\w*])\*\*(?=\S)([^*\n]*?\S)\*\*(?![\w*])/g, '$1')
+    .replace(/(?<![\w*])\*(?=\S)([^*\n]*?\S)\*(?![\w*])/g, '$1')
+    .replace(/(?<!\w)__(?=\S)([^_\n]*?\S)__(?!\w)/g, '$1')
+    .replace(/(?<!\w)_(?=\S)([^_\n]*?\S)_(?!\w)/g, '$1')
     .replace(/~~([^~]*)~~/g, '$1')
     .replace(/\|\|([^|]*)\|\|/g, '$1')
     .replace(/^>\s?/gm, '')
-    .replace(/#/g, ' ')
+    .replace(/^#{1,3}\s+/gm, '')
     .trim();
 }

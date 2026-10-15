@@ -24,6 +24,13 @@ describe('truncate', () => {
 
 describe('plainText', () => {
   it('strips markdown', () => {
-    expect(plainText('**bold** `code` ~~gone~~ ||spoiler|| # head')).toBe('bold code gone spoiler   head');
+    expect(plainText('**bold** *it* __under__ _em_ `code` ~~gone~~ ||spoiler||')).toBe('bold it under em code gone spoiler');
+    expect(plainText('# head\n## sub\n> quote')).toBe('head\nsub\nquote');
+  });
+
+  it('keeps characters that are not markdown', () => {
+    for (const text of ['foo_bar_baz', '2 * 3 * 4', '<#123>', '<@123> <@&456>', '#general', 'a # b', 'snake_case_name']) {
+      expect(plainText(text)).toBe(text);
+    }
   });
 });
