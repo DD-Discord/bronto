@@ -80,7 +80,7 @@ export function createBot(options: BotOptions): Bot {
       }
     },
   });
-  const lifecycle = new GuildLifecycle({ runtimes, dispatcher, enablement, database });
+  const lifecycle = new GuildLifecycle({ runtimes, dispatcher, enablement, database, commands: { sync: async () => undefined } });
   const pending = new Set<Promise<void>>();
   const listeners: Array<[string, (...args: any[]) => void]> = [];
   let prepared = false;

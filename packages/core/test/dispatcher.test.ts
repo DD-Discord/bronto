@@ -144,6 +144,42 @@ describe('Dispatcher', () => {
     expect((failure?.err as { message: string }).message).toMatch(/cannot emit alpha\.counted/);
   });
 
+  it('runs GuildDelete and GuildUnavailable listeners without waiting for the gate', async () => {
+    const removed: string[] = [];
+    const watcher = defineModule({
+      name: 'watcher',
+      listeners: [
+        on(Events.GuildDelete, (ctx) => {
+          removed.push(`delete:${ctx.guildId}`);
+        }),
+        on(Events.GuildUnavailable, (ctx) => {
+          removed.push(`unavailable:${ctx.guildId}`);
+        }),
+      ],
+    });
+    const watcherRuntimes = createModuleRuntimes([{ packageName: '@test/watcher', definition: watcher, config: {} }], {
+      client: {} as Client,
+      database: t.database,
+      log: captureLog().log,
+    });
+    const gate: string[] = [];
+    const gated = new Dispatcher({
+      runtimes: watcherRuntimes,
+      database: t.database,
+      enablement,
+      queue: new KeyedQueue(() => undefined),
+      guildGate: async (guildId) => {
+        gate.push(guildId);
+        return false;
+      },
+    });
+    const guild = Object.assign(Object.create(Guild.prototype) as Guild, { id: 'g5' });
+    await gated.handleDiscord(Events.GuildDelete, [guild]);
+    await gated.handleDiscord(Events.GuildUnavailable, [guild]);
+    expect(removed).toEqual(['delete:g5', 'unavailable:g5']);
+    expect(gate).toEqual([]);
+  });
+
   it('runs no handlers for a guild the gate turns away', async () => {
     const gated = new Dispatcher({
       runtimes,

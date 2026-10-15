@@ -1,4 +1,4 @@
-import { Collection, Guild } from 'discord.js';
+import { Collection, Events, Guild } from 'discord.js';
 import { runInScope } from '../db/context.js';
 import type { Database } from '../db/database.js';
 import { createScopedDb } from '../db/scoped.js';
@@ -10,6 +10,9 @@ import type { HandlerContext } from './types.js';
 
 type DiscordListener = Extract<Listener, { kind: 'discord' }>;
 type ModuleListener = Extract<Listener, { kind: 'module' }>;
+
+// These events mean the guild is gone or going; gating them would set the guild up again.
+const UNGATED_EVENTS = new Set<DiscordEventName>([Events.GuildDelete, Events.GuildUnavailable]);
 
 export interface DispatcherOptions {
   runtimes: ModuleRuntime[];
@@ -164,7 +167,7 @@ export class Dispatcher {
   }
 
   private async runDiscord(event: DiscordEventName, args: unknown[], guildId: string): Promise<void> {
-    if (this.guildGate !== undefined && !(await this.guildGate(guildId))) return;
+    if (this.guildGate !== undefined && !UNGATED_EVENTS.has(event) && !(await this.guildGate(guildId))) return;
     const runs = (this.discordListeners.get(event) ?? [])
       .filter(({ runtime }) => this.enablement.isEnabled(guildId, runtime.name))
       .map(({ runtime, listener }) =>

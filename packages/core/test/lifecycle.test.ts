@@ -1,4 +1,4 @@
-import type { Client } from 'discord.js';
+import { PermissionFlagsBits, PermissionsBitField, type Client } from 'discord.js';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { markGuildLeft, upsertGuild } from '../src/db/guilds.js';
@@ -29,6 +29,7 @@ afterEach(async () => {
 interface Options {
   failCleanupFor?: string;
   onAlphaCleanup?: (guildId: string) => Promise<void>;
+  permissions?: PermissionsBitField | null;
   onBetaCleanup?: (guildId: string) => Promise<void>;
 }
 
@@ -36,6 +37,7 @@ function build(options: Options = {}) {
   const calls: string[] = [];
   const alpha = defineModule({
     name: 'alpha',
+    botPermissions: [PermissionFlagsBits.ManageWebhooks],
     hooks: {
       guildReady: (ctx) => {
         calls.push(`alpha:ready:${ctx.guildId}`);
@@ -51,6 +53,12 @@ function build(options: Options = {}) {
       }),
       on(coreEvents.guildLeft, (ctx) => {
         calls.push(`alpha:left:${ctx.guildId}`);
+      }),
+      on(coreEvents.moduleEnabled, (ctx, payload) => {
+        calls.push(`alpha:enabled:${payload.module}:${ctx.actorId}`);
+      }),
+      on(coreEvents.moduleDisabled, (ctx, payload) => {
+        calls.push(`alpha:disabled:${payload.module}:${ctx.actorId}`);
       }),
     ],
   });
@@ -69,13 +77,27 @@ function build(options: Options = {}) {
     },
   });
   const enablement = new ModuleEnablement(t.database.admin);
+  const captured = captureLog();
   const runtimes = createModuleRuntimes(
     [alpha, beta].map((definition) => ({ packageName: `@test/${definition.name}`, definition, config: {} })),
-    { client: {} as Client, database: t.database, log: captureLog().log },
+    { client: {} as Client, database: t.database, log: captured.log },
   );
   const dispatcher = new Dispatcher({ runtimes, database: t.database, enablement, queue: new KeyedQueue(() => undefined) });
-  const lifecycle = new GuildLifecycle({ runtimes, dispatcher, enablement, database: t.database });
-  return { calls, enablement, dispatcher, lifecycle };
+  // Each sync records how many hooks and events had run, to check its place in the order.
+  const syncs: string[] = [];
+  const lifecycle = new GuildLifecycle({
+    runtimes,
+    dispatcher,
+    enablement,
+    database: t.database,
+    commands: {
+      sync: async (guildId) => {
+        syncs.push(`${guildId}@${calls.length}`);
+      },
+    },
+    botPermissions: () => (options.permissions === undefined ? null : options.permissions),
+  });
+  return { calls, syncs, enablement, dispatcher, lifecycle, logLines: captured.lines };
 }
 
 async function guildRow(id: string) {
@@ -250,5 +272,78 @@ describe('GuildLifecycle', () => {
     expect(calls).toEqual(['alpha:left:removed']);
     await lifecycle.ready('removed');
     expect((await guildRow('removed'))?.leftAt).toBeNull();
+  });
+
+  it('syncs the guild commands before running guildReady', async () => {
+    const { calls, syncs, lifecycle } = build();
+    await lifecycle.setUp('g1', false);
+    expect(syncs).toEqual(['g1@0']);
+    expect(calls).toEqual(['alpha:ready:g1', 'beta:ready:g1']);
+  });
+
+  it('warns about bot permissions an enabled module needs but lacks', async () => {
+    const { lifecycle, logLines } = build({ permissions: new PermissionsBitField(PermissionFlagsBits.SendMessages) });
+    await lifecycle.setUp('g1', false);
+    expect(logLines).toContainEqual(
+      expect.objectContaining({
+        level: 40,
+        module: 'alpha',
+        guildId: 'g1',
+        missing: ['ManageWebhooks'],
+        msg: 'The bot lacks permissions this module needs',
+      }),
+    );
+  });
+
+  it('does not warn when the permissions are there or unknown', async () => {
+    const granted = build({ permissions: new PermissionsBitField(PermissionFlagsBits.ManageWebhooks) });
+    await granted.lifecycle.setUp('g1', false);
+    const unknown = build({ permissions: null });
+    await unknown.lifecycle.setUp('g2', false);
+    for (const lines of [granted.logLines, unknown.logLines]) {
+      expect(lines.filter((line) => line.msg === 'The bot lacks permissions this module needs')).toEqual([]);
+    }
+  });
+
+  it('switches a module off: stores it, syncs commands and announces it', async () => {
+    const { calls, syncs, enablement, dispatcher, lifecycle } = build();
+    await lifecycle.setUp('g1', false);
+    expect(await lifecycle.setModuleEnabled('g1', 'beta', false, 'u1')).toBe(true);
+    await dispatcher.idle();
+    expect(enablement.isEnabled('g1', 'beta')).toBe(false);
+    expect(syncs).toEqual(['g1@0', 'g1@2']);
+    expect(calls).toEqual(['alpha:ready:g1', 'beta:ready:g1', 'alpha:disabled:beta:u1']);
+  });
+
+  it('switches a module on: syncs commands, then runs its guildReady, then announces it', async () => {
+    const { calls, syncs, dispatcher, enablement, lifecycle } = build();
+    await upsertGuild(t.database.admin, 'g1');
+    await enablement.set('g1', 'beta', false);
+    await lifecycle.setUp('g1', false);
+    expect(await lifecycle.setModuleEnabled('g1', 'beta', true, 'u2')).toBe(true);
+    await dispatcher.idle();
+    expect(syncs).toEqual(['g1@0', 'g1@1']);
+    expect(calls).toEqual(['alpha:ready:g1', 'beta:ready:g1', 'alpha:enabled:beta:u2']);
+  });
+
+  it('changes nothing when the module already has that state', async () => {
+    const { calls, syncs, dispatcher, lifecycle } = build();
+    await lifecycle.setUp('g1', false);
+    expect(await lifecycle.setModuleEnabled('g1', 'beta', true, 'u1')).toBe(false);
+    await dispatcher.idle();
+    expect(syncs).toEqual(['g1@0']);
+    expect(calls).toEqual(['alpha:ready:g1', 'beta:ready:g1']);
+  });
+
+  it('sets the guild up before switching a module there', async () => {
+    const { syncs, lifecycle } = build();
+    expect(await lifecycle.setModuleEnabled('g3', 'beta', false, null)).toBe(true);
+    expect(await guildRow('g3')).toBeDefined();
+    expect(syncs).toEqual(['g3@0', 'g3@2']);
+  });
+
+  it('refuses modules that are not loaded', async () => {
+    const { lifecycle } = build();
+    await expect(lifecycle.setModuleEnabled('g1', 'missing', true, null)).rejects.toThrow('Module "missing" is not loaded.');
   });
 });

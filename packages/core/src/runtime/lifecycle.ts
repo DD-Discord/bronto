@@ -1,3 +1,4 @@
+import type { PermissionsBitField } from 'discord.js';
 import type { Database } from '../db/database.js';
 import {
   deleteGuildRow,
@@ -18,6 +19,10 @@ export interface LifecycleOptions {
   dispatcher: Dispatcher;
   enablement: ModuleEnablement;
   database: Database;
+  /** Updates a guild's registered commands; never rejects. */
+  commands: { sync(guildId: string): Promise<void> };
+  /** The bot's permissions in a guild, or null when unknown. */
+  botPermissions?: (guildId: string) => Readonly<PermissionsBitField> | null;
 }
 
 /** Registers guilds as the bot sees them, records when it leaves, and deletes data once the grace period ends. */
@@ -76,6 +81,26 @@ export class GuildLifecycle {
     return left;
   }
 
+  /**
+   * Switches a module on or off in a guild. Returns false when it already had that state. Switching on runs the
+   * module's guildReady there, after its commands are registered.
+   */
+  async setModuleEnabled(guildId: string, module: string, enabled: boolean, actorId: string | null): Promise<boolean> {
+    const { runtimes, enablement, dispatcher, commands } = this.options;
+    const runtime = runtimes.find((candidate) => candidate.name === module);
+    if (runtime === undefined) throw new Error(`Module "${module}" is not loaded.`);
+    await this.ready(guildId);
+    if (enablement.isEnabled(guildId, module) === enabled) return false;
+    await enablement.set(guildId, module, enabled);
+    await commands.sync(guildId);
+    const hook = runtime.loaded.definition.hooks?.guildReady;
+    if (enabled && hook !== undefined) {
+      await dispatcher.runHandler(runtime, guildId, null, 'guildReady', (ctx) => hook(ctx));
+    }
+    dispatcher.deliver(enabled ? coreEvents.moduleEnabled : coreEvents.moduleDisabled, { module }, guildId, actorId);
+    return true;
+  }
+
   /** Deletes every guild whose grace period has passed, after its modules cleaned up. Returns the deleted guilds. */
   async purgeDueGuilds(now: Date = new Date()): Promise<string[]> {
     const admin = this.options.database.admin;
@@ -98,15 +123,30 @@ export class GuildLifecycle {
   }
 
   private async runSetUp(guildId: string, joined: boolean): Promise<void> {
-    const { database, enablement, dispatcher, runtimes } = this.options;
+    const { database, enablement, dispatcher, runtimes, commands } = this.options;
     await upsertGuild(database.admin, guildId);
     await enablement.load(guildId);
+    await commands.sync(guildId);
+    this.warnAboutMissingPermissions(guildId);
     if (joined) dispatcher.deliver(coreEvents.guildJoined, { guildId }, guildId);
     for (const runtime of runtimes) {
       const hook = runtime.loaded.definition.hooks?.guildReady;
       if (hook === undefined || !enablement.isEnabled(guildId, runtime.name)) continue;
       // A failing guildReady is logged by runHandler and does not stop the other modules.
       await dispatcher.runHandler(runtime, guildId, null, 'guildReady', (ctx) => hook(ctx));
+    }
+  }
+
+  private warnAboutMissingPermissions(guildId: string): void {
+    const permissions = this.options.botPermissions?.(guildId) ?? null;
+    if (permissions === null) return;
+    for (const runtime of this.options.runtimes) {
+      const needed = runtime.loaded.definition.botPermissions ?? [];
+      if (needed.length === 0 || !this.options.enablement.isEnabled(guildId, runtime.name)) continue;
+      const missing = permissions.missing(needed);
+      if (missing.length > 0) {
+        runtime.context.log.warn({ guildId, missing }, 'The bot lacks permissions this module needs');
+      }
     }
   }
 
