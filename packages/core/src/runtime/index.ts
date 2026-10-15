@@ -1,5 +1,5 @@
 export { createBot, StartupError, type Bot, type BotOptions } from './bot.js';
-export { createModuleRuntimes, type ModuleRuntime, type RuntimeServices } from './context.js';
+export { createCoreRuntime, createModuleRuntimes, type ModuleRuntime, type RuntimeServices } from './context.js';
 export {
   Dispatcher,
   guildIdOf,

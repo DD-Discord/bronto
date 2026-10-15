@@ -74,3 +74,27 @@ function scopedForCurrentGuild(database: Database): ScopedDb {
   }
   return createScopedDb(database.app, guildId);
 }
+
+/**
+ * The runtime core's own commands run under. It is not a loaded module, so it has no listeners, hooks or tables, and it
+ * depends on no module.
+ */
+export function createCoreRuntime(services: RuntimeServices): ModuleRuntime {
+  const definition: ModuleDefinition = { name: 'core' };
+  return {
+    name: 'core',
+    loaded: { packageName: '@bronto/core', definition, config: {} },
+    context: {
+      module: 'core',
+      log: services.log.child({ module: 'core' }),
+      config: {},
+      client: services.client,
+      modules: {
+        get(dependency) {
+          throw new Error(`Core does not use module APIs (asked for "${dependency.name}").`);
+        },
+      },
+    },
+    api: undefined,
+  };
+}
