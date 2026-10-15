@@ -16,7 +16,8 @@ COPY tsconfig.base.json ./
 COPY packages packages
 COPY modules modules
 COPY examples examples
-COPY --chmod=755 docker/bronto /usr/local/bin/bronto
+COPY docker/bronto /usr/local/bin/bronto
+RUN chmod 755 /usr/local/bin/bronto
 
 ENV NODE_ENV=production
 USER node
