@@ -27,6 +27,8 @@ Other commands:
 
 - `pnpm bronto purge <module>`: drop the schema of a module you removed from `config.yaml`.
 - `pnpm bronto delete-guild <id>`: delete all data of one guild now.
+- `pnpm bronto import-legacy <module> <path> [--dry-run]`: import a module's data from an older bot. `--dry-run` only
+  checks the files.
 
 When the bot leaves a guild, that guild's data is deleted after 30 days.
 

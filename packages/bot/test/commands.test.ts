@@ -17,7 +17,7 @@ import { FakeClient, captureLog } from '@bronto/core/testing';
 import { widgetsModule } from '../../core/test/fixtures/widgets/module.js';
 import { widgetItems } from '../../core/test/fixtures/widgets/schema.js';
 import { createTestDatabase, setUpSchema, type TestDatabase } from '../../core/test/test-db.js';
-import { CliError, runDeleteGuild, runPurge, runStart, type CommandDeps } from '../src/commands.js';
+import { CliError, runDeleteGuild, runImportLegacy, runPurge, runStart, type CommandDeps } from '../src/commands.js';
 
 // Records the databases the commands create, to check that their pools are closed.
 const created = vi.hoisted(() => [] as Database[]);
@@ -186,5 +186,48 @@ describe('runDeleteGuild', () => {
       new CliError('Guild g404 is not known.'),
     );
     expect(cleaned).toEqual([]);
+  });
+});
+
+describe('runImportLegacy', () => {
+  const importing = () =>
+    widgetsModule({
+      importLegacy: async (ctx, path) => {
+        if (ctx.dryRun) return [`would import ${path}`];
+        await ctx.registerGuild('g1');
+        await ctx.forGuild('g1', 'u1').run(async (tx) => {
+          await tx.insert(widgetItems).values({ id: 'w1', label: path });
+        });
+        return [`imported ${path}`];
+      },
+    });
+
+  it('migrates, imports and returns the report without logging in', async () => {
+    const { deps, client } = commandDeps({ '@test/widgets': importing() });
+    const lines = await runImportLegacy(await writeConfig(['@test/widgets']), 'widgets', '/old/data', false, deps);
+    expect(lines).toEqual(['imported /old/data']);
+    expect(await t.database.admin.select().from(widgetItems)).toHaveLength(1);
+    expect(client.loggedInWith).toBeNull();
+    expect(client.restToken).toBe('token-1');
+    expect(poolsEnded()).toEqual([true, true]);
+  });
+
+  it('touches neither the database nor Discord in a dry run', async () => {
+    const { deps, client } = commandDeps({ '@test/widgets': importing() });
+    const lines = await runImportLegacy(await writeConfig(['@test/widgets']), 'widgets', '/old/data', true, deps);
+    expect(lines).toEqual(['would import /old/data']);
+    expect(await schemaExists('widgets')).toBe(false);
+    expect(client.restToken).toBeNull();
+  });
+
+  it('refuses modules that are not loaded or have no importer', async () => {
+    const { deps } = commandDeps({ '@test/widgets': widgetsModule() });
+    const config = await writeConfig(['@test/widgets']);
+    await expect(runImportLegacy(config, 'other', '/x', false, deps)).rejects.toThrow(
+      new CliError('Module "other" is not loaded; add its package to config.yaml.'),
+    );
+    await expect(runImportLegacy(config, 'widgets', '/x', false, deps)).rejects.toThrow(
+      new CliError('Module "widgets" has no legacy importer.'),
+    );
   });
 });

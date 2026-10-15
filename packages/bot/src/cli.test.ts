@@ -21,7 +21,7 @@ function io(): CliIo & { output: string[] } {
 }
 
 describe('main', () => {
-  it.each([[[]], [['unknown']], [['purge']], [['delete-guild']], [['start', 'extra']], [['purge', 'a', 'b']], [['start', '--nope']]])(
+  it.each([[[]], [['unknown']], [['purge']], [['delete-guild']], [['start', 'extra']], [['purge', 'a', 'b']], [['import-legacy', 'widgets']], [['import-legacy', 'widgets', 'a', 'b']], [['purge', 'widgets', '--dry-run']], [['start', '--nope']]])(
     'prints the usage for %j',
     async (argv) => {
       const cli = io();

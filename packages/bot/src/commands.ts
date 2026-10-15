@@ -5,6 +5,7 @@ import {
   loadConfig,
   loadModules,
   purgeModuleSchema,
+  runLegacyImport,
   type CoreConfig,
   type LoadedModule,
   type ModuleImporter,
@@ -108,4 +109,39 @@ export async function runDeleteGuild(configPath: string, guildId: string, deps: 
     await database.end();
   }
   deps.log.info({ guildId }, 'Deleted the guild data');
+}
+
+/**
+ * Imports a module's data from an older bot and returns the importer's report. Without `dryRun` it migrates the
+ * database first and calls Discord's REST API with the bot token; it never connects to the gateway.
+ */
+export async function runImportLegacy(
+  configPath: string,
+  moduleName: string,
+  path: string,
+  dryRun: boolean,
+  deps: CommandDeps,
+): Promise<string[]> {
+  const config = await readConfig(configPath, deps.env);
+  const modules = await loadModules(config.modules, deps.importer);
+  const loaded = modules.find((module) => module.definition.name === moduleName);
+  if (loaded === undefined) throw new CliError(`Module "${moduleName}" is not loaded; add its package to config.yaml.`);
+  if (loaded.definition.importLegacy === undefined) throw new CliError(`Module "${moduleName}" has no legacy importer.`);
+  const database = createDatabase(config.database);
+  try {
+    const client = deps.createClient(modules);
+    const bot = createBot({ config, modules, database, client, log: deps.log });
+    try {
+      if (!dryRun) {
+        client.rest.setToken(config.discord.token);
+        await bot.prepare();
+      }
+      const runtime = bot.runtimes.find((candidate) => candidate.name === moduleName)!;
+      return await runLegacyImport({ runtime, database, path, dryRun });
+    } finally {
+      await bot.stop();
+    }
+  } finally {
+    await database.end();
+  }
 }

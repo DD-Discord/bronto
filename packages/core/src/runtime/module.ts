@@ -4,6 +4,7 @@ import { assertModuleName } from '../db/names.js';
 import type { CommandDefinition } from '../interactions/commands.js';
 import type { ComponentDefinition } from '../interactions/components.js';
 import type { EventDefinition, Listener } from './events.js';
+import type { LegacyImporter } from './legacy.js';
 import type { ApiContext, HandlerContext, ModuleContext } from './types.js';
 
 export interface ModuleHooks<TConfig = any> {
@@ -44,6 +45,8 @@ export interface ModuleDefinition<TConfig = any, TApi = unknown> {
   botPermissions?: bigint[];
   api?: (ctx: ApiContext<TConfig>) => TApi;
   hooks?: ModuleHooks<TConfig>;
+  /** Imports data of an older bot; run with `bronto import-legacy <module> <path>`. */
+  importLegacy?: LegacyImporter<TConfig>;
 }
 
 export type ApiOf<M> = M extends ModuleDefinition<any, infer TApi> ? TApi : never;

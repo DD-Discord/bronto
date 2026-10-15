@@ -4,21 +4,23 @@ import { parseArgs } from 'node:util';
 import { ConfigError, StartupError } from '@bronto/core';
 import { pino } from 'pino';
 import { createDiscordClient } from './client.js';
-import { CliError, runDeleteGuild, runPurge, runStart, type CommandDeps } from './commands.js';
+import { CliError, runDeleteGuild, runImportLegacy, runPurge, runStart, type CommandDeps } from './commands.js';
 import { createImporter } from './importer.js';
 
 export const USAGE = `Usage: bronto <command> [--config <path>]
 
 Commands:
-  start               Run the bot
-  purge <module>      Drop a module's schema and migration history
-  delete-guild <id>   Delete all data of one guild now
+  start                                 Run the bot
+  purge <module>                        Drop a module's schema and migration history
+  delete-guild <id>                     Delete all data of one guild now
+  import-legacy <module> <path>         Import a module's data from an older bot
 
 Options:
-  -c, --config <path>  Deployment config file (default: config.yaml)`;
+  -c, --config <path>  Deployment config file (default: config.yaml)
+  --dry-run            With import-legacy: check the old data, write nothing`;
 
 /** Number of arguments each command takes after its name. */
-const ARGUMENTS: Record<string, number> = { start: 0, purge: 1, 'delete-guild': 1 };
+const ARGUMENTS: Record<string, number> = { start: 0, purge: 1, 'delete-guild': 1, 'import-legacy': 2 };
 
 export interface CliIo {
   deps: CommandDeps;
@@ -31,7 +33,10 @@ function parse(argv: string[]) {
   return parseArgs({
     args: argv,
     allowPositionals: true,
-    options: { config: { type: 'string', short: 'c', default: 'config.yaml' } },
+    options: {
+      config: { type: 'string', short: 'c', default: 'config.yaml' },
+      'dry-run': { type: 'boolean', default: false },
+    },
   });
 }
 
@@ -44,9 +49,10 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
     io.write(`${(error as Error).message}\n\n${USAGE}\n`);
     return 2;
   }
-  const [command, argument, ...rest] = parsed.positionals;
+  const [command, ...args] = parsed.positionals;
   const expected = command === undefined ? undefined : ARGUMENTS[command];
-  if (expected === undefined || rest.length > 0 || (expected === 1) !== (argument !== undefined)) {
+  const dryRun = parsed.values['dry-run'];
+  if (expected === undefined || args.length !== expected || (dryRun && command !== 'import-legacy')) {
     io.write(`${USAGE}\n`);
     return 2;
   }
@@ -56,9 +62,12 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
       const running = await runStart(configPath, io.deps);
       io.onShutdown(running.stop);
     } else if (command === 'purge') {
-      await runPurge(configPath, argument!, io.deps);
+      await runPurge(configPath, args[0]!, io.deps);
+    } else if (command === 'delete-guild') {
+      await runDeleteGuild(configPath, args[0]!, io.deps);
     } else {
-      await runDeleteGuild(configPath, argument!, io.deps);
+      const lines = await runImportLegacy(configPath, args[0]!, args[1]!, dryRun, io.deps);
+      io.write(`${lines.join('\n')}\n`);
     }
     return 0;
   } catch (error) {

@@ -18,6 +18,7 @@ export {
   type Listener,
 } from './events.js';
 export { GuildLifecycle, type LifecycleOptions } from './lifecycle.js';
+export { runLegacyImport, type LegacyImportContext, type LegacyImporter, type LegacyImportOptions } from './legacy.js';
 export { loadModules, type LoadedModule, type ModuleImporter } from './loader.js';
 export { defineModule, type ApiOf, type ModuleDefinition, type ModuleHooks } from './module.js';
 export { KeyedQueue, type QueueErrorHandler } from './queue.js';
