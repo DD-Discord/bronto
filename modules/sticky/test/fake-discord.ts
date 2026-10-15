@@ -41,6 +41,8 @@ export class FakeStickyDiscord implements StickyDiscord {
   readonly calls: string[] = [];
   sendDelayMs = 0;
   missingWebhookPermission = false;
+  /** Makes deleteMessage fail with a plain error. */
+  failDeleteMessage = false;
   /** Whether findWebhookToken reveals tokens of webhooks this application does not own. */
   tokensVisible = true;
   private readonly live = new Map<string, FakePost>();
@@ -142,6 +144,7 @@ export class FakeStickyDiscord implements StickyDiscord {
 
   async deleteMessage(target: PostTarget, messageId: string): Promise<void> {
     this.calls.push('deleteMessage');
+    if (this.failDeleteMessage) throw new Error('boom');
     this.requireWebhook(target);
     const post = this.live.get(messageId);
     if (post === undefined || post.webhookId !== target.id || post.threadId !== target.threadId) throw new UnknownMessageError();

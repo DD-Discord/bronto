@@ -2,6 +2,8 @@ import { fakeCommand } from '@bronto/core/testing';
 import { Events, type EmbedBuilder } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
+import { Reposter, type StickyContext } from '../src/repost.js';
+import { StickyIndex } from '../src/sticky-index.js';
 import { FakeStickyDiscord } from './fake-discord.js';
 import {
   CHANNEL,
@@ -174,6 +176,23 @@ describe('/sticky delete', () => {
     expect(discord.deletedWebhooks).toEqual([]);
     expect(discord.liveMessages(THREAD)).toEqual([]);
     expect(discord.liveMessages(CHANNEL)).toHaveLength(1);
+  });
+
+  it('still deletes the webhook when deleting the post fails, and logs a warning', async () => {
+    await say('create', { channel: channel(CHANNEL), template: link() });
+    const [row] = await stickyRows(t);
+    discord.failDeleteMessage = true;
+    expect(contents(await say('delete'))).toEqual([`**Sticky deleted:** <#${CHANNEL}>`]);
+    expect(discord.deletedWebhooks).toEqual([row!.webhookId]);
+    expect(sb.lines).toContainEqual(expect.objectContaining({ level: 40, msg: 'Deleting the sticky post failed' }));
+  });
+
+  it('queues no repost for a channel without a sticky', async () => {
+    const reposter = new Reposter({ index: new StickyIndex(), discord: () => discord });
+    const runs: string[] = [];
+    const ctx = { queue: { run: async (key: string) => void runs.push(key) } } as unknown as StickyContext;
+    await reposter.queueRepost(ctx, CHANNEL);
+    expect(runs).toEqual([]);
   });
 
   it('posts nothing after a delete, even with a debounce pending', async () => {

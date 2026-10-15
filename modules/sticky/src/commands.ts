@@ -115,7 +115,13 @@ export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition 
             const [state] = await task.db.run(async (tx) =>
               tx.select().from(stickyState).where(eq(stickyState.channelId, record.channelId)),
             );
-            if (state?.lastMessageId != null) await ignoreGone(discord.deleteMessage(target, state.lastMessageId));
+            if (state?.lastMessageId != null) {
+              try {
+                await ignoreGone(discord.deleteMessage(target, state.lastMessageId));
+              } catch (error) {
+                task.log.warn({ err: error, channelId: record.channelId }, 'Deleting the sticky post failed');
+              }
+            }
             const shared = await task.db.run(async (tx) =>
               tx
                 .select({ channelId: stickies.channelId })

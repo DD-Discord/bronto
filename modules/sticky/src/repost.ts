@@ -79,11 +79,17 @@ export class Reposter {
         .values({ channelId: entry.channelId, repostDueAt })
         .onConflictDoUpdate({ target: stickyState.channelId, set: { repostDueAt } });
     });
+    // A delete may have removed the sticky while the due time was written.
+    if (this.index.get(entry.channelId) !== entry) return;
     this.arm(ctx, entry.channelId, entry.debounceMs);
   }
 
-  /** Queues a repost behind any work of the channel; resolves when it (or a newer request) finished. */
+  /**
+   * Queues a repost behind any work of the channel; resolves when it (or a newer request) finished.
+   * Channels without a sticky in the index are skipped, so a repost never replaces the cleanup of a deleted sticky.
+   */
   queueRepost(ctx: StickyContext, channelId: string): Promise<void> {
+    if (this.index.get(channelId) === undefined) return Promise.resolve();
     return ctx.queue.run(channelId, (task) => this.repost(task, channelId));
   }
 
