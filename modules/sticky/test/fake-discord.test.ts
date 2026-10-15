@@ -16,4 +16,17 @@ describe('FakeStickyDiscord', () => {
       UnknownWebhookError,
     );
   });
+
+  it('finds thread posts only through their thread', async () => {
+    const discord = new FakeStickyDiscord();
+    const hook = discord.addWebhook('100000000000000010');
+    const thread = '100000000000000011';
+    const id = await discord.send({ ...hook, threadId: thread }, { content: 'a', embeds: [] }, { silent: true, username: 'S' });
+    await expect(discord.deleteMessage({ ...hook, threadId: null }, id)).rejects.toBeInstanceOf(UnknownMessageError);
+    expect(discord.liveMessages(thread)).toEqual([id]);
+    await discord.deleteChannelMessage('100000000000000010', id);
+    expect(discord.liveMessages(thread)).toEqual([id]);
+    await discord.deleteChannelMessage(thread, id);
+    expect(discord.liveMessages(thread)).toEqual([]);
+  });
 });

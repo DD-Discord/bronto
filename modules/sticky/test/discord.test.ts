@@ -20,6 +20,7 @@ interface Recorded {
 function fakeRest(answer: (method: string, path: string) => { status: number; json: unknown }) {
   const requests: Recorded[] = [];
   const rest = new REST({
+    retries: 0,
     makeRequest: async (url, init) => {
       const parsed = new URL(url);
       const path = parsed.pathname.replace('/api/v10', '');
@@ -178,5 +179,22 @@ describe('createRestStickyDiscord', () => {
     const messages = fakeRest(() => error(10008));
     await messages.discord.deleteChannelMessage('100000000000000010', '100000000000000050');
     expect(messages.requests[0]).toMatchObject({ method: 'DELETE', path: '/channels/100000000000000010/messages/100000000000000050', authorized: true });
+  });
+
+  it('keeps the webhook token out of errors it rethrows', async () => {
+    const leaks = (e: unknown) => {
+      const err = e as { url?: unknown; message: string };
+      return JSON.stringify(err) + String(err.url) + err.message;
+    };
+    const failed = fakeRest(() => ({ status: 500, json: { message: 'boom' } }));
+    const sendError = await failed.discord.send(target, { content: 'x', embeds: [] }, { silent: true, username: 'S' }).catch((e: unknown) => e);
+    expect(sendError).toBeInstanceOf(Error);
+    expect(leaks(sendError)).not.toContain('fake-token');
+    const refused = fakeRest(() => error(50027, 401));
+    const deleteError = await refused.discord.deleteMessage(target, '1').catch((e: unknown) => e);
+    expect(deleteError).toMatchObject({ code: 50027 });
+    expect(leaks(deleteError)).not.toContain('fake-token');
+    const hookError = await refused.discord.deleteWebhook(target).catch((e: unknown) => e);
+    expect(leaks(hookError)).not.toContain('fake-token');
   });
 });

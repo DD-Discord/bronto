@@ -97,6 +97,15 @@ function isPermissionError(error: unknown): boolean {
   return code === RESTJSONErrorCodes.MissingAccess || code === RESTJSONErrorCodes.MissingPermissions;
 }
 
+/** Removes a webhook token from a REST error's url and message so it never reaches logs. */
+function redactToken(error: unknown, token: string): unknown {
+  if (!(error instanceof Error)) return error;
+  const target = error as Error & { url?: unknown };
+  if (typeof target.url === 'string') target.url = target.url.replaceAll(token, '…');
+  error.message = error.message.replaceAll(token, '…');
+  return error;
+}
+
 function threadQuery(threadId: string | null): URLSearchParams {
   const query = new URLSearchParams();
   if (threadId !== null) query.set('thread_id', threadId);
@@ -165,7 +174,7 @@ export function createRestStickyDiscord(client: Pick<Client, 'rest' | 'applicati
       try {
         await rest.delete(Routes.webhook(webhook.id, webhook.token), { auth: false });
       } catch (error) {
-        if (codeOf(error) !== RESTJSONErrorCodes.UnknownWebhook) throw error;
+        if (codeOf(error) !== RESTJSONErrorCodes.UnknownWebhook) throw redactToken(error, webhook.token);
       }
     },
 
@@ -205,7 +214,7 @@ export function createRestStickyDiscord(client: Pick<Client, 'rest' | 'applicati
         return sent.id;
       } catch (error) {
         if (codeOf(error) === RESTJSONErrorCodes.UnknownWebhook) throw new UnknownWebhookError();
-        throw error;
+        throw redactToken(error, target.token);
       }
     },
 
@@ -219,7 +228,7 @@ export function createRestStickyDiscord(client: Pick<Client, 'rest' | 'applicati
         const code = codeOf(error);
         if (code === RESTJSONErrorCodes.UnknownMessage) throw new UnknownMessageError();
         if (code === RESTJSONErrorCodes.UnknownWebhook) throw new UnknownWebhookError();
-        throw error;
+        throw redactToken(error, target.token);
       }
     },
 

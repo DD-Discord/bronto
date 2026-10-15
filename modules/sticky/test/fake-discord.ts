@@ -141,14 +141,17 @@ export class FakeStickyDiscord implements StickyDiscord {
     this.calls.push('deleteMessage');
     this.requireWebhook(target);
     const post = this.live.get(messageId);
-    if (post === undefined || post.webhookId !== target.id) throw new UnknownMessageError();
+    if (post === undefined || post.webhookId !== target.id || post.threadId !== target.threadId) throw new UnknownMessageError();
     this.live.delete(messageId);
     this.deleted.push(messageId);
   }
 
-  async deleteChannelMessage(_channelId: string, messageId: string): Promise<void> {
+  async deleteChannelMessage(channelId: string, messageId: string): Promise<void> {
     this.calls.push('deleteChannelMessage');
-    if (this.live.delete(messageId)) this.botDeleted.push(messageId);
+    const post = this.live.get(messageId);
+    if (post === undefined || (post.threadId ?? post.channelId) !== channelId) return;
+    this.live.delete(messageId);
+    this.botDeleted.push(messageId);
   }
 
   private requireWebhook(target: PostTarget): FakeWebhook {
