@@ -1,0 +1,10 @@
+.git
+.github
+**/node_modules
+**/test
+**/*.test.ts
+.env
+.env.*
+config.yaml
+pgdata
+*.log

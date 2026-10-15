@@ -1,0 +1,30 @@
+# Self-hosting with Docker: put this file next to config.yaml, .env and a copy of db-init/, then `docker compose up -d`.
+# .env holds DISCORD_TOKEN, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB and BOT_APP_PASSWORD.
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    env_file: .env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - ./pgdata:/var/lib/postgresql
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+
+  bot:
+    image: ghcr.io/dd-discord/bronto:main
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # Built from the db's POSTGRES_* values so credentials only exist once in .env.
+      DATABASE_ADMIN_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      DATABASE_APP_URL: postgres://bot_app:${BOT_APP_PASSWORD}@db:5432/${POSTGRES_DB}
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro

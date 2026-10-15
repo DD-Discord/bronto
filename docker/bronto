@@ -1,0 +1,3 @@
+#!/bin/sh
+# Runs the bronto CLI from the image's workspace; config.yaml is read from the working directory (/app).
+exec node --import tsx /app/packages/bot/src/cli.ts "$@"

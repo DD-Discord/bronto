@@ -32,6 +32,17 @@ Other commands:
 
 When the bot leaves a guild, that guild's data is deleted after 30 days.
 
+## Running with Docker
+
+Images are published as `ghcr.io/dd-discord/bronto:main`. Copy `compose.example.yml` (as `compose.yml`),
+`config.example.yaml` (as `config.yaml`) and `db-init/` into a directory, create a `.env` with `DISCORD_TOKEN`,
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` and `BOT_APP_PASSWORD`, then:
+
+```bash
+docker compose up -d
+docker compose run --rm bot bronto import-legacy <module> /path --dry-run   # other CLI commands work the same way
+```
+
 ## Writing a module
 
 A module is a package whose default export is a `defineModule()` definition:

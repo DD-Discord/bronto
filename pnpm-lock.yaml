@@ -172,6 +172,9 @@ importers:
       '@bronto/sticky':
         specifier: workspace:*
         version: link:modules/sticky
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
     devDependencies:
       '@testcontainers/postgresql':
         specifier: 12.2.1
@@ -185,9 +188,6 @@ importers:
       testcontainers:
         specifier: 12.2.1
         version: 12.2.1
-      tsx:
-        specifier: 4.23.15
-        version: 4.23.15
       typescript:
         specifier: 7.0.2
         version: 7.0.2
