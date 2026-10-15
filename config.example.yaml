@@ -8,3 +8,4 @@ database:
 # One key per module package to load; an empty value loads the module with its defaults.
 modules:
   "@bronto/example-notes": {}
+  # "@bronto/sticky": {}   # needs the Message Content intent; see modules/sticky/README.md

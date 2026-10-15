@@ -111,6 +111,11 @@ const greet = defineCommand({
   and drop in-memory state of that server there. Queued tasks of a switched-off module are skipped.
 - A timer may keep the `ctx` of the handler that started it and call `ctx.queue.run` later; that runs as a new handler.
 
+## Modules
+
+- [`@bronto/sticky`](modules/sticky/README.md): keeps a message at the bottom of a channel or thread.
+- [`examples/notes`](examples/notes): a small example module showing commands, CRUD, buttons and modals.
+
 ## Development
 
 Requirements: Node 24 (22.12+ works), pnpm 12, Docker (integration tests start Postgres via Testcontainers).
