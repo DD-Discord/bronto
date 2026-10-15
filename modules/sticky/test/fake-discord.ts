@@ -24,6 +24,8 @@ interface FakePost {
   threadId: string | null;
   message: StickyMessage;
   options: PostOptions;
+  /** `performance.now()` when the send began, before any delay. */
+  startedAt: number;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -127,11 +129,12 @@ export class FakeStickyDiscord implements StickyDiscord {
   }
 
   async send(target: PostTarget, message: StickyMessage, options: PostOptions): Promise<string> {
+    const startedAt = performance.now();
     this.calls.push('send');
     this.requireWebhook(target);
     if (this.sendDelayMs > 0) await sleep(this.sendDelayMs);
     const webhook = this.requireWebhook(target);
-    const post: FakePost = { id: this.newId(), webhookId: target.id, channelId: webhook.channelId, threadId: target.threadId, message, options };
+    const post: FakePost = { id: this.newId(), webhookId: target.id, channelId: webhook.channelId, threadId: target.threadId, message, options, startedAt };
     this.sent.push(post);
     this.live.set(post.id, post);
     return post.id;

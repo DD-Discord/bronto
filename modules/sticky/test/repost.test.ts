@@ -96,16 +96,23 @@ describe('reposting', () => {
     expect(discord.sent[0]).toMatchObject({ channelId: CHANNEL, threadId: THREAD });
   });
 
-  it('ends a burst with exactly one sticky and every earlier post deleted', async () => {
+  it('ends a burst with the sticky below the newest message and every earlier post deleted', async () => {
     discord.sendDelayMs = 25;
     const sb = await start();
     await insertSticky(t, discord, { channelId: CHANNEL });
     await ready(sb);
-    await say(sb, ...Array.from({ length: 10 }, () => message(CHANNEL)));
+    sb.client.emit(Events.MessageCreate, message(CHANNEL));
+    await sleep(10);
+    for (let i = 0; i < 9; i++) sb.client.emit(Events.MessageCreate, message(CHANNEL));
+    const lastMessageAt = performance.now();
+    await sb.bot.idle();
     const live = discord.liveMessages(CHANNEL);
     expect(live).toHaveLength(1);
     expect((await stateOf(t, CHANNEL))?.lastMessageId).toBe(live[0]);
+    expect(discord.sent.at(-1)!.id).toBe(live[0]);
+    expect(discord.sent.length).toBeGreaterThanOrEqual(2);
     expect(discord.sent.length).toBeLessThanOrEqual(3);
+    expect(discord.sent.at(-1)!.startedAt).toBeGreaterThanOrEqual(lastMessageAt);
     for (const post of discord.sent.slice(0, -1)) expect(discord.deleted).toContain(post.id);
   });
 
