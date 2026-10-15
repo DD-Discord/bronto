@@ -41,6 +41,7 @@ describe('@bronto/core exports', () => {
       'defineCommand', 'defineSubcommand', 'defineButton', 'defineModal', 'opt', 'UserError', 'isUserError',
       'InteractionRouter', 'CommandSync', 'restCommandRegistry', 'createModulesCommand', 'commandToJson', 'Responder',
       'batchLines', 'truncate', 'plainText', 'createCoreRuntime',
+      'defineEntity', 'crudSubcommands', 'colorFromId', 'entityAutocomplete',
     ]) {
       expect(core, name).toHaveProperty(name);
     }
