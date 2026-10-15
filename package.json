@@ -12,7 +12,8 @@
     "bronto": "tsx packages/bot/src/cli.ts"
   },
   "dependencies": {
-    "@bronto/example-notes": "workspace:*"
+    "@bronto/example-notes": "workspace:*",
+    "@bronto/sticky": "workspace:*"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "12.2.1",
