@@ -22,6 +22,10 @@ export class ModuleEnablement {
     this.cache.set(guildId, new Map(rows.map((row) => [row.module, row.enabled])));
   }
 
+  isLoaded(guildId: string): boolean {
+    return this.cache.has(guildId);
+  }
+
   isEnabled(guildId: string, module: string): boolean {
     return this.cache.get(guildId)?.get(module) ?? true;
   }

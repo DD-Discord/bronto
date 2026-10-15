@@ -1,6 +1,7 @@
 import { Collection, Events, Guild, type Client } from 'discord.js';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { upsertGuild } from '../src/db/guilds.js';
 import { guilds } from '../src/db/schema.js';
 import { createModuleRuntimes, type ModuleRuntime } from '../src/runtime/context.js';
 import { Dispatcher, guildIdOf, type HandlerResult } from '../src/runtime/dispatcher.js';
@@ -177,6 +178,46 @@ describe('Dispatcher', () => {
     await gated.handleDiscord(Events.GuildDelete, [guild]);
     await gated.handleDiscord(Events.GuildUnavailable, [guild]);
     expect(removed).toEqual(['delete:g5', 'unavailable:g5']);
+    expect(gate).toEqual([]);
+  });
+
+  it('keeps GuildDelete and GuildUnavailable listeners of switched-off modules quiet after the cache was cleared', async () => {
+    const removed: string[] = [];
+    const watcher = defineModule({
+      name: 'watcher',
+      listeners: [
+        on(Events.GuildDelete, (ctx) => {
+          removed.push(`delete:${ctx.guildId}`);
+        }),
+        on(Events.GuildUnavailable, (ctx) => {
+          removed.push(`unavailable:${ctx.guildId}`);
+        }),
+      ],
+    });
+    const watcherRuntimes = createModuleRuntimes([{ packageName: '@test/watcher', definition: watcher, config: {} }], {
+      client: {} as Client,
+      database: t.database,
+      log: captureLog().log,
+    });
+    const gate: string[] = [];
+    const gated = new Dispatcher({
+      runtimes: watcherRuntimes,
+      database: t.database,
+      enablement,
+      queue: new KeyedQueue(() => undefined),
+      guildGate: async (guildId) => {
+        gate.push(guildId);
+        return true;
+      },
+    });
+    await upsertGuild(t.database.admin, 'g6');
+    await enablement.set('g6', 'watcher', false);
+    enablement.forget('g6');
+    const guild = Object.assign(Object.create(Guild.prototype) as Guild, { id: 'g6' });
+    await gated.handleDiscord(Events.GuildUnavailable, [guild]);
+    enablement.forget('g6');
+    await gated.handleDiscord(Events.GuildDelete, [guild]);
+    expect(removed).toEqual([]);
     expect(gate).toEqual([]);
   });
 

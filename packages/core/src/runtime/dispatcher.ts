@@ -167,7 +167,12 @@ export class Dispatcher {
   }
 
   private async runDiscord(event: DiscordEventName, args: unknown[], guildId: string): Promise<void> {
-    if (this.guildGate !== undefined && !UNGATED_EVENTS.has(event) && !(await this.guildGate(guildId))) return;
+    if (UNGATED_EVENTS.has(event)) {
+      // The switches may have been forgotten already; without them every module would count as enabled.
+      if (!this.enablement.isLoaded(guildId)) await this.enablement.load(guildId);
+    } else if (this.guildGate !== undefined && !(await this.guildGate(guildId))) {
+      return;
+    }
     const runs = (this.discordListeners.get(event) ?? [])
       .filter(({ runtime }) => this.enablement.isEnabled(guildId, runtime.name))
       .map(({ runtime, listener }) =>
