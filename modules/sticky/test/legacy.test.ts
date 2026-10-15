@@ -1,10 +1,11 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runLegacyImport } from '@bronto/core';
+import { createScopedDb, runLegacyImport } from '@bronto/core';
 import { Events } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
+import { stickies } from '../src/db/schema.js';
 import { FakeStickyDiscord } from './fake-discord.js';
 import { GUILD, message, OTHER_GUILD, prepareStickyBot, ready, stateOf, stickyRows, USER, type StickyBot } from './harness.js';
 
@@ -193,5 +194,73 @@ describe('importLegacy', () => {
     await sb.bot.idle();
     expect(discord.sent).toHaveLength(1);
     expect(discord.sent[0]!.webhookId).toBe(nested.id);
+  });
+});
+
+describe('importLegacy failures', () => {
+  // Inserts the sticky row between the existence check and the final write.
+  function raceRow(channelId: string): void {
+    const original = discord.createWebhook.bind(discord);
+    const originalFind = discord.findWebhookToken.bind(discord);
+    let raced = false;
+    const insert = async () => {
+      if (raced) return;
+      raced = true;
+      await createScopedDb(t.database.app, GUILD).run(async (tx) => {
+        await tx.insert(stickies).values({
+          channelId,
+          webhookId: '100000000000000999',
+          webhookToken: 'raced',
+          templateChannelId: channelId,
+          templateMessageId: '100000000000000998',
+          content: 'raced',
+        });
+      });
+    };
+    discord.createWebhook = async (...args) => {
+      const created = await original(...args);
+      await insert();
+      return created;
+    };
+    discord.findWebhookToken = async (...args) => {
+      const token = await originalFind(...args);
+      await insert();
+      return token;
+    };
+  }
+
+  it('reports a failed write without the token and removes the webhook it created', async () => {
+    discord.tokensVisible = false;
+    const old = discord.addWebhook(FLAT, { owned: false });
+    await write({ [`${FLAT}.json`]: flatRecord(old.id) });
+    raceRow(FLAT);
+    const lines = await runImport();
+    expect(lines[0]).toMatch(new RegExp(`^${FLAT}: failed \\(.*duplicate key.*; the old post and webhook were already removed, run the import again\\)$`));
+    expect(lines.join('\n')).not.toContain('params:');
+    const created = discord.deletedWebhooks.filter((webhookId) => webhookId !== old.id);
+    expect(created).toHaveLength(1);
+    expect(discord.webhooks.has(created[0]!)).toBe(false);
+  });
+
+  it('never prints a token Discord revealed when a write fails', async () => {
+    const shown = discord.addWebhook(FLAT, { owned: false });
+    await write({ [`${FLAT}.json`]: flatRecord(shown.id) });
+    raceRow(FLAT);
+    const lines = await runImport();
+    expect(lines[0]).toMatch(new RegExp(`^${FLAT}: failed \\(`));
+    expect(lines.join('\n')).not.toContain(shown.token);
+    expect(lines.join('\n')).not.toContain('params:');
+  });
+
+  it('removes webhook URLs from failure lines', async () => {
+    const nested = discord.addWebhook(NESTED, { owned: false });
+    await write({ [`${NESTED}.json`]: { ...nestedRecord(NESTED, nested), webhookUrl: undefined, webhookId: nested.id } });
+    discord.tokensVisible = true;
+    discord.findWebhookToken = async () => {
+      throw new Error('POST https://discord.com/api/webhooks/100000000000000124/fake-token-leak failed');
+    };
+    const lines = await runImport();
+    expect(lines[0]).toBe(`${NESTED}: failed (POST https://discord.com/api/webhooks/…  failed)`.replace('…  ', '… '));
+    expect(lines.join('\n')).not.toContain('fake-token-leak');
   });
 });

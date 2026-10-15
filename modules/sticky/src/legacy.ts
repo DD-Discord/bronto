@@ -83,6 +83,14 @@ interface Outcome {
 // Error messages can carry request URLs; webhook URLs contain tokens.
 const withoutSecrets = (text: string) => text.replace(/\/webhooks\/\d+\/[\w-]+/g, '/webhooks/…');
 
+// Drizzle's message embeds the query parameters, so the driver error underneath is reported instead.
+function failureReason(error: unknown, tokens: string[]): string {
+  const source = error instanceof Error && error.cause instanceof Error ? error.cause : error;
+  let text = withoutSecrets(source instanceof Error ? source.message : String(source));
+  for (const token of tokens) text = text.replaceAll(token, '…');
+  return text;
+}
+
 async function importOne(
   ctx: LegacyImportContext<StickyConfig>,
   discord: StickyDiscord,
@@ -123,47 +131,60 @@ async function importOne(
   );
   if (existing.length > 0) return { kind: 'skipped', label, note: 'already imported; left as it is' };
 
-  let webhook: WebhookCredentials;
-  let lastMessageId = record.lastMessageId;
-  let outcome: Outcome = { kind: 'imported', label, note: 'imported' };
-  if (record.webhookToken !== null) {
-    webhook = { id: record.webhookId, token: record.webhookToken };
-  } else {
-    const token = await discord.findWebhookToken(webhookChannelId, record.webhookId);
-    if (token !== null) {
-      webhook = { id: record.webhookId, token };
-      outcome = { kind: 'imported', label, note: 'imported (webhook token from Discord)' };
+  const tokens: string[] = record.webhookToken === null ? [] : [record.webhookToken];
+  let created: WebhookCredentials | null = null;
+  let removedOld = false;
+  try {
+    let webhook: WebhookCredentials;
+    let lastMessageId = record.lastMessageId;
+    let outcome: Outcome = { kind: 'imported', label, note: 'imported' };
+    if (record.webhookToken !== null) {
+      webhook = { id: record.webhookId, token: record.webhookToken };
     } else {
-      // Without its token the old webhook can neither post nor delete; the bot removes both with its own permissions.
-      if (lastMessageId !== null) await discord.deleteChannelMessage(record.channelId, lastMessageId);
-      await discord.deleteWebhookById(record.webhookId);
-      webhook = await discord.createWebhook(webhookChannelId, ctx.config.webhookName);
-      lastMessageId = null;
-      outcome = { kind: 'repaired', label, note: 'repaired (new webhook; the next message posts a fresh sticky)' };
+      const token = await discord.findWebhookToken(webhookChannelId, record.webhookId);
+      if (token !== null) {
+        tokens.push(token);
+        webhook = { id: record.webhookId, token };
+        outcome = { kind: 'imported', label, note: 'imported (webhook token from Discord)' };
+      } else {
+        // Without its token the old webhook can neither post nor delete; the bot removes both with its own permissions.
+        if (lastMessageId !== null) await discord.deleteChannelMessage(record.channelId, lastMessageId);
+        removedOld = true;
+        await discord.deleteWebhookById(record.webhookId);
+        webhook = created = await discord.createWebhook(webhookChannelId, ctx.config.webhookName);
+        tokens.push(webhook.token);
+        lastMessageId = null;
+        outcome = { kind: 'repaired', label, note: 'repaired (new webhook; the next message posts a fresh sticky)' };
+      }
     }
-  }
 
-  await db.run(async (tx) => {
-    await tx.insert(stickies).values({
-      channelId: record.channelId,
-      parentChannelId,
-      webhookId: webhook.id,
-      webhookToken: webhook.token,
-      templateChannelId: record.templateChannelId,
-      templateMessageId: record.templateMessageId,
-      content: record.content,
-      embeds: record.embeds,
-      ignoreBots: record.ignoreBots,
-      silent: record.silent,
-      debounceMs: record.debounceMs,
+    await db.run(async (tx) => {
+      await tx.insert(stickies).values({
+        channelId: record.channelId,
+        parentChannelId,
+        webhookId: webhook.id,
+        webhookToken: webhook.token,
+        templateChannelId: record.templateChannelId,
+        templateMessageId: record.templateMessageId,
+        content: record.content,
+        embeds: record.embeds,
+        ignoreBots: record.ignoreBots,
+        silent: record.silent,
+        debounceMs: record.debounceMs,
+      });
+      await tx.insert(stickyState).values({
+        channelId: record.channelId,
+        lastMessageId,
+        repostDueAt: record.repostPending ? new Date() : null,
+      });
     });
-    await tx.insert(stickyState).values({
-      channelId: record.channelId,
-      lastMessageId,
-      repostDueAt: record.repostPending ? new Date() : null,
-    });
-  });
-  return outcome;
+    return outcome;
+  } catch (error) {
+    // The new webhook would be orphaned; a re-run creates another.
+    if (created !== null) await discord.deleteWebhook(created).catch(() => undefined);
+    const note = `${failureReason(error, tokens)}${removedOld ? '; the old post and webhook were already removed, run the import again' : ''}`;
+    return { kind: 'failed', label: file.replace(/\.json$/, ''), note: `failed (${note})` };
+  }
 }
 
 /** Imports the previous bot's sticky records (one JSON file per channel) from `path`. */
