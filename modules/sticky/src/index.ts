@@ -1,5 +1,6 @@
 import { defineModule, on, type ModuleDefinition } from '@bronto/core';
 import { Events, GatewayIntentBits, PermissionFlagsBits, type Client } from 'discord.js';
+import { createStickyCommand } from './commands.js';
 import { stickyConfigSchema, type StickyConfig } from './config.js';
 import * as schema from './db/schema.js';
 import { stickies } from './db/schema.js';
@@ -34,6 +35,7 @@ export function createStickyModule(options: StickyModuleOptions = {}): ModuleDef
       PermissionFlagsBits.ReadMessageHistory,
     ],
     listeners: [on(Events.MessageCreate, (ctx, message) => reposter.onMessage(ctx, message))],
+    commands: [createStickyCommand({ index, reposter, discord })],
     hooks: {
       guildReady: async (ctx) => {
         const rows = await ctx.db.run(async (tx) => tx.select().from(stickies));

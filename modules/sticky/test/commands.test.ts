@@ -1,0 +1,189 @@
+import { fakeCommand } from '@bronto/core/testing';
+import { Events, type EmbedBuilder } from 'discord.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
+import { FakeStickyDiscord } from './fake-discord.js';
+import {
+  CHANNEL,
+  GUILD,
+  message,
+  OTHER_GUILD,
+  prepareStickyBot,
+  ready,
+  sleep,
+  stateOf,
+  stickyRows,
+  TEMPLATE_CHANNEL,
+  TEMPLATE_MESSAGE,
+  THREAD,
+  USER,
+  type StickyBot,
+} from './harness.js';
+
+let t: TestDatabase;
+let discord: FakeStickyDiscord;
+let sb: StickyBot;
+
+const link = (guild = GUILD, channel = TEMPLATE_CHANNEL, messageId = TEMPLATE_MESSAGE) =>
+  `https://discord.com/channels/${guild}/${channel}/${messageId}`;
+
+/** A channel option value as discord.js resolves it. */
+const channel = (id: string, parentId?: string) => ({ id, isThread: () => parentId !== undefined, parentId: parentId ?? null });
+
+interface Payload {
+  content?: string;
+  embeds?: EmbedBuilder[];
+}
+
+async function say(subcommand: string, options: Record<string, unknown> = {}, channelId = CHANNEL): Promise<Payload[]> {
+  const fake = fakeCommand({ command: 'sticky', subcommand, guildId: GUILD, channelId, userId: USER, options });
+  sb.client.emit(Events.InteractionCreate, fake);
+  await sb.bot.idle();
+  return fake.responses.map((response) => response.payload as Payload);
+}
+
+const contents = (payloads: Payload[]) => payloads.map((payload) => payload.content);
+
+beforeEach(async () => {
+  t = await createTestDatabase();
+  discord = new FakeStickyDiscord();
+  discord.addTemplate(GUILD, TEMPLATE_CHANNEL, TEMPLATE_MESSAGE, { content: 'Read the rules.', embeds: [{ title: 'Rules' }] });
+  sb = await prepareStickyBot(t, discord);
+  await ready(sb);
+});
+
+afterEach(async () => {
+  await sb.bot.stop();
+  await t.drop();
+});
+
+describe('/sticky create', () => {
+  it('creates a sticky from a message link and posts it right away', async () => {
+    expect(contents(await say('create', { channel: channel(CHANNEL), template: link() }))).toEqual(['**Sticky created.**']);
+    const [row] = await stickyRows(t);
+    expect(row).toMatchObject({
+      channelId: CHANNEL,
+      parentChannelId: null,
+      templateChannelId: TEMPLATE_CHANNEL,
+      templateMessageId: TEMPLATE_MESSAGE,
+      content: 'Read the rules.',
+      embeds: [{ title: 'Rules' }],
+      ignoreBots: true,
+      silent: true,
+      debounceMs: 0,
+      createdBy: USER,
+    });
+    expect(discord.webhooks.get(row!.webhookId)?.channelId).toBe(CHANNEL);
+    expect(discord.liveMessages(CHANNEL)).toEqual([discord.sent[0]!.id]);
+    expect((await stateOf(t, CHANNEL))?.lastMessageId).toBe(discord.sent[0]!.id);
+  });
+
+  it('creates thread stickies through the parent webhook, shared with the parent sticky', async () => {
+    await say('create', { channel: channel(CHANNEL), template: link() });
+    await say('create', { channel: channel(THREAD, CHANNEL), template: link() });
+    const [parent, thread] = await stickyRows(t);
+    expect(thread).toMatchObject({ channelId: THREAD, parentChannelId: CHANNEL, webhookId: parent!.webhookId });
+    expect(discord.sent[1]).toMatchObject({ channelId: CHANNEL, threadId: THREAD });
+  });
+
+  it('explains templates it cannot use, without creating anything', async () => {
+    discord.addTemplate(GUILD, TEMPLATE_CHANNEL, '100000000000000023', { content: '', embeds: [] });
+    const cases: Array<[string, string]> = [
+      ['not a link', 'The template must be a message link (right-click a message → Copy Message Link).'],
+      [link(OTHER_GUILD), 'The template must be a message in this server.'],
+      [link(GUILD, TEMPLATE_CHANNEL, '100000000000000022'), "I can't read that message: it does not exist."],
+      [link(GUILD, TEMPLATE_CHANNEL, '100000000000000023'), 'That message has no text or embeds to repeat.'],
+    ];
+    for (const [template, expected] of cases) {
+      expect(contents(await say('create', { channel: channel(CHANNEL), template }))).toEqual([expected]);
+    }
+    expect(await stickyRows(t)).toEqual([]);
+    expect(discord.webhooks.size).toBe(0);
+  });
+
+  it('asks for Manage Webhooks', async () => {
+    discord.missingWebhookPermission = true;
+    expect(contents(await say('create', { channel: channel(CHANNEL), template: link() }))).toEqual([
+      `I need the Manage Webhooks permission in <#${CHANNEL}>.`,
+    ]);
+    expect(await stickyRows(t)).toEqual([]);
+  });
+
+  it('refuses a second sticky in the same channel', async () => {
+    await say('create', { channel: channel(CHANNEL), template: link() });
+    expect(contents(await say('create', { channel: channel(CHANNEL), template: link() }))).toEqual([
+      `Sticky for <#${CHANNEL}> already exists.`,
+    ]);
+  });
+});
+
+describe('/sticky show, list and edit', () => {
+  it('shows the sticky of the current channel without its webhook', async () => {
+    await say('create', { channel: channel(CHANNEL), template: link() });
+    const [row] = await stickyRows(t);
+    const [shown] = await say('show');
+    const json = JSON.stringify(shown!.embeds!.map((embed) => embed.toJSON()));
+    expect(json).toContain('Read the rules.');
+    expect(json).not.toContain(row!.webhookToken);
+    expect(json).not.toContain(row!.webhookId);
+  });
+
+  it('lists the stickies of the server', async () => {
+    await say('create', { channel: channel(CHANNEL), template: link() });
+    await say('create', { channel: channel(THREAD, CHANNEL), template: link() });
+    expect(contents(await say('list'))).toEqual([`**2 Stickies**\n- <#${CHANNEL}>\n- <#${THREAD}>`]);
+  });
+
+  it('switches to a new template and reposts it', async () => {
+    discord.addTemplate(GUILD, TEMPLATE_CHANNEL, '100000000000000024', { content: 'New rules.', embeds: [] });
+    await say('create', { channel: channel(CHANNEL), template: link() });
+    expect(contents(await say('edit', { channel: channel(CHANNEL), template: link(GUILD, TEMPLATE_CHANNEL, '100000000000000024') }))).toEqual([
+      '**Sticky updated.**',
+    ]);
+    const [row] = await stickyRows(t);
+    expect(row).toMatchObject({ content: 'New rules.', embeds: [], templateMessageId: '100000000000000024' });
+    expect(discord.liveMessages(CHANNEL)).toEqual([discord.sent[1]!.id]);
+    expect(discord.sent[1]!.message.content).toBe('New rules.');
+  });
+
+  it('applies changed settings to the next post', async () => {
+    await say('create', { channel: channel(CHANNEL), template: link() });
+    await say('edit', { channel: channel(CHANNEL), silent: false });
+    expect(discord.sent[1]!.options.silent).toBe(false);
+    expect(discord.calls.filter((call) => call === 'ensureWebhook')).toHaveLength(1);
+  });
+});
+
+describe('/sticky delete', () => {
+  it('deletes the sticky, its post and its webhook', async () => {
+    await say('create', { channel: channel(CHANNEL), template: link() });
+    const [row] = await stickyRows(t);
+    expect(contents(await say('delete'))).toEqual([`**Sticky deleted:** <#${CHANNEL}>`]);
+    expect(discord.liveMessages()).toEqual([]);
+    expect(discord.deletedWebhooks).toEqual([row!.webhookId]);
+    expect(await stickyRows(t)).toEqual([]);
+    sb.client.emit(Events.MessageCreate, message(CHANNEL));
+    await sb.bot.idle();
+    expect(discord.sent).toHaveLength(1);
+  });
+
+  it('keeps a webhook another sticky still uses', async () => {
+    await say('create', { channel: channel(CHANNEL), template: link() });
+    await say('create', { channel: channel(THREAD, CHANNEL), template: link() });
+    await say('delete', {}, THREAD);
+    expect(discord.deletedWebhooks).toEqual([]);
+    expect(discord.liveMessages(THREAD)).toEqual([]);
+    expect(discord.liveMessages(CHANNEL)).toHaveLength(1);
+  });
+
+  it('posts nothing after a delete, even with a debounce pending', async () => {
+    await say('create', { channel: channel(CHANNEL), template: link(), debounce: 80 });
+    sb.client.emit(Events.MessageCreate, message(CHANNEL));
+    await sb.bot.idle();
+    await say('delete');
+    await sleep(150);
+    await sb.bot.idle();
+    expect(discord.sent).toHaveLength(1);
+    expect(discord.liveMessages()).toEqual([]);
+  });
+});
