@@ -11,6 +11,11 @@ export interface ModuleHooks<TConfig = any> {
   start?: (ctx: ModuleContext<TConfig>) => unknown;
   /** Runs for each guild once it is registered, with a context scoped to that guild. */
   guildReady?: (ctx: HandlerContext<TConfig>) => unknown;
+  /**
+   * Runs when the module stops working in a guild: it was switched off there, or the bot left. Stop timers and drop
+   * in-memory state of the guild here; guildReady runs again if it comes back.
+   */
+  guildStopped?: (ctx: HandlerContext<TConfig>) => unknown;
   /** Cleans up anything outside the database before the guild's rows are deleted; throwing keeps the guild. */
   deleteGuildData?: (ctx: HandlerContext<TConfig>, guildId: string) => unknown;
 }

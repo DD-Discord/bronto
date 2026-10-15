@@ -262,6 +262,7 @@ describe('Dispatcher', () => {
   });
 
   it('runs queued tasks as handlers of the requesting guild and actor', async () => {
+    await enablement.set('g2', 'alpha', true);
     let release!: () => void;
     const blocked = new Promise<void>((done) => {
       release = done;
@@ -319,6 +320,23 @@ describe('Dispatcher', () => {
     const guild = Object.assign(Object.create(Guild.prototype) as Guild, { id: 'g1' });
     await dispatcher.handleDiscord(Events.MessageCreate, [{ id: 'm9', guildId: null, content: '' }, guild]);
     expect(seen.map((entry) => entry.guildId)).toEqual(['g1', 'g1']);
+  });
+
+  it('skips queued tasks of a module switched off in the guild', async () => {
+    await upsertGuild(t.database.admin, 'g7');
+    const ran: string[] = [];
+    const queueTask = () =>
+      dispatcher.runHandler(runtime('alpha'), 'g7', null, 'test', async (ctx) => {
+        await ctx.queue.run('k', async () => {
+          ran.push('task');
+        });
+      });
+    await enablement.set('g7', 'alpha', false);
+    await queueTask();
+    expect(ran).toEqual([]);
+    await enablement.set('g7', 'alpha', true);
+    await queueTask();
+    expect(ran).toEqual(['task']);
   });
 });
 

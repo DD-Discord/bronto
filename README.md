@@ -93,7 +93,10 @@ const greet = defineCommand({
 - Schema files import table helpers from `@bronto/core/tables`, not from `@bronto/core`; drizzle-kit loads them.
 - Never keep a database transaction open across a Discord API call.
 - A task queued with `ctx.queue.run(key, task)` must not wait for another task of the same key: that never finishes.
-- `guildReady` runs again when a module is switched on again in a guild, so it must be safe to run more than once.
+- `guildReady` runs again when a module is switched back on or the bot rejoins, so it must be safe to run more than
+  once. `guildStopped` runs when the module stops working in a server (switched off there, or the bot left): stop timers
+  and drop in-memory state of that server there. Queued tasks of a switched-off module are skipped.
+- A timer may keep the `ctx` of the handler that started it and call `ctx.queue.run` later; that runs as a new handler.
 
 ## Development
 

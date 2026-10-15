@@ -15,3 +15,4 @@
 - Module schema files import `guildTable`/`globalTable` from `@bronto/core/tables`; drizzle-kit loads schema files, so they must not import discord.js.
 - Never keep a transaction (`ctx.db.run`) open across a Discord API call.
 - A queued task (`ctx.queue.run`) never waits for a task of its own key.
+- Modules with timers or in-memory state per server stop them in `hooks.guildStopped` and rebuild them in `hooks.guildReady` (which may run more than once).

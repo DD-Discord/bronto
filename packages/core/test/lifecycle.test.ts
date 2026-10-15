@@ -35,12 +35,16 @@ interface Options {
 
 function build(options: Options = {}) {
   const calls: string[] = [];
+  const stopped: string[] = [];
   const alpha = defineModule({
     name: 'alpha',
     botPermissions: [PermissionFlagsBits.ManageWebhooks],
     hooks: {
       guildReady: (ctx) => {
         calls.push(`alpha:ready:${ctx.guildId}`);
+      },
+      guildStopped: (ctx) => {
+        stopped.push(`alpha:${ctx.guildId}`);
       },
       deleteGuildData: async (_ctx, guildId) => {
         calls.push(`alpha:cleanup:${guildId}`);
@@ -68,6 +72,9 @@ function build(options: Options = {}) {
     hooks: {
       guildReady: (ctx) => {
         calls.push(`beta:ready:${ctx.guildId}`);
+      },
+      guildStopped: (ctx) => {
+        stopped.push(`beta:${ctx.guildId}`);
       },
       deleteGuildData: async (_ctx, guildId) => {
         calls.push(`beta:cleanup:${guildId}`);
@@ -97,7 +104,7 @@ function build(options: Options = {}) {
     },
     botPermissions: () => (options.permissions === undefined ? null : options.permissions),
   });
-  return { calls, syncs, enablement, dispatcher, lifecycle, logLines: captured.lines };
+  return { calls, stopped, syncs, enablement, dispatcher, lifecycle, logLines: captured.lines };
 }
 
 async function guildRow(id: string) {
@@ -111,6 +118,44 @@ async function leaveAgo(id: string, days: number): Promise<void> {
 }
 
 describe('GuildLifecycle', () => {
+  it('stops a module before switching it off, and not when switching it on', async () => {
+    const { stopped, enablement, lifecycle } = build();
+    await lifecycle.setUp('g1', false);
+    await lifecycle.setModuleEnabled('g1', 'beta', false, 'u1');
+    expect(stopped).toEqual(['beta:g1']);
+    expect(enablement.isEnabled('g1', 'beta')).toBe(false);
+    await lifecycle.setModuleEnabled('g1', 'beta', true, 'u1');
+    expect(stopped).toEqual(['beta:g1']);
+  });
+
+  it('stops every enabled module when the bot leaves a guild', async () => {
+    const { stopped, dispatcher, lifecycle } = build();
+    await lifecycle.setUp('g1', false);
+    await lifecycle.setModuleEnabled('g1', 'beta', false, null);
+    stopped.length = 0;
+    await lifecycle.leave('g1', NOW);
+    await dispatcher.idle();
+    expect(stopped).toEqual(['alpha:g1']);
+  });
+
+  it('runs switches of one guild one after another', async () => {
+    const { syncs, lifecycle } = build();
+    await lifecycle.setUp('g1', false);
+    const results = await Promise.all([
+      lifecycle.setModuleEnabled('g1', 'beta', false, null),
+      lifecycle.setModuleEnabled('g1', 'beta', false, null),
+    ]);
+    expect(results).toEqual([true, false]);
+    expect(syncs).toHaveLength(2);
+  });
+
+  it('keeps switching after a failed switch', async () => {
+    const { lifecycle } = build();
+    await lifecycle.setUp('g1', false);
+    await expect(lifecycle.setModuleEnabled('g1', 'missing', false, null)).rejects.toThrow('is not loaded');
+    expect(await lifecycle.setModuleEnabled('g1', 'beta', false, null)).toBe(true);
+  });
+
   it('registers a guild and runs guildReady for each module in dependency order', async () => {
     const { calls, lifecycle } = build();
     await lifecycle.setUp('g1', false);

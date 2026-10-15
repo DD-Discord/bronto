@@ -29,6 +29,7 @@ export interface LifecycleOptions {
 export class GuildLifecycle {
   private readonly options: LifecycleOptions;
   private readonly setups = new Map<string, Promise<void>>();
+  private readonly switching = new Map<string, Promise<unknown>>();
 
   constructor(options: LifecycleOptions) {
     this.options = options;
@@ -65,6 +66,9 @@ export class GuildLifecycle {
   async leave(guildId: string, at: Date = new Date()): Promise<void> {
     await markGuildLeft(this.options.database.admin, guildId, at);
     this.options.dispatcher.deliver(coreEvents.guildLeft, { guildId }, guildId);
+    for (const runtime of this.options.runtimes) {
+      if (this.options.enablement.isEnabled(guildId, runtime.name)) await this.stopModule(runtime, guildId);
+    }
     this.forget(guildId);
   }
 
@@ -82,15 +86,29 @@ export class GuildLifecycle {
   }
 
   /**
-   * Switches a module on or off in a guild. Returns false when it already had that state. Switching on warns about
-   * missing bot permissions and runs the module's guildReady there, after its commands are registered.
+   * Switches a module on or off in a guild. Returns false when it already had that state. Switching off runs the
+   * module's guildStopped first; switching on warns about missing bot permissions and runs its guildReady after its
+   * commands are registered. Switches of one guild run one after another.
    */
-  async setModuleEnabled(guildId: string, module: string, enabled: boolean, actorId: string | null): Promise<boolean> {
+  setModuleEnabled(guildId: string, module: string, enabled: boolean, actorId: string | null): Promise<boolean> {
+    const previous = this.switching.get(guildId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(() => this.switchModule(guildId, module, enabled, actorId));
+    this.switching.set(guildId, next);
+    next
+      .finally(() => {
+        if (this.switching.get(guildId) === next) this.switching.delete(guildId);
+      })
+      .catch(() => undefined);
+    return next;
+  }
+
+  private async switchModule(guildId: string, module: string, enabled: boolean, actorId: string | null): Promise<boolean> {
     const { runtimes, enablement, dispatcher, commands } = this.options;
     const runtime = runtimes.find((candidate) => candidate.name === module);
     if (runtime === undefined) throw new Error(`Module "${module}" is not loaded.`);
     await this.ready(guildId);
     if (enablement.isEnabled(guildId, module) === enabled) return false;
+    if (!enabled) await this.stopModule(runtime, guildId);
     await enablement.set(guildId, module, enabled);
     await commands.sync(guildId);
     if (enabled) this.warnAboutMissingPermissions(guildId, module);
@@ -136,6 +154,13 @@ export class GuildLifecycle {
       // A failing guildReady is logged by runHandler and does not stop the other modules.
       await dispatcher.runHandler(runtime, guildId, null, 'guildReady', (ctx) => hook(ctx));
     }
+  }
+
+  private async stopModule(runtime: ModuleRuntime, guildId: string): Promise<void> {
+    const hook = runtime.loaded.definition.hooks?.guildStopped;
+    if (hook === undefined) return;
+    // A failing guildStopped is logged by runHandler and does not keep the module running.
+    await this.options.dispatcher.runHandler(runtime, guildId, null, 'guildStopped', (ctx) => hook(ctx));
   }
 
   /** Logs a warning for each enabled module (or only `module`) that needs bot permissions the guild did not grant. */

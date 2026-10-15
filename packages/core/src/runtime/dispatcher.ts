@@ -134,6 +134,8 @@ export class Dispatcher {
         run: (key, task) =>
           this.track(
             this.queue.run(`${runtime.name}/${guildId}/${key}`, async () => {
+              // A task queued before the module was switched off in the guild does not run.
+              if (!this.enablement.isEnabled(guildId, runtime.name)) return;
               await this.runHandler(runtime, guildId, actorId, `queue:${key}`, task);
             }),
           ),
