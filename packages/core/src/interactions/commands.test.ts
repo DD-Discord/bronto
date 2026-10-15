@@ -81,4 +81,21 @@ describe('defineCommand', () => {
       }),
     ).toThrow('"a" is both a subcommand and a group');
   });
+
+  it('rejects bad option names and descriptions when the command is defined', () => {
+    const camel = { ignoreBots: opt.boolean({ description: 'Ignore bots' }) };
+    expect(() =>
+      defineCommand({
+        name: 'cfg',
+        description: 'x',
+        subcommands: { set: defineSubcommand({ description: 'Sets', options: camel, execute: noop }) },
+      }),
+    ).toThrow('Option name "ignoreBots"');
+    expect(() => defineCommand({ name: 'leaf', description: 'x', options: camel, execute: noop })).toThrow(
+      'Option name "ignoreBots"',
+    );
+    expect(() =>
+      defineCommand({ name: 'long', description: 'x', options: { note: opt.string({ description: 'n'.repeat(101) }) }, execute: noop }),
+    ).toThrow('Option "note" needs a description of 1 to 100 characters.');
+  });
 });

@@ -2,7 +2,7 @@ import { MessageFlags } from 'discord.js';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { upsertGuild } from '../src/db/guilds.js';
-import { defineCommand, defineSubcommand } from '../src/interactions/commands.js';
+import { defineCommand, defineSubcommand, type CommandDefinition } from '../src/interactions/commands.js';
 import { defineButton, defineModal } from '../src/interactions/components.js';
 import { UserError } from '../src/interactions/errors.js';
 import { opt } from '../src/interactions/options.js';
@@ -350,5 +350,22 @@ describe('InteractionRouter setup', () => {
     })();
     expect(error).toBeInstanceOf(ConfigError);
     expect((error as ConfigError).problems).toEqual(['modules: command /demo is defined by both "demo" and "other"']);
+  });
+
+  it('refuses commands whose JSON Discord would reject', () => {
+    const bad: CommandDefinition = {
+      name: 'bad',
+      description: 'Bad',
+      permissions: null,
+      nsfw: false,
+      handler: { description: 'Bad', options: { ignoreBots: opt.boolean({ description: 'Ignore bots' }) }, execute: () => undefined },
+      subcommands: {},
+      groups: {},
+    };
+    expect(() => makeRouter([{ runtime: runtimes[0]!, commands: [demoCommand, bad], components: [] }])).toThrow(
+      expect.objectContaining({
+        problems: ['modules: command /bad (demo): Option name "ignoreBots" must be 1 to 32 lowercase letters, digits, "-" or "_".'],
+      }),
+    );
   });
 });

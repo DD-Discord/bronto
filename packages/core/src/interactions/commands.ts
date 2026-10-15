@@ -57,8 +57,12 @@ export interface CommandDefinition {
 }
 
 function checkOptions(owner: string, options: OptionMap | undefined): void {
-  const names = Object.keys(options ?? {});
-  if (names.length > MAX_PER_LEVEL) throw new Error(`${owner} can have at most ${MAX_PER_LEVEL} options.`);
+  const entries = Object.entries(options ?? {});
+  if (entries.length > MAX_PER_LEVEL) throw new Error(`${owner} can have at most ${MAX_PER_LEVEL} options.`);
+  for (const [name, option] of entries) {
+    assertName('Option', name);
+    assertDescription('Option', name, option.description);
+  }
 }
 
 function checkSubcommands(owner: string, subcommands: Record<string, SubcommandDefinition<any>>): void {

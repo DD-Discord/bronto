@@ -11,7 +11,7 @@ import type { ModuleRuntime } from '../runtime/context.js';
 import type { Dispatcher } from '../runtime/dispatcher.js';
 import type { ModuleEnablement } from '../runtime/enablement.js';
 import type { HandlerContext } from '../runtime/types.js';
-import { findHandler, subcommandPath, type CommandDefinition } from './commands.js';
+import { commandToJson, findHandler, subcommandPath, type CommandDefinition } from './commands.js';
 import { parseCustomId, type ComponentDefinition } from './components.js';
 import { interactionContext, type ButtonContext, type CommandContext, type ModalContext } from './context.js';
 import { isUserError } from './errors.js';
@@ -72,6 +72,12 @@ export class InteractionRouter {
     const problems: string[] = [];
     for (const source of options.sources) {
       for (const command of source.commands) {
+        // Sync builds this JSON per guild; checking it at startup keeps one bad command from failing every sync.
+        try {
+          commandToJson(command);
+        } catch (error) {
+          problems.push(`modules: command /${command.name} (${source.runtime.name}): ${(error as Error).message}`);
+        }
         const existing = this.commands.get(command.name);
         if (existing !== undefined) {
           problems.push(
