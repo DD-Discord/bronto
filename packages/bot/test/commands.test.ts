@@ -1,19 +1,43 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { guilds, StartupError, type ModuleDefinition, type ModuleImporter } from '@bronto/core';
+import {
+  ConfigError,
+  defineCommand,
+  defineModule,
+  guilds,
+  StartupError,
+  type Database,
+  type ModuleDefinition,
+  type ModuleImporter,
+} from '@bronto/core';
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeClient, captureLog } from '@bronto/core/testing';
 import { widgetsModule } from '../../core/test/fixtures/widgets/module.js';
 import { widgetItems } from '../../core/test/fixtures/widgets/schema.js';
 import { createTestDatabase, setUpSchema, type TestDatabase } from '../../core/test/test-db.js';
 import { CliError, runDeleteGuild, runPurge, runStart, type CommandDeps } from '../src/commands.js';
 
+// Records the databases the commands create, to check that their pools are closed.
+const created = vi.hoisted(() => [] as Database[]);
+vi.mock('@bronto/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@bronto/core')>();
+  return {
+    ...actual,
+    createDatabase: (...args: Parameters<typeof actual.createDatabase>) => {
+      const database = actual.createDatabase(...args);
+      created.push(database);
+      return database;
+    },
+  };
+});
+
 let t: TestDatabase;
 let dir: string;
 
 beforeEach(async () => {
+  created.length = 0;
   t = await createTestDatabase();
   dir = await mkdtemp(join(tmpdir(), 'bronto-cli-'));
 });
@@ -52,6 +76,19 @@ function commandDeps(definitions: Record<string, ModuleDefinition>) {
   return { deps, client };
 }
 
+/** Two modules defining the same command, which createBot refuses. */
+function clashingModules(): Record<string, ModuleDefinition> {
+  const ping = defineCommand({ name: 'ping', description: 'Ping', execute: () => undefined });
+  return {
+    '@test/widgets': widgetsModule({ commands: [ping] }),
+    '@test/other': defineModule({ name: 'other', commands: [ping] }),
+  };
+}
+
+function poolsEnded(): boolean[] {
+  return created.flatMap((database) => [database.adminPool.ended, database.appPool.ended]);
+}
+
 async function schemaExists(name: string): Promise<boolean> {
   const { rows } = await t.database.adminPool.query('select 1 from pg_namespace where nspname = $1', [name]);
   return rows.length === 1;
@@ -64,6 +101,12 @@ describe('runStart', () => {
     expect(client.loggedInWith).toBe('token-1');
     await running.stop();
     expect(client.destroyed).toBe(true);
+  });
+
+  it('closes the database when the bot cannot be created', async () => {
+    const { deps } = commandDeps(clashingModules());
+    await expect(runStart(await writeConfig(['@test/widgets', '@test/other']), deps)).rejects.toBeInstanceOf(ConfigError);
+    expect(poolsEnded()).toEqual([true, true]);
   });
 
   it('refuses to start when the database is unsafe', async () => {
@@ -118,6 +161,14 @@ describe('runDeleteGuild', () => {
     expect(await t.database.admin.select().from(widgetItems).where(eq(widgetItems.id, 'w1'))).toEqual([]);
     expect(client.restToken).toBe('token-1');
     expect(client.loggedInWith).toBeNull();
+  });
+
+  it('closes the database when the bot cannot be created', async () => {
+    const { deps } = commandDeps(clashingModules());
+    await expect(runDeleteGuild(await writeConfig(['@test/widgets', '@test/other']), 'g1', deps)).rejects.toBeInstanceOf(
+      ConfigError,
+    );
+    expect(poolsEnded()).toEqual([true, true]);
   });
 
   it('refuses a guild it does not know before any cleanup runs', async () => {

@@ -45,7 +45,13 @@ export async function runStart(configPath: string, deps: CommandDeps): Promise<R
   const config = await readConfig(configPath, deps.env);
   const modules = await loadModules(config.modules, deps.importer);
   const database = createDatabase(config.database);
-  const bot = createBot({ config, modules, database, client: deps.createClient(modules), log: deps.log });
+  let bot;
+  try {
+    bot = createBot({ config, modules, database, client: deps.createClient(modules), log: deps.log });
+  } catch (error) {
+    await database.end();
+    throw error;
+  }
   try {
     await bot.start();
   } catch (error) {
@@ -86,16 +92,19 @@ export async function runDeleteGuild(configPath: string, guildId: string, deps: 
   const config = await readConfig(configPath, deps.env);
   const modules = await loadModules(config.modules, deps.importer);
   const database = createDatabase(config.database);
-  const client = deps.createClient(modules);
-  // Cleanup hooks may call Discord's REST API, which only needs the token.
-  client.rest.setToken(config.discord.token);
-  const bot = createBot({ config, modules, database, client, log: deps.log });
   try {
-    await bot.prepare();
-    if (!(await guildExists(database.admin, guildId))) throw new CliError(`Guild ${guildId} is not known.`);
-    await bot.lifecycle.deleteGuild(guildId);
+    const client = deps.createClient(modules);
+    // Cleanup hooks may call Discord's REST API, which only needs the token.
+    client.rest.setToken(config.discord.token);
+    const bot = createBot({ config, modules, database, client, log: deps.log });
+    try {
+      await bot.prepare();
+      if (!(await guildExists(database.admin, guildId))) throw new CliError(`Guild ${guildId} is not known.`);
+      await bot.lifecycle.deleteGuild(guildId);
+    } finally {
+      await bot.stop();
+    }
   } finally {
-    await bot.stop();
     await database.end();
   }
   deps.log.info({ guildId }, 'Deleted the guild data');
