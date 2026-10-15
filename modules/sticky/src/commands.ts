@@ -18,6 +18,8 @@ const STICKY_CHANNEL_TYPES = [
 ];
 
 const MAX_DEBOUNCE_MS = 86_400_000;
+// Discord's limit for a message's content.
+const MAX_CONTENT_LENGTH = 2000;
 
 export interface StickyCommandDeps {
   index: StickyIndex;
@@ -38,6 +40,9 @@ async function loadTemplate(ctx: StickyContext, discord: StickyDiscord, link: st
     throw error;
   }
   if (template.content === '' && template.embeds.length === 0) throw new UserError('That message has no text or embeds to repeat.');
+  if (template.content.length > MAX_CONTENT_LENGTH) {
+    throw new UserError(`That message is longer than ${MAX_CONTENT_LENGTH} characters, which a webhook cannot post.`);
+  }
   return {
     templateChannelId: parsed.channelId,
     templateMessageId: parsed.messageId,

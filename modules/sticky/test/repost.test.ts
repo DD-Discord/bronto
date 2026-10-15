@@ -3,6 +3,8 @@ import { Events } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { stickyEvents } from '../src/events.js';
+import { Reposter, type StickyContext } from '../src/repost.js';
+import { StickyIndex } from '../src/sticky-index.js';
 import { FakeStickyDiscord } from './fake-discord.js';
 import {
   CHANNEL,
@@ -102,7 +104,10 @@ describe('reposting', () => {
     await insertSticky(t, discord, { channelId: CHANNEL });
     await ready(sb);
     sb.client.emit(Events.MessageCreate, message(CHANNEL));
-    await sleep(10);
+    for (let waited = 0; !discord.calls.includes('send'); waited += 1) {
+      if (waited > 2000) throw new Error('The first repost never started sending');
+      await sleep(1);
+    }
     for (let i = 0; i < 9; i++) sb.client.emit(Events.MessageCreate, message(CHANNEL));
     const lastMessageAt = performance.now();
     await sb.bot.idle();
@@ -142,6 +147,49 @@ describe('reposting', () => {
     expect(sb.lines).toContainEqual(expect.objectContaining({ msg: 'Replaced the deleted webhook of a sticky' }));
     await say(sb, message(CHANNEL));
     expect(discord.liveMessages(CHANNEL)).toEqual([discord.sent[2]!.id]);
+  });
+
+  it('still reposts when deleting the old post after a webhook replacement fails', async () => {
+    const sb = await start();
+    const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
+    await ready(sb);
+    await say(sb, message(CHANNEL));
+    discord.removeWebhook(sticky.webhookId);
+    discord.failDeleteChannelMessage = true;
+    await say(sb, message(CHANNEL));
+    expect(discord.sent).toHaveLength(2);
+    expect((await stateOf(t, CHANNEL))?.lastMessageId).toBe(discord.sent[1]!.id);
+    expect(sb.lines).toContainEqual(
+      expect.objectContaining({ level: 40, channelId: CHANNEL, msg: 'Deleting the previous sticky post failed' }),
+    );
+  });
+
+  it('logs the new post when recording it fails', async () => {
+    await start();
+    const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
+    const errors: unknown[][] = [];
+    let runs = 0;
+    const ctx = {
+      guildId: GUILD,
+      config: { webhookName: 'Sticky' },
+      log: { warn: () => undefined, info: () => undefined, error: (...args: unknown[]) => void errors.push(args) },
+      emit: () => undefined,
+      db: {
+        run: async () => {
+          runs += 1;
+          if (runs === 1) return { sticky, lastMessageId: null };
+          throw new Error('database down');
+        },
+      },
+    } as unknown as StickyContext;
+    const reposter = new Reposter({ index: new StickyIndex(), discord: () => discord });
+    await expect(reposter.repost(ctx, CHANNEL)).rejects.toThrow('database down');
+    expect(errors).toEqual([
+      [
+        expect.objectContaining({ channelId: CHANNEL, messageId: discord.sent[0]!.id }),
+        'Recording the new sticky post failed',
+      ],
+    ]);
   });
 
   it('announces each post', async () => {
@@ -218,6 +266,35 @@ describe('debounce', () => {
     await sleep(30);
     await sb.bot.idle();
     expect(discord.sent).toHaveLength(1);
+  });
+});
+
+describe('debounce and index changes', () => {
+  const entry = { guildId: GUILD, channelId: CHANNEL, webhookId: '100000000000000040', ignoreBots: true, debounceMs: 10 };
+
+  /** Runs onMessage with `change` applied to the index while the due time is written. */
+  async function armedRuns(change: (index: StickyIndex) => void): Promise<string[]> {
+    const index = new StickyIndex();
+    index.set(entry);
+    const reposter = new Reposter({ index, discord: () => discord });
+    const runs: string[] = [];
+    const ctx = {
+      guildId: GUILD,
+      db: { run: async () => change(index) },
+      queue: { run: async (key: string) => void runs.push(key) },
+    } as unknown as StickyContext;
+    await reposter.onMessage(ctx, message(CHANNEL));
+    await sleep(40);
+    reposter.cancel(CHANNEL);
+    return runs;
+  }
+
+  it('still arms the debounce when the entry is replaced meanwhile', async () => {
+    expect(await armedRuns((index) => index.updateWebhook(CHANNEL, '100000000000000041'))).toEqual([CHANNEL]);
+  });
+
+  it('does not arm the debounce when the sticky is deleted meanwhile', async () => {
+    expect(await armedRuns((index) => index.delete(CHANNEL))).toEqual([]);
   });
 });
 

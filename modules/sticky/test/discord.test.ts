@@ -86,6 +86,12 @@ describe('createRestStickyDiscord', () => {
       UnknownWebhookError,
     );
     await expect(gone.discord.deleteMessage(target, '1')).rejects.toBeInstanceOf(UnknownWebhookError);
+    // A revoked token is as unusable as a deleted webhook.
+    const revoked = fakeRest(() => error(50027, 401));
+    await expect(revoked.discord.send(target, { content: 'x', embeds: [] }, { silent: true, username: 'S' })).rejects.toBeInstanceOf(
+      UnknownWebhookError,
+    );
+    await expect(revoked.discord.deleteMessage(target, '1')).rejects.toBeInstanceOf(UnknownWebhookError);
     const missing = fakeRest(() => error(10008));
     await expect(missing.discord.deleteMessage({ ...target, threadId: '100000000000000011' }, '100000000000000050')).rejects.toBeInstanceOf(
       UnknownMessageError,
@@ -190,10 +196,11 @@ describe('createRestStickyDiscord', () => {
     const sendError = await failed.discord.send(target, { content: 'x', embeds: [] }, { silent: true, username: 'S' }).catch((e: unknown) => e);
     expect(sendError).toBeInstanceOf(Error);
     expect(leaks(sendError)).not.toContain('fake-token');
-    const refused = fakeRest(() => error(50027, 401));
-    const deleteError = await refused.discord.deleteMessage(target, '1').catch((e: unknown) => e);
-    expect(deleteError).toMatchObject({ code: 50027 });
+    const denied = fakeRest(() => error(50013, 403));
+    const deleteError = await denied.discord.deleteMessage(target, '1').catch((e: unknown) => e);
+    expect(deleteError).toMatchObject({ code: 50013 });
     expect(leaks(deleteError)).not.toContain('fake-token');
+    const refused = fakeRest(() => error(50027, 401));
     const hookError = await refused.discord.deleteWebhook(target).catch((e: unknown) => e);
     expect(leaks(hookError)).not.toContain('fake-token');
   });

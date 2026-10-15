@@ -79,8 +79,8 @@ export class Reposter {
         .values({ channelId: entry.channelId, repostDueAt })
         .onConflictDoUpdate({ target: stickyState.channelId, set: { repostDueAt } });
     });
-    // A delete may have removed the sticky while the due time was written.
-    if (this.index.get(entry.channelId) !== entry) return;
+    // A delete may have removed the sticky while the due time was written; edits only replace its entry.
+    if (this.index.get(entry.channelId) === undefined) return;
     this.arm(ctx, entry.channelId, entry.debounceMs);
   }
 
@@ -130,7 +130,13 @@ export class Reposter {
       if (!(error instanceof UnknownWebhookError)) throw error;
       const replacement = await this.replaceWebhook(ctx, discord, sticky);
       // Only the deleted webhook could remove its posts; the bot removes the last one with its own permissions.
-      if (lastMessageId !== null) await discord.deleteChannelMessage(channelId, lastMessageId);
+      if (lastMessageId !== null) {
+        try {
+          await discord.deleteChannelMessage(channelId, lastMessageId);
+        } catch (error) {
+          ctx.log.warn({ err: error, channelId }, 'Deleting the previous sticky post failed');
+        }
+      }
       await this.post(ctx, discord, { ...sticky, webhookId: replacement.id, webhookToken: replacement.token }, null);
     }
   }
@@ -152,12 +158,18 @@ export class Reposter {
       { content: sticky.content, embeds: sticky.embeds },
       { silent: sticky.silent, username: ctx.config.webhookName, avatarUrl: ctx.config.webhookAvatar },
     );
-    await ctx.db.run(async (tx) => {
-      await tx
-        .insert(stickyState)
-        .values({ channelId: sticky.channelId, lastMessageId: messageId })
-        .onConflictDoUpdate({ target: stickyState.channelId, set: { lastMessageId: messageId } });
-    });
+    try {
+      await ctx.db.run(async (tx) => {
+        await tx
+          .insert(stickyState)
+          .values({ channelId: sticky.channelId, lastMessageId: messageId })
+          .onConflictDoUpdate({ target: stickyState.channelId, set: { lastMessageId: messageId } });
+      });
+    } catch (error) {
+      // The post is live but unrecorded, so the next repost cannot delete it; the ID lets someone remove it.
+      ctx.log.error({ err: error, channelId: sticky.channelId, messageId }, 'Recording the new sticky post failed');
+      throw error;
+    }
     ctx.emit(stickyEvents.posted, { channelId: sticky.channelId, messageId });
   }
 

@@ -90,17 +90,26 @@ describe('/sticky create', () => {
 
   it('explains templates it cannot use, without creating anything', async () => {
     discord.addTemplate(GUILD, TEMPLATE_CHANNEL, '100000000000000023', { content: '', embeds: [] });
+    discord.addTemplate(GUILD, TEMPLATE_CHANNEL, '100000000000000025', { content: 'x'.repeat(2001), embeds: [] });
     const cases: Array<[string, string]> = [
       ['not a link', 'The template must be a message link (right-click a message → Copy Message Link).'],
       [link(OTHER_GUILD), 'The template must be a message in this server.'],
       [link(GUILD, TEMPLATE_CHANNEL, '100000000000000022'), "I can't read that message: it does not exist."],
       [link(GUILD, TEMPLATE_CHANNEL, '100000000000000023'), 'That message has no text or embeds to repeat.'],
+      [link(GUILD, TEMPLATE_CHANNEL, '100000000000000025'), 'That message is longer than 2000 characters, which a webhook cannot post.'],
     ];
     for (const [template, expected] of cases) {
       expect(contents(await say('create', { channel: channel(CHANNEL), template }))).toEqual([expected]);
     }
     expect(await stickyRows(t)).toEqual([]);
     expect(discord.webhooks.size).toBe(0);
+  });
+
+  it('accepts a template of exactly 2000 characters', async () => {
+    discord.addTemplate(GUILD, TEMPLATE_CHANNEL, '100000000000000026', { content: 'x'.repeat(2000), embeds: [] });
+    expect(contents(await say('create', { channel: channel(CHANNEL), template: link(GUILD, TEMPLATE_CHANNEL, '100000000000000026') }))).toEqual([
+      '**Sticky created.**',
+    ]);
   });
 
   it('asks for Manage Webhooks', async () => {

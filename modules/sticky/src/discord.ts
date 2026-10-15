@@ -92,6 +92,12 @@ function codeOf(error: unknown): number | null {
   return error instanceof DiscordAPIError && typeof error.code === 'number' ? error.code : null;
 }
 
+/** A deleted webhook, or one whose token was revoked: either way it can no longer post. */
+function isWebhookGone(error: unknown): boolean {
+  const code = codeOf(error);
+  return code === RESTJSONErrorCodes.UnknownWebhook || code === RESTJSONErrorCodes.InvalidWebhookToken;
+}
+
 function isPermissionError(error: unknown): boolean {
   const code = codeOf(error);
   return code === RESTJSONErrorCodes.MissingAccess || code === RESTJSONErrorCodes.MissingPermissions;
@@ -213,7 +219,7 @@ export function createRestStickyDiscord(client: Pick<Client, 'rest' | 'applicati
         const sent = (await rest.post(Routes.webhook(target.id, target.token), { body, query, auth: false })) as APIMessage;
         return sent.id;
       } catch (error) {
-        if (codeOf(error) === RESTJSONErrorCodes.UnknownWebhook) throw new UnknownWebhookError();
+        if (isWebhookGone(error)) throw new UnknownWebhookError();
         throw redactToken(error, target.token);
       }
     },
@@ -227,7 +233,7 @@ export function createRestStickyDiscord(client: Pick<Client, 'rest' | 'applicati
       } catch (error) {
         const code = codeOf(error);
         if (code === RESTJSONErrorCodes.UnknownMessage) throw new UnknownMessageError();
-        if (code === RESTJSONErrorCodes.UnknownWebhook) throw new UnknownWebhookError();
+        if (isWebhookGone(error)) throw new UnknownWebhookError();
         throw redactToken(error, target.token);
       }
     },
