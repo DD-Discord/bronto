@@ -15,7 +15,7 @@ const row = {
 };
 
 describe('colorFromId', () => {
-  it('derives a stable color like the old bots', () => {
+  it('derives a stable color from the ID', () => {
     expect(colorFromId('123456789012345678')).toBe(4360151);
     expect(colorFromId('w1')).toBe(14115394);
     expect(colorFromId('w1')).toBe(colorFromId('w1'));

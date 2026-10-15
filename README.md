@@ -79,6 +79,8 @@ const greet = defineCommand({
 - Throw `UserError` for problems the user can fix; they see its message privately. Other errors are logged and the
   user sees a generic message.
 - A button or modal gets its custom ID from `button.customId(...args)`; the handler receives the args.
+- A handler that opens a modal must call `ctx.showModal` first, before any slow work: once the interaction is
+  deferred, it can no longer show a modal.
 
 ### CRUD subcommands
 
@@ -91,6 +93,7 @@ const greet = defineCommand({
 - Schema files import table helpers from `@bronto/core/tables`, not from `@bronto/core`; drizzle-kit loads them.
 - Never keep a database transaction open across a Discord API call.
 - A task queued with `ctx.queue.run(key, task)` must not wait for another task of the same key: that never finishes.
+- `guildReady` runs again when a module is switched on again in a guild, so it must be safe to run more than once.
 
 ## Development
 
