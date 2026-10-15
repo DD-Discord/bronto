@@ -1,6 +1,8 @@
 import { Events, GatewayIntentBits } from 'discord.js';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { defineCommand } from '../interactions/commands.js';
+import { defineButton } from '../interactions/components.js';
 import { coreEvents, defineEvent, eventLabel, on } from './events.js';
 import { defineModule } from './module.js';
 
@@ -53,5 +55,25 @@ describe('coreEvents', () => {
       'core.moduleEnabled',
       'core.moduleDisabled',
     ]);
+  });
+});
+
+describe('defineModule interactions', () => {
+  it('claims its components', () => {
+    const button = defineButton({ name: 'copy', execute: () => undefined });
+    defineModule({ name: 'notes', components: [button] });
+    expect(button.customId('1')).toBe('notes:copy:1');
+    expect(() => defineModule({ name: 'other', components: [button] })).toThrow(
+      'Component "copy" already belongs to module "notes"',
+    );
+  });
+
+  it('refuses duplicate command and component names', () => {
+    const a = defineCommand({ name: 'same', description: 'a', execute: () => undefined });
+    const b = defineCommand({ name: 'same', description: 'b', execute: () => undefined });
+    expect(() => defineModule({ name: 'dupe', commands: [a, b] })).toThrow('Command "same" is defined twice');
+    const x = defineButton({ name: 'x', execute: () => undefined });
+    const y = defineButton({ name: 'x', execute: () => undefined });
+    expect(() => defineModule({ name: 'dupe2', components: [x, y] })).toThrow('Button "x" is defined twice');
   });
 });

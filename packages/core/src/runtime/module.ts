@@ -1,6 +1,8 @@
 import type { GatewayIntentBits, Partials } from 'discord.js';
 import type { z } from 'zod';
 import { assertModuleName } from '../db/names.js';
+import type { CommandDefinition } from '../interactions/commands.js';
+import type { ComponentDefinition } from '../interactions/components.js';
 import type { EventDefinition, Listener } from './events.js';
 import type { ApiContext, HandlerContext, ModuleContext } from './types.js';
 
@@ -29,6 +31,12 @@ export interface ModuleDefinition<TConfig = any, TApi = unknown> {
   };
   events?: Record<string, EventDefinition<any>>;
   listeners?: Listener[];
+  /** Top-level slash commands; registered in a guild while the module is enabled there. */
+  commands?: CommandDefinition[];
+  /** Buttons and modals, routed by the custom-ID prefix `<module>:<name>`. */
+  components?: ComponentDefinition[];
+  /** Discord permissions the bot needs for this module; missing ones are logged when a guild is set up. */
+  botPermissions?: bigint[];
   api?: (ctx: ApiContext<TConfig>) => TApi;
   hooks?: ModuleHooks<TConfig>;
 }
@@ -47,6 +55,22 @@ export function defineModule<TConfig = Record<string, never>, TApi = undefined>(
       throw new Error(`Event "${event.name}" already belongs to module "${event.owner}".`);
     }
     event.owner = definition.name;
+  }
+  const commandNames = new Set<string>();
+  for (const command of definition.commands ?? []) {
+    if (commandNames.has(command.name)) throw new Error(`Command "${command.name}" is defined twice in module "${definition.name}".`);
+    commandNames.add(command.name);
+  }
+  const componentNames = new Set<string>();
+  for (const component of definition.components ?? []) {
+    const label = component.kind === 'button' ? 'Button' : 'Modal';
+    const key = `${component.kind}:${component.name}`;
+    if (componentNames.has(key)) throw new Error(`${label} "${component.name}" is defined twice in module "${definition.name}".`);
+    componentNames.add(key);
+    if (component.owner !== null && component.owner !== definition.name) {
+      throw new Error(`Component "${component.name}" already belongs to module "${component.owner}".`);
+    }
+    component.owner = definition.name;
   }
   return definition;
 }
