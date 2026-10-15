@@ -29,16 +29,23 @@ below the new message. The sticky is a copy of a template message (text and embe
 | `/sticky list` | Lists the stickies of this server |
 | `/sticky delete [channel]` | Deletes a sticky, its post and its webhook (unless another sticky shares it) |
 
-- `ignore-bots` (default yes): messages from bots don't move the sticky.
+- `ignore-bots` (default yes): messages from bots and system messages (joins, pins, boosts) don't move the sticky.
 - `silent` (default yes): reposts don't notify.
 - `debounce` (milliseconds, default 0): wait until the channel has been quiet this long before reposting.
 
-Threads post through a webhook on their parent channel. If someone deletes the webhook, the module creates a new one
+Stickies work in text, announcement and voice channels and in threads. Threads post through a webhook on their parent
+channel; in a private thread the bot must be added to the thread or have Manage Threads. If someone deletes the webhook, the module creates a new one
 on the next repost. Changing the template message later does not change the sticky; run `/sticky edit` with the link
 again.
 
 ## Importing from the previous Sticky bot
 
 `bronto import-legacy sticky <path to data/channels>` imports its JSON records (`--dry-run` only checks them). The
-report has one line per file. Stickies whose webhook token is unknown get a new webhook and post fresh with the next
-message. Stickies already imported are left untouched, so the import can be run again.
+report has one line per file and a summary line at the end.
+
+When a record has no webhook token, the importer first asks Discord for the webhook's token. Only when Discord does not
+reveal it does the importer delete the old sticky post and webhook and create a new webhook; the next message in that
+channel then posts a fresh sticky.
+
+A channel or thread the bot cannot see is reported as skipped with a note saying so: give the bot access there and run
+the import again. Stickies already imported are left untouched, so the import can be run again at any time.

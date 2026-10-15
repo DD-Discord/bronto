@@ -40,7 +40,7 @@ Images are published as `ghcr.io/dd-discord/bronto:main`. Copy `compose.example.
 
 ```bash
 docker compose up -d
-docker compose run --rm bot bronto import-legacy <module> /path --dry-run   # other CLI commands work the same way
+docker compose run --rm -v ./legacy:/legacy:ro bot bronto import-legacy <module> /legacy --dry-run   # other CLI commands work the same way
 ```
 
 ## Writing a module
