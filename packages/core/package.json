@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./drizzle-config": "./src/db/drizzle-config.ts",
+    "./tables": "./src/db/tables.ts",
     "./testing": "./src/testing/index.ts"
   },
   "scripts": {

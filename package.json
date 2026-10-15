@@ -11,6 +11,9 @@
     "test": "vitest run",
     "bronto": "tsx packages/bot/src/cli.ts"
   },
+  "dependencies": {
+    "@bronto/example-notes": "workspace:*"
+  },
   "devDependencies": {
     "@testcontainers/postgresql": "12.2.1",
     "@types/node": "24.19.2",
