@@ -82,8 +82,8 @@ export class GuildLifecycle {
   }
 
   /**
-   * Switches a module on or off in a guild. Returns false when it already had that state. Switching on runs the
-   * module's guildReady there, after its commands are registered.
+   * Switches a module on or off in a guild. Returns false when it already had that state. Switching on warns about
+   * missing bot permissions and runs the module's guildReady there, after its commands are registered.
    */
   async setModuleEnabled(guildId: string, module: string, enabled: boolean, actorId: string | null): Promise<boolean> {
     const { runtimes, enablement, dispatcher, commands } = this.options;
@@ -93,6 +93,7 @@ export class GuildLifecycle {
     if (enablement.isEnabled(guildId, module) === enabled) return false;
     await enablement.set(guildId, module, enabled);
     await commands.sync(guildId);
+    if (enabled) this.warnAboutMissingPermissions(guildId, module);
     const hook = runtime.loaded.definition.hooks?.guildReady;
     if (enabled && hook !== undefined) {
       await dispatcher.runHandler(runtime, guildId, null, 'guildReady', (ctx) => hook(ctx));
@@ -137,10 +138,12 @@ export class GuildLifecycle {
     }
   }
 
-  private warnAboutMissingPermissions(guildId: string): void {
+  /** Logs a warning for each enabled module (or only `module`) that needs bot permissions the guild did not grant. */
+  private warnAboutMissingPermissions(guildId: string, module?: string): void {
     const permissions = this.options.botPermissions?.(guildId) ?? null;
     if (permissions === null) return;
     for (const runtime of this.options.runtimes) {
+      if (module !== undefined && runtime.name !== module) continue;
       const needed = runtime.loaded.definition.botPermissions ?? [];
       if (needed.length === 0 || !this.options.enablement.isEnabled(guildId, runtime.name)) continue;
       const missing = permissions.missing(needed);

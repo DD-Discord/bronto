@@ -305,6 +305,17 @@ describe('GuildLifecycle', () => {
     }
   });
 
+  it('warns about missing bot permissions when a module is switched on', async () => {
+    const { enablement, lifecycle, logLines } = build({ permissions: new PermissionsBitField(PermissionFlagsBits.SendMessages) });
+    await upsertGuild(t.database.admin, 'g1');
+    await enablement.set('g1', 'alpha', false);
+    await lifecycle.setUp('g1', false);
+    const warnings = () => logLines.filter((line) => line.msg === 'The bot lacks permissions this module needs');
+    expect(warnings()).toEqual([]);
+    await lifecycle.setModuleEnabled('g1', 'alpha', true, 'u1');
+    expect(warnings()).toEqual([expect.objectContaining({ level: 40, module: 'alpha', guildId: 'g1', missing: ['ManageWebhooks'] })]);
+  });
+
   it('switches a module off: stores it, syncs commands and announces it', async () => {
     const { calls, syncs, enablement, dispatcher, lifecycle } = build();
     await lifecycle.setUp('g1', false);
