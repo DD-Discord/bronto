@@ -47,6 +47,9 @@ docker compose run --rm -v ./legacy:/legacy:ro bot bronto import-legacy <module>
 
 ## Writing a module
 
+The [developer guide](docs/developer-guide.md) walks through building a module step by step and explains how the
+core works inside. In short:
+
 A module is a package whose default export is a `defineModule()` definition:
 
 ```ts
