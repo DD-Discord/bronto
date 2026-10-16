@@ -196,7 +196,7 @@ describe('/sticky delete', () => {
     expect(sb.lines).toContainEqual(expect.objectContaining({ level: 40, msg: 'Deleting the sticky post failed' }));
   });
 
-  it('deletes the last post with the bot own permissions when the webhook is gone', async () => {
+  it("deletes the last post with the bot's own permissions when the webhook is gone", async () => {
     await say('create', { channel: channel(CHANNEL), template: link() });
     const [row] = await stickyRows(t);
     const [post] = discord.liveMessages();
@@ -212,19 +212,24 @@ describe('/sticky delete', () => {
     discord.removeWebhook(row!.webhookId);
     // Holds the repost inside its webhook recovery while the delete command loads the old row.
     let release!: () => void;
+    let reached!: () => void;
+    const inRecovery = new Promise<void>((resolve) => (reached = resolve));
     const gate = new Promise<void>((resolve) => (release = resolve));
     const ensureWebhook = discord.ensureWebhook.bind(discord);
     discord.ensureWebhook = async (...args) => {
+      reached();
       await gate;
       return ensureWebhook(...args);
     };
     sb.client.emit(Events.MessageCreate, message(CHANNEL));
-    await sleep(30);
+    await inRecovery;
     const fake = fakeCommand({ command: 'sticky', subcommand: 'delete', guildId: GUILD, channelId: CHANNEL, userId: USER, options: {} });
     sb.client.emit(Events.InteractionCreate, fake);
     await sleep(100);
     release();
     await sb.bot.idle();
+    // Only the first post went through the repost's fallback; the replacement post was removed by the cleanup itself.
+    expect(discord.botDeleted).toHaveLength(1);
     expect(discord.liveMessages()).toEqual([]);
     expect([...discord.webhooks.keys()]).toEqual([]);
     expect(await stickyRows(t)).toEqual([]);

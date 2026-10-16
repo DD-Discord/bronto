@@ -1,5 +1,5 @@
 import { defineModule, on } from '@bronto/core';
-import { Events } from 'discord.js';
+import { DiscordAPIError, Events } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { stickyEvents } from '../src/events.js';
@@ -317,7 +317,7 @@ describe('guild deletion', () => {
     expect(await stickyRows(t)).toEqual([]);
   });
 
-  it('removes the last post with the bot own permissions when the webhook is gone', async () => {
+  it("removes the last post with the bot's own permissions when the webhook is gone", async () => {
     const sb = await start();
     const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
     await ready(sb);
@@ -327,5 +327,39 @@ describe('guild deletion', () => {
     await sb.bot.lifecycle.deleteGuild(GUILD);
     expect(discord.liveMessages()).toEqual([]);
     expect(discord.botDeleted).toContain(post!);
+  });
+
+  const apiError = (status: number, code: number) => new DiscordAPIError({ message: 'refused', code }, code, status, 'DELETE', '/x', {});
+
+  it('still deletes the guild data when Discord refuses the removal because the bot left', async () => {
+    const sb = await start();
+    const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
+    await ready(sb);
+    await say(sb, message(CHANNEL));
+    discord.removeWebhook(sticky.webhookId);
+    discord.deleteChannelMessageError = apiError(403, 50001);
+    await sb.bot.lifecycle.deleteGuild(GUILD);
+    expect(await stickyRows(t)).toEqual([]);
+    expect(sb.lines).toContainEqual(expect.objectContaining({ level: 40, msg: 'Could not remove a sticky post or webhook from Discord' }));
+  });
+
+  it('continues with the other webhooks when Discord refuses to delete one', async () => {
+    const sb = await start();
+    await insertSticky(t, discord, { channelId: CHANNEL });
+    await ready(sb);
+    discord.deleteWebhookError = apiError(403, 50013);
+    await sb.bot.lifecycle.deleteGuild(GUILD);
+    expect(await stickyRows(t)).toEqual([]);
+  });
+
+  it('keeps the guild data when Discord fails with a server error', async () => {
+    const sb = await start();
+    const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
+    await ready(sb);
+    await say(sb, message(CHANNEL));
+    discord.removeWebhook(sticky.webhookId);
+    discord.deleteChannelMessageError = apiError(500, 0);
+    await expect(sb.bot.lifecycle.deleteGuild(GUILD)).rejects.toThrow();
+    expect(await stickyRows(t)).toHaveLength(1);
   });
 });

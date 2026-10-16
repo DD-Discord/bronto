@@ -116,12 +116,11 @@ export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition 
           // Runs after any repost still in flight, so no post of this sticky is left behind.
           await ctx.queue.run(record.channelId, async (task) => {
             const discord = deps.discord(task);
-            const [current, state] = await task.db.run(async (tx) =>
-              Promise.all([
-                tx.select().from(stickies).where(eq(stickies.channelId, record.channelId)),
-                tx.select().from(stickyState).where(eq(stickyState.channelId, record.channelId)),
-              ]).then(([rows, states]) => [rows[0], states[0]] as const),
-            );
+            const [current, state] = await task.db.run(async (tx) => {
+              const [row] = await tx.select().from(stickies).where(eq(stickies.channelId, record.channelId));
+              const [last] = await tx.select().from(stickyState).where(eq(stickyState.channelId, record.channelId));
+              return [row, last] as const;
+            });
             // A repost that ran meanwhile may have replaced the webhook the command loaded.
             const sticky = current ?? record;
             if (state?.lastMessageId != null) {
