@@ -316,4 +316,16 @@ describe('guild deletion', () => {
     expect(discord.deletedWebhooks).toEqual([sticky.webhookId]);
     expect(await stickyRows(t)).toEqual([]);
   });
+
+  it('removes the last post with the bot own permissions when the webhook is gone', async () => {
+    const sb = await start();
+    const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
+    await ready(sb);
+    await say(sb, message(CHANNEL));
+    const [post] = discord.liveMessages();
+    discord.removeWebhook(sticky.webhookId);
+    await sb.bot.lifecycle.deleteGuild(GUILD);
+    expect(discord.liveMessages()).toEqual([]);
+    expect(discord.botDeleted).toContain(post!);
+  });
 });

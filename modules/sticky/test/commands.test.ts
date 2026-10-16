@@ -196,6 +196,16 @@ describe('/sticky delete', () => {
     expect(sb.lines).toContainEqual(expect.objectContaining({ level: 40, msg: 'Deleting the sticky post failed' }));
   });
 
+  it('deletes the last post with the bot own permissions when the webhook is gone', async () => {
+    await say('create', { channel: channel(CHANNEL), template: link() });
+    const [row] = await stickyRows(t);
+    const [post] = discord.liveMessages();
+    discord.removeWebhook(row!.webhookId);
+    expect(contents(await say('delete'))).toEqual([`**Sticky deleted:** <#${CHANNEL}>`]);
+    expect(discord.liveMessages()).toEqual([]);
+    expect(discord.botDeleted).toContain(post!);
+  });
+
   it('queues no repost for a channel without a sticky', async () => {
     const reposter = new Reposter({ index: new StickyIndex(), discord: () => discord });
     const runs: string[] = [];

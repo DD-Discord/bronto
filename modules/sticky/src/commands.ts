@@ -5,7 +5,7 @@ import { stickies, stickyState } from './db/schema.js';
 import { MissingWebhookPermissionError, TemplateUnavailableError, type StickyDiscord } from './discord.js';
 import { stickyEntity } from './entity.js';
 import { parseMessageLink } from './message.js';
-import { ignoreGone, targetOf, type Reposter, type StickyContext } from './repost.js';
+import { removePost, targetOf, type Reposter, type StickyContext } from './repost.js';
 import { entryOf, type StickyIndex } from './sticky-index.js';
 
 const STICKY_CHANNEL_TYPES = [
@@ -122,7 +122,7 @@ export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition 
             );
             if (state?.lastMessageId != null) {
               try {
-                await ignoreGone(discord.deleteMessage(target, state.lastMessageId));
+                await removePost(discord, record, state.lastMessageId);
               } catch (error) {
                 task.log.warn({ err: error, channelId: record.channelId }, 'Deleting the sticky post failed');
               }

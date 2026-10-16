@@ -30,12 +30,21 @@ export function targetOf(sticky: Pick<Sticky, 'channelId' | 'parentChannelId' | 
   };
 }
 
-/** Runs a Discord call whose target may already be gone; a missing message or webhook counts as done. */
-export async function ignoreGone(work: Promise<void>): Promise<void> {
+/**
+ * Deletes a sticky post through its webhook. A deleted webhook can no longer remove its posts, so the bot removes
+ * the post with its own permissions; a post that is already gone counts as done.
+ */
+export async function removePost(
+  discord: StickyDiscord,
+  sticky: Pick<Sticky, 'channelId' | 'parentChannelId' | 'webhookId' | 'webhookToken'>,
+  messageId: string,
+): Promise<void> {
   try {
-    await work;
+    await discord.deleteMessage(targetOf(sticky), messageId);
   } catch (error) {
-    if (!(error instanceof UnknownMessageError) && !(error instanceof UnknownWebhookError)) throw error;
+    if (error instanceof UnknownMessageError) return;
+    if (!(error instanceof UnknownWebhookError)) throw error;
+    await discord.deleteChannelMessage(sticky.channelId, messageId);
   }
 }
 
@@ -208,7 +217,7 @@ export async function removeGuildPosts(ctx: StickyContext, discord: StickyDiscor
   );
   const webhooks = new Map<string, WebhookCredentials>();
   for (const { sticky, lastMessageId } of rows) {
-    if (lastMessageId !== null) await ignoreGone(discord.deleteMessage(targetOf(sticky), lastMessageId));
+    if (lastMessageId !== null) await removePost(discord, sticky, lastMessageId);
     webhooks.set(sticky.webhookId, { id: sticky.webhookId, token: sticky.webhookToken });
   }
   for (const webhook of webhooks.values()) await discord.deleteWebhook(webhook);
