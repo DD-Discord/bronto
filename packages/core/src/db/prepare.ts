@@ -1,3 +1,4 @@
+import { ensureAppRole } from './app-role.js';
 import { checkSchemasWith, type SchemaExpectation, type SchemaProblem } from './checks.js';
 import type { Database } from './database.js';
 import { grantAppRoleWith } from './grants.js';
@@ -11,7 +12,7 @@ export interface PrepareOptions {
 }
 
 /**
- * Startup schema work: migrates core and then each module, grants the app role on every schema and checks guild
+ * Startup schema work: creates the app role if needed, migrates core and then each module, grants the app role on every schema and checks guild
  * isolation. All of it runs on one connection holding the migration lock, so concurrent starts cannot interleave.
  * Returns the problems found; the caller decides whether to refuse to start.
  */
@@ -23,6 +24,7 @@ export async function prepareDatabase(database: Database, options: PrepareOption
   }
   const targets = [coreMigrationTarget, ...modules];
   return withMigrationLock(database, async (client) => {
+    await ensureAppRole(client, database);
     await applyMigrations(client, targets);
     await grantAppRoleWith(client, database.appRole, targets.map((target) => target.name));
     return checkSchemasWith(client, expectations);

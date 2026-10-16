@@ -1,5 +1,6 @@
-# Self-hosting with Docker: put this file next to config.yaml, .env and a copy of db-init/, then `docker compose up -d`.
-# .env holds DISCORD_TOKEN, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB and BOT_APP_PASSWORD.
+# Self-hosting with Docker: put this file next to config.yaml and .env, then `docker compose up -d`.
+# .env holds DISCORD_TOKEN, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB and BOT_APP_PASSWORD. The bot creates its
+# bot_app role on start and updates that role's password when BOT_APP_PASSWORD changes.
 services:
   db:
     image: postgres:18-alpine
@@ -13,7 +14,6 @@ services:
       start_period: 30s
     volumes:
       - ./pgdata:/var/lib/postgresql
-      - ./db-init:/docker-entrypoint-initdb.d:ro
 
   bot:
     image: ghcr.io/dd-discord/bronto:main

@@ -17,12 +17,15 @@ export interface Database {
   appPool: pg.Pool;
   /** Postgres role of the app connection, taken from its URL. */
   appRole: string;
+  /** Password from the app URL, used to create or update the app role; undefined when the URL has none. */
+  appPassword: string | undefined;
   end(): Promise<void>;
 }
 
 export function createDatabase({ adminUrl, appUrl }: { adminUrl: string; appUrl: string }): Database {
   // Grants and role checks need the app role's name, so it cannot come from PGUSER or other defaults.
-  const appRole = decodeURIComponent(new URL(appUrl).username);
+  const { username, password } = new URL(appUrl);
+  const appRole = decodeURIComponent(username);
   if (appRole === '') {
     throw new Error('The app database URL has no user name; it must name the app role, e.g. postgres://bot_app:...@host/db.');
   }
@@ -34,6 +37,7 @@ export function createDatabase({ adminUrl, appUrl }: { adminUrl: string; appUrl:
     adminPool,
     appPool,
     appRole,
+    appPassword: password === '' ? undefined : decodeURIComponent(password),
     async end() {
       await Promise.all([adminPool.end(), appPool.end()]);
     },

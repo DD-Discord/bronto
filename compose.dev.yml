@@ -6,7 +6,6 @@ services:
       POSTGRES_USER: bot_admin
       POSTGRES_PASSWORD: dev
       POSTGRES_DB: bronto
-      BOT_APP_PASSWORD: dev
     ports:
       - "127.0.0.1:55432:5432"
     healthcheck:
@@ -15,7 +14,6 @@ services:
       timeout: 5s
       retries: 5
     volumes:
-      - ./db-init:/docker-entrypoint-initdb.d:ro
       - dev-pgdata:/var/lib/postgresql
 
 volumes:
