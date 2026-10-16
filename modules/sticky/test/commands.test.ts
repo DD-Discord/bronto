@@ -206,6 +206,30 @@ describe('/sticky delete', () => {
     expect(discord.botDeleted).toContain(post!);
   });
 
+  it('cleans up with the webhook a repost in flight just created', async () => {
+    await say('create', { channel: channel(CHANNEL), template: link() });
+    const [row] = await stickyRows(t);
+    discord.removeWebhook(row!.webhookId);
+    // Holds the repost inside its webhook recovery while the delete command loads the old row.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const ensureWebhook = discord.ensureWebhook.bind(discord);
+    discord.ensureWebhook = async (...args) => {
+      await gate;
+      return ensureWebhook(...args);
+    };
+    sb.client.emit(Events.MessageCreate, message(CHANNEL));
+    await sleep(30);
+    const fake = fakeCommand({ command: 'sticky', subcommand: 'delete', guildId: GUILD, channelId: CHANNEL, userId: USER, options: {} });
+    sb.client.emit(Events.InteractionCreate, fake);
+    await sleep(100);
+    release();
+    await sb.bot.idle();
+    expect(discord.liveMessages()).toEqual([]);
+    expect([...discord.webhooks.keys()]).toEqual([]);
+    expect(await stickyRows(t)).toEqual([]);
+  });
+
   it('queues no repost for a channel without a sticky', async () => {
     const reposter = new Reposter({ index: new StickyIndex(), discord: () => discord });
     const runs: string[] = [];
