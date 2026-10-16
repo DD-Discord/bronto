@@ -166,11 +166,22 @@ export function createBot(options: BotOptions): Bot {
     );
   }
 
+  // A purge that outlasts the interval must not overlap the next one: both would see the same due guilds
+  // and run every module's cleanup hooks twice.
+  let purging = false;
+
   function runPurge(): void {
+    if (purging) return;
+    purging = true;
     track(
-      lifecycle.purgeDueGuilds().then((deleted) => {
-        if (deleted.length > 0) log.info({ guilds: deleted }, 'Deleted the data of guilds the bot left');
-      }),
+      lifecycle
+        .purgeDueGuilds()
+        .then((deleted) => {
+          if (deleted.length > 0) log.info({ guilds: deleted }, 'Deleted the data of guilds the bot left');
+        })
+        .finally(() => {
+          purging = false;
+        }),
       'Purging guild data failed',
     );
   }

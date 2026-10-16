@@ -302,6 +302,34 @@ describe('createBot', () => {
     await vi.waitFor(() => expect(cleaned).toEqual(['gone-1', 'gone-2']), { timeout: 2_000 });
   });
 
+  it('never runs purges concurrently when one outlasts the interval', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((done) => { release = done; });
+    let calls = 0;
+    const module = widgetsModule({
+      hooks: { deleteGuildData: async () => { calls += 1; await gate; } },
+    });
+    const { bot, client } = makeBot([module], t.database, 20);
+    await bot.prepare();
+    await upsertGuild(t.database.admin, 'slow-1');
+    await markGuildLeft(t.database.admin, 'slow-1', new Date(Date.now() - 31 * 86_400_000));
+    await bot.start();
+    client.emit(Events.ClientReady, client);
+    try {
+      await vi.waitFor(() => expect(calls).toBe(1), { timeout: 2_000 });
+      await new Promise((done) => setTimeout(done, 100));
+      expect(calls).toBe(1);
+    } finally {
+      release();
+    }
+    await bot.idle();
+    await vi.waitFor(async () => {
+      const rows = await t.database.admin.select().from(guilds).where(eq(guilds.id, 'slow-1'));
+      expect(rows).toEqual([]);
+    }, { timeout: 2_000 });
+    expect(calls).toBe(1);
+  });
+
   it('does not schedule purges when stopped while starting up', async () => {
     let release!: () => void;
     const gate = new Promise<void>((done) => { release = done; });
