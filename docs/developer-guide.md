@@ -333,11 +333,15 @@ async function addPoints(ctx: HandlerContext<KarmaConfig>, userId: string): Prom
   server and the acting user come from the handler run.
 - **Keep transactions short:** never call Discord inside `ctx.db.run(...)`. A slow API call would hold a transaction
   and a pooled connection open.
+- **No nested runs across modules:** call another module's API outside your own `db.run`. Each run is its own
+  transaction on its own connection, so an inner run can't see the outer run's uncommitted rows and can block on its
+  locks.
 - **Cross-server work** is possible but deliberate: `ctx.db.forGuild(otherGuildId)`.
-- **Only your own tables:** each module's database work runs as its own Postgres role, which can use only the tables
-  in the module's schema. Querying another module's or core's tables fails with "permission denied", even if you
-  import their table objects. The roles guard against mistakes, not against deliberately hostile module code, which
-  could switch roles with raw SQL.
+- **Only your own tables:** a module with a `db` runs its database work as its own Postgres role, which can use only the
+  tables in the module's schema. Querying another module's or core's tables fails with "permission denied", even if you
+  import their table objects. A module without a `db` has no role of its own and runs as the app role, which can reach
+  core's per-server tables; modules shouldn't touch core's tables either way. The roles guard against mistakes, not
+  against deliberately hostile module code, which could switch roles with raw SQL.
 
 ## 5. Slash commands
 
@@ -473,8 +477,9 @@ export default defineModule({
 ```
 
 The ID is `<module>:<name>[:<arg>…][:<expiry>]:<signature>`. The signature is 11 characters, so it and its `:` take
-12 of Discord's 100; an expiry takes about 6 more. Arguments must not contain `:`, and `ctx.customId` throws when the
-ID would be longer than 100 characters. Store large state in a table and put its key in the ID.
+12 of Discord's 100; an expiry takes about 7 more (6 base-36 characters plus a `:`). Arguments must not contain `:`,
+and `ctx.customId` throws when the ID would be longer than 100 characters. Store large state in a table and put its key
+in the ID.
 
 **Binding.** Every ID only works in the server it was made for. Beyond that, the definition decides what else the ID is
 bound to:
@@ -486,8 +491,9 @@ bound to:
 | `defineModal(...)` | the user it was shown to | always |
 | `defineModal({ bind: { channel: true } })` | also the channel | off |
 
-The user defaults to `ctx.actorId`, and in an interaction handler the channel defaults to the interaction's channel.
-Pass `target: { userId, channelId }` to sign for someone or somewhere else, for example a button only the mentioned
+The user defaults to `ctx.actorId`. The channel defaults to the interaction's channel only in interaction handlers; in
+an API or a gateway listener, pass `target.channelId` for channel-bound components. Pass
+`target: { userId, channelId }` to sign for someone or somewhere else, for example a button only the mentioned
 user may press: `ctx.customId(accept, [offerId], { userId: other.id })`. A binding without a value throws, e.g. a
 user-bound button made in a gateway listener, which has no actor. A pressed ID that doesn't match answers "This no
 longer works." The bound user and channel are part of the signature only; they aren't in the ID.
@@ -570,6 +576,8 @@ ctx.emit(karmaEvents.given, { from: ctx.actorId!, to: user.id, total });
   commits and dropped if it rolls back, so listeners can read what the transaction wrote. In nested runs the innermost
   run counts. An `emit` outside a run is delivered at once. A handler that throws later does not withdraw events
   already delivered. `emit` after the handler returned throws.
+- **Late emits:** work that outlives its transaction, such as a timer or an unawaited promise, and emits after the
+  transaction settled is delivered at once, also after a rollback.
 - **Who receives it:** listeners in other modules subscribe with `on(karmaEvents.given, (ctx, payload) => …)`. Only
   modules enabled in that server receive it. Each listener runs as its own handler, with the same server and actor.
 - **Owned events:** a module can only emit its own events.
@@ -607,8 +615,9 @@ export const badgesModule = defineModule({
 ```
 
 - **The context is a normal `HandlerContext`.** The factory runs once at startup, but `guildId`, `actorId`, `db`,
-  `queue`, `emit` and `customId` are read when an API function uses them, and resolve to the handler that is calling. Reading them
-  outside a handler, or after the calling handler finished, throws `A module API was used outside a handler.`
+  `queue`, `emit` and `customId` are read when an API function uses them, and resolve to the handler that is calling.
+  Reading them outside a handler, or after the calling handler finished, throws `A module API was used outside a
+  handler.`
 - **Don't destructure them in the factory.** `const { db } = ctx` in the factory body runs at startup and throws. Read
   `ctx.db` inside the API function.
 - **Shared helpers take `HandlerContext`** (or a `Pick` of it), so a module's commands and its API can call the same
@@ -619,16 +628,16 @@ export const badgesModule = defineModule({
   | --- | --- |
   | `guildId`, `actorId` | the calling handler's server and actor |
   | `db` | the provider's database role, in the caller's server; rows are attributed to the caller's actor |
-  | `emit` | the provider's own events, delivered like any emit (after the innermost `db.run` commits) |
+  | `emit` | the provider's own events, delivered like any emit (after the innermost `db.run` commits, or at once outside a transaction) |
   | `queue` | the provider's queue in the caller's server; tasks run as the provider's handlers |
   | `customId` | signs the provider's own components for the caller's server and actor |
   | `module`, `log`, `config`, `client`, `modules` | the provider |
 
 - **`dependsOn` matters elsewhere too.** Modules load in dependency order. `/modules enable badges` asks to turn on
   `karma` first, and `/modules disable karma` asks to turn off `badges` first. Cleanup runs dependents first.
-- **Boundaries:** you can't read another module's tables; the database refuses it (section 4), as a guard against
-  mistakes rather than hostile code. Ask through its API. An API's `ctx.db` runs as the module that provides the API,
-  so it reaches that module's tables.
+- **Boundaries:** a module with a `db` can't read another module's tables; the database refuses it (section 4), as a
+  guard against mistakes rather than hostile code. Ask through its API. An API's `ctx.db` runs as the
+  module that provides the API, so it reaches that module's tables.
 
 ## 9. Lifecycle hooks
 
@@ -770,6 +779,7 @@ Run it with `bronto import-legacy <module> <path> [--dry-run]`:
 - **Real run:** without it, the CLI migrates the database first and gives the client the bot token for REST calls. It
   never connects to the gateway.
 - **Safe to repeat:** make the import idempotent. Skip records that already exist instead of overwriting them.
+- **No module APIs:** the importer runs outside a handler, so it can't call other modules' APIs.
 - **Mind the report:** don't print secrets from the old data, such as tokens, in report lines or errors.
 
 ## 13. Testing a module
@@ -878,8 +888,10 @@ Run one module's tests with `pnpm vitest run modules/karma`. `pnpm test` runs ev
 - **Component arguments:** a signed custom ID says what the bot meant when it issued it. Re-check anything that can
   change since (does the record still exist, is the role still self-assignable), and treat modal field values as
   untrusted input.
-- **Module boundaries:** a module emits only its own events and uses other modules only through their `api` (declared
-  in `dependsOn`). Its database role reaches only its own schema, so other modules' and core's tables are off limits.
+- **Module boundaries:** a module emits only its own events and uses other modules only through their `api` (declared in
+  `dependsOn`). A module with a `db` runs as a role that reaches only its own schema, so other modules' and core's
+  tables are off limits; a module without a `db` runs as the app role, which can reach core's per-server tables, but it
+  shouldn't touch them.
 - **Per-server state:** rebuild timers and in-memory state in `guildReady` (idempotent) and drop them in
   `guildStopped`.
 - **Queues:** a queued task never waits for a task of its own key.
@@ -1056,7 +1068,7 @@ flowchart LR
 - **One process at a time:** everything in `prepareDatabase` runs on one connection holding an advisory lock, so two
   processes starting together don't interleave. The purge takes the same lock.
 - **Removed modules:** a module removed from `config.yaml` keeps its schema. The bot logs a warning at start, and
-  `bronto purge <module>` drops it.
+  `bronto purge <module>` drops it. The purge leaves the module's role and the app role's membership in place.
 
 ## 18. The hot path: a gateway event
 
@@ -1088,10 +1100,11 @@ sequenceDiagram
 - **Steady state is cheap:** `lifecycle.ready` returns the cached set-up promise and `isEnabled` is a map lookup. A
   message costs no database round trip unless the module's handler makes one.
 - **`runHandler`** (`runtime/dispatcher.ts`) is the single place module code runs. It builds the `HandlerContext`, a
-  fresh `ScopedDb`, `emit` (which delivers through `afterCommit`) and `queue` (which wraps the core `KeyedQueue` with the key
-  `<module>/<guild>/<key>`). It awaits the handler inside `runInScope` and a handler scope that builds the same kind of
-  context for any module whose API the handler calls: same server, actor and end, so an API's `emit` after the
-  caller's run throws. It logs failures. It returns `{ ok, error }`, so callers such as the router or the purge can react.
+  fresh `ScopedDb`, `emit` (which delivers through `afterCommit`) and `queue` (which wraps the core `KeyedQueue` with
+  the key `<module>/<guild>/<key>`). It awaits the handler inside `runInScope` and a handler scope that builds the same
+  kind of context for any module whose API the handler calls: same server, actor and end (the run's lifetime), so an
+  API's `emit` after the caller's run finished throws. It logs failures. It returns `{ ok, error }`, so callers such as
+  the router or the purge can react.
 - **`idle()`:** the dispatcher tracks every promise it starts. `bot.idle()` waits for these, the queues and the
   command syncs. Tests use it, and so does shutdown.
 

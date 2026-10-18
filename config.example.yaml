@@ -3,6 +3,7 @@ discord:
   token: ${DISCORD_TOKEN}
 # Signs button and modal custom IDs; needed when a loaded module has buttons or modals (example-notes does).
 # At least 32 characters, e.g. `openssl rand -base64 32`. Changing it breaks every button and modal already posted.
+# Remove this section if no loaded module has buttons or modals.
 interactions:
   secret: ${INTERACTION_SECRET}
 database:

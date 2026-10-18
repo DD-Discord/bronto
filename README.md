@@ -80,10 +80,10 @@ export default defineModule({
 ```
 
 Handlers run for one guild at a time. `ctx.db.run()` only sees that guild's rows, `ctx.emit()` sends the module's own
-events after the surrounding `db.run` transaction commits, or at once outside one (emit inside the handler, not after it returned), and `ctx.queue.run(key, task)` runs
-work for one key of that guild at a time; the task receives its own handler context. Gateway events of a guild reach
-modules only after the guild is set up. A module with tables lists them in `db: { schema, migrations }`. Its tables live
-in a Postgres schema named after the module.
+events after the surrounding `db.run` transaction commits, or at once outside one (emit inside the handler, not after it
+returned), and `ctx.queue.run(key, task)` runs work for one key of that guild at a time; the task receives its own
+handler context. Gateway events of a guild reach modules only after the guild is set up. A module with tables lists them
+in `db: { schema, migrations }`. Its tables live in a Postgres schema named after the module.
 
 ### Commands, buttons and modals
 
