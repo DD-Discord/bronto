@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { grantAppRole } from '../src/db/grants.js';
 import { coreMigrationTarget, migrateAll } from '../src/db/migrate.js';
+import { ensureModuleRoles, moduleRoleName } from '../src/db/module-roles.js';
 import { createTestDatabase, widgetsTarget, type TestDatabase } from './test-db.js';
 
 const targets = [coreMigrationTarget, widgetsTarget];
@@ -57,9 +58,29 @@ describe('migrateAll', () => {
 });
 
 describe('grantAppRole', () => {
-  it('lets the app role use but not alter module tables', async () => {
+  it('moves module schema access from the app role to the module role', async () => {
+    const app = t.database.appRole;
+    const role = moduleRoleName(app, 'widgets');
+    await ensureModuleRoles(t.database.adminPool, app, ['widgets']);
+    await t.database.adminPool.query(
+      `grant usage on schema widgets to ${app}; grant all on all tables in schema widgets to ${app};
+       grant all on all sequences in schema widgets to ${app}`,
+    );
     await grantAppRole(t.database, ['core', 'widgets']);
-    await expect(t.database.appPool.query('select count(*) from widgets.items')).resolves.toBeDefined();
-    await expect(t.database.appPool.query('drop table widgets.items')).rejects.toThrow(/must be owner/);
+    // has_table_privilege with a list is true when any of the privileges is held.
+    const { rows } = await t.database.adminPool.query<{ app: boolean; module: boolean }>(
+      `select has_schema_privilege($1, 'widgets', 'USAGE')
+                or has_table_privilege($1, 'widgets.items', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+                as "app",
+              has_schema_privilege($2, 'widgets', 'USAGE')
+                and has_table_privilege($2, 'widgets.items', 'SELECT')
+                and has_table_privilege($2, 'widgets.items', 'INSERT')
+                and has_table_privilege($2, 'widgets.items', 'UPDATE')
+                and has_table_privilege($2, 'widgets.items', 'DELETE')
+                as "module"`,
+      [app, role],
+    );
+    expect(rows).toEqual([{ app: false, module: true }]);
+    await expect(t.database.appPool.query('select count(*) from widgets.items')).rejects.toThrow(/permission denied/);
   });
 });

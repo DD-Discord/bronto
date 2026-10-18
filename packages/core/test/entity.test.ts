@@ -2,7 +2,6 @@ import type { Client } from 'discord.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { entityAutocomplete, defineEntity } from '../src/crud/entity.js';
 import { upsertGuild } from '../src/db/guilds.js';
-import { createScopedDb } from '../src/db/scoped.js';
 import { createModuleRuntimes } from '../src/runtime/context.js';
 import { Dispatcher } from '../src/runtime/dispatcher.js';
 import { ModuleEnablement } from '../src/runtime/enablement.js';
@@ -10,7 +9,7 @@ import { KeyedQueue } from '../src/runtime/queue.js';
 import { captureLog } from '../src/testing/log.js';
 import { widgetsModule } from './fixtures/widgets/module.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
-import { createTestDatabase, setUpSchema, type TestDatabase } from './test-db.js';
+import { createTestDatabase, setUpSchema, widgetsDb, type TestDatabase } from './test-db.js';
 
 let t: TestDatabase;
 
@@ -26,13 +25,13 @@ beforeAll(async () => {
   await setUpSchema(t.database);
   await upsertGuild(t.database.admin, 'g1');
   await upsertGuild(t.database.admin, 'g2');
-  const g1 = createScopedDb(t.database.app, 'g1');
+  const g1 = widgetsDb(t.database, 'g1');
   for (const [id, label] of [['b', 'Banana'], ['a', 'Apple'], ['c', 'Cherry']] as const) {
     await g1.run(async (tx) => {
       await tx.insert(widgetItems).values({ id, label });
     });
   }
-  await createScopedDb(t.database.app, 'g2').run(async (tx) => {
+  await widgetsDb(t.database, 'g2').run(async (tx) => {
     await tx.insert(widgetItems).values({ id: 'x', label: 'Apricot' });
   });
 });
@@ -43,13 +42,13 @@ afterAll(async () => {
 
 describe('entity data access', () => {
   it('finds one record of the guild', async () => {
-    const g1 = createScopedDb(t.database.app, 'g1');
+    const g1 = widgetsDb(t.database, 'g1');
     expect((await widgets.find(g1, 'a'))?.label).toBe('Apple');
     expect(await widgets.find(g1, 'x')).toBeNull();
   });
 
   it('lists the guild records in creation order', async () => {
-    const rows = await widgets.list(createScopedDb(t.database.app, 'g1'));
+    const rows = await widgets.list(widgetsDb(t.database, 'g1'));
     expect(rows.map((row) => row.id)).toEqual(['b', 'a', 'c']);
   });
 

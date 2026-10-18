@@ -1,13 +1,24 @@
 import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createScopedDb, runLegacyImport } from '@bronto/core';
+import { runLegacyImport } from '@bronto/core';
 import { Events } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { stickies } from '../src/db/schema.js';
 import { FakeStickyDiscord } from './fake-discord.js';
-import { GUILD, message, OTHER_GUILD, prepareStickyBot, ready, stateOf, stickyRows, USER, type StickyBot } from './harness.js';
+import {
+  GUILD,
+  message,
+  OTHER_GUILD,
+  prepareStickyBot,
+  ready,
+  stateOf,
+  stickyDb,
+  stickyRows,
+  USER,
+  type StickyBot,
+} from './harness.js';
 
 // Made-up records in both shapes the previous bot wrote; no real server data.
 const FLAT = '100000000000000110';
@@ -244,7 +255,7 @@ describe('importLegacy failures', () => {
     const insert = async () => {
       if (raced) return;
       raced = true;
-      await createScopedDb(t.database.app, GUILD).run(async (tx) => {
+      await stickyDb(t).run(async (tx) => {
         await tx.insert(stickies).values({
           channelId,
           webhookId: '100000000000000999',

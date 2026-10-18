@@ -1,4 +1,12 @@
-import { createBot, createScopedDb, upsertGuild, type Bot, type LoadedModule } from '@bronto/core';
+import {
+  createBot,
+  createScopedDb,
+  moduleRoleName,
+  upsertGuild,
+  type Bot,
+  type LoadedModule,
+  type ScopedDb,
+} from '@bronto/core';
 import { captureLog, FakeClient, type LogLine } from '@bronto/core/testing';
 import { eq } from 'drizzle-orm';
 import { Events } from 'discord.js';
@@ -32,6 +40,11 @@ export interface StickyBot {
   bot: Bot;
   client: FakeClient;
   lines: LogLine[];
+}
+
+/** Database access as the sticky module, the way its handlers get it. */
+export function stickyDb(t: TestDatabase, guildId = GUILD): ScopedDb {
+  return createScopedDb(t.database.app, guildId, moduleRoleName(t.database.appRole, 'sticky'));
 }
 
 /** A bot with the sticky module: database migrated and GUILD registered, not yet ready. */
@@ -72,7 +85,7 @@ export async function insertSticky(
     values.webhookId !== undefined && values.webhookToken !== undefined
       ? { id: values.webhookId, token: values.webhookToken }
       : discord.addWebhook(values.parentChannelId ?? values.channelId);
-  const rows = await createScopedDb(t.database.app, GUILD).run(async (tx) =>
+  const rows = await stickyDb(t).run(async (tx) =>
     tx
       .insert(stickies)
       .values({
@@ -93,7 +106,7 @@ export async function setState(
   channelId: string,
   values: { lastMessageId?: string | null; repostDueAt?: Date | null },
 ): Promise<void> {
-  await createScopedDb(t.database.app, GUILD).run(async (tx) => {
+  await stickyDb(t).run(async (tx) => {
     await tx.insert(stickyState).values({ channelId, ...values });
   });
 }

@@ -147,7 +147,10 @@ export function createBot(options: BotOptions): Bot {
     });
     const problems = [
       ...(schemaProblems.length > 0 ? formatSchemaProblems(schemaProblems).split('\n') : []),
-      ...(await checkRoles(database)),
+      ...(await checkRoles(
+        database,
+        modules.filter((module) => module.definition.db !== undefined).map((module) => module.definition.name),
+      )),
     ];
     if (problems.length > 0) throw new StartupError(problems);
     const loaded = new Set(['core', ...modules.map((module) => module.definition.name)]);

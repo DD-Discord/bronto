@@ -116,7 +116,7 @@ export class Dispatcher {
       ...runtime.context,
       guildId,
       actorId,
-      db: createScopedDb(this.database.app, guildId),
+      db: createScopedDb(this.database.app, guildId, runtime.dbRole),
       emit: (event, payload) => {
         if (event.owner !== runtime.name) {
           throw new Error(`Module "${runtime.name}" cannot emit ${eventLabel(event)}; modules emit only their own events.`);

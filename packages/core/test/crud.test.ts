@@ -4,7 +4,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { defineEntity } from '../src/crud/entity.js';
 import { crudSubcommands } from '../src/crud/subcommands.js';
 import { upsertGuild } from '../src/db/guilds.js';
-import { createScopedDb } from '../src/db/scoped.js';
 import { commandToJson, defineCommand, defineSubcommand } from '../src/interactions/commands.js';
 import { UserError } from '../src/interactions/errors.js';
 import { opt } from '../src/interactions/options.js';
@@ -17,7 +16,7 @@ import { fakeCommand } from '../src/testing/interactions.js';
 import { captureLog } from '../src/testing/log.js';
 import { widgetsModule } from './fixtures/widgets/module.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
-import { createTestDatabase, setUpSchema, type TestDatabase } from './test-db.js';
+import { createTestDatabase, setUpSchema, widgetsDb, type TestDatabase } from './test-db.js';
 
 const calls: string[] = [];
 let generated = 0;
@@ -185,7 +184,7 @@ describe('create', () => {
   it('refuses keys that exist, also in another guild', async () => {
     await say('widget', 'create', { id: 'w1', label: 'Blue' });
     expect(contents(await say('widget', 'create', { id: 'w1', label: 'Red' }))).toEqual(['Widget for `w1` already exists.']);
-    await createScopedDb(t.database.app, 'g2').run(async (tx) => {
+    await widgetsDb(t.database, 'g2').run(async (tx) => {
       await tx.insert(widgetItems).values({ id: 'other', label: 'Theirs' });
     });
     expect(contents(await say('widget', 'create', { id: 'other', label: 'Mine' }))).toEqual([
@@ -249,7 +248,7 @@ describe('show, list and delete', () => {
   });
 
   it('names missing records, including those of other guilds', async () => {
-    await createScopedDb(t.database.app, 'g2').run(async (tx) => {
+    await widgetsDb(t.database, 'g2').run(async (tx) => {
       await tx.insert(widgetItems).values({ id: 'theirs', label: 'Theirs' });
     });
     for (const subcommand of ['show', 'edit', 'delete']) {
@@ -267,7 +266,7 @@ describe('show, list and delete', () => {
   });
 
   it('splits long lists into several messages', async () => {
-    const g1 = createScopedDb(t.database.app, 'g1');
+    const g1 = widgetsDb(t.database, 'g1');
     await g1.run(async (tx) => {
       await tx.insert(widgetItems).values(Array.from({ length: 150 }, (_, i) => ({ id: `w${String(i).padStart(3, '0')}`, label: `A rather long widget label ${i}` })));
     });

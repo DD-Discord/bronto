@@ -223,7 +223,7 @@ Tables are Drizzle tables, declared with two helpers from `@bronto/core/tables`:
   - a row-level security policy that only shows rows of the current server
   - the audit columns `created_at`, `updated_at`, `created_by` and `updated_by`
 - **`globalTable(schema, name, columns, extra?)`** for data shared by all servers. It adds only the audit columns. Use
-  it rarely: the app role can only read global tables, so writes need the admin connection.
+  it rarely: a module can only read its global tables, so writes need the admin connection.
 
 The startup checks look at what Postgres holds in core's schema and in each loaded module's schema. They reject any
 table that doesn't keep servers apart: it needs row-level security, a policy and a foreign key to `core.guilds` with
@@ -290,8 +290,8 @@ export default defineModule<KarmaConfig>({
 });
 ```
 
-At every start the bot applies pending migrations, grants the app role access to the new tables and checks that every
-table keeps servers apart. If a check fails, the bot refuses to start and lists the problems.
+At every start the bot applies pending migrations, grants the module's role access to the new tables and checks that
+every table keeps servers apart. If a check fails, the bot refuses to start and lists the problems.
 
 ### Reading and writing
 
@@ -323,6 +323,9 @@ async function addPoints(ctx: HandlerContext<KarmaConfig>, userId: string): Prom
 - **Keep transactions short:** never call Discord inside `ctx.db.run(...)`. A slow API call would hold a transaction
   and a pooled connection open.
 - **Cross-server work** is possible but deliberate: `ctx.db.forGuild(otherGuildId)`.
+- **Only your own tables:** each module's database work runs as its own Postgres role, which can use only the tables
+  in the module's schema. Querying another module's or core's tables fails with "permission denied", even if you
+  import their table objects.
 
 ## 5. Slash commands
 
@@ -557,7 +560,8 @@ export const badgesModule = defineModule({
   An API called outside a handler throws.
 - **`dependsOn` matters elsewhere too.** Modules load in dependency order. `/modules enable badges` asks to turn on
   `karma` first, and `/modules disable karma` asks to turn off `badges` first. Cleanup runs dependents first.
-- **Boundaries:** never read another module's tables. Ask through its API.
+- **Boundaries:** you can't read another module's tables; the database refuses it (section 4). Ask through its API.
+  An API's `ctx.db()` runs as the module that provides the API, so it reaches that module's tables.
 
 ## 9. Lifecycle hooks
 
@@ -707,7 +711,7 @@ Tests run with vitest against a real Postgres, which Testcontainers starts once 
 Discord: `@bronto/core/testing` provides a fake client and fake interactions.
 
 ```ts
-import { createBot, createScopedDb, type Bot } from '@bronto/core';
+import { createBot, createScopedDb, moduleRoleName, type Bot } from '@bronto/core';
 import { captureLog, fakeButton, fakeCommand, FakeClient } from '@bronto/core/testing';
 import { Events } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -760,7 +764,8 @@ describe('karma', () => {
 
   it('keeps servers apart', async () => {
     await send(fakeCommand({ command: 'karma', subcommand: 'give', options: { user: { id: 'u2' } } }));
-    expect(await createScopedDb(t.database.app, 'g2').run((tx) => tx.select().from(points))).toEqual([]);
+    const asKarma = createScopedDb(t.database.app, 'g2', moduleRoleName(t.database.appRole, 'karma'));
+    expect(await asKarma.run((tx) => tx.select().from(points))).toEqual([]);
   });
 });
 ```
@@ -770,7 +775,8 @@ describe('karma', () => {
   `deferReply`, `editReply`, `followUp` and `showModal`.
 - **Object options** (users, channels, roles) are passed as objects, e.g. `{ id: 'u2' }`.
 - **Inspecting data:** `t.database.admin` reads every server's rows (the admin connection bypasses row-level
-  security).
+  security). To read or write the way a handler does, pass the module's role to `createScopedDb`, as above; the plain
+  app connection can't reach module tables.
 - **Logs:** `captureLog()` returns `{ log, lines }`, so tests can assert on log lines.
 - **Command registration:** `client.registered` holds each server's registered commands, and `client.commandWrites`
   every write.
@@ -790,8 +796,8 @@ Run one module's tests with `pnpm vitest run modules/karma`. `pnpm test` runs ev
   never call Discord inside it.
 - **Answering interactions:** answer through `ctx.reply`, `ctx.followUp`, `ctx.defer` and `ctx.showModal`. Throw
   `UserError` for messages meant for the user.
-- **Module boundaries:** a module emits only its own events, uses other modules only through their `api` (declared
-  in `dependsOn`), and never touches another module's tables.
+- **Module boundaries:** a module emits only its own events and uses other modules only through their `api` (declared
+  in `dependsOn`). Its database role reaches only its own schema, so other modules' and core's tables are off limits.
 - **Per-server state:** rebuild timers and in-memory state in `guildReady` (idempotent) and drop them in
   `guildStopped`.
 - **Queues:** a queued task never waits for a task of its own key.
@@ -814,10 +820,11 @@ packages/
 │   │   ├── tables.ts        guildTable / globalTable
 │   │   ├── audit.ts         audit columns
 │   │   ├── scoped.ts        ScopedDb: one transaction with app.guild_id set
-│   │   ├── prepare.ts       startup: app role, migrations, grants, checks under one lock
+│   │   ├── prepare.ts       startup: app role, migrations, module roles, grants, checks under one lock
 │   │   ├── app-role.ts      creates the app role or resets its password
 │   │   ├── migrate.ts       per-module migrations
-│   │   ├── grants.ts        app role privileges per table
+│   │   ├── module-roles.ts  one Postgres role per module
+│   │   ├── grants.ts        app role and module role privileges per table
 │   │   ├── checks.ts        isolation checks for tables and roles
 │   │   ├── lock.ts          migration advisory lock
 │   │   ├── guilds.ts        core.guilds rows: joined, left, due for purge
@@ -869,7 +876,7 @@ sequenceDiagram
     CLI->>CLI: createDiscordClient: Guilds + every module's intents
     CLI->>Core: createBot(...)
     Note over Core: builds runtimes and APIs, Dispatcher, InteractionRouter<br/>(validates every command), CommandSync, GuildLifecycle
-    Core->>DB: prepare(): lock, app role, migrate core + modules, grants, checks
+    Core->>DB: prepare(): lock, app role, migrate core + modules, module roles, grants, checks
     Core->>Core: attach gateway listeners
     Core->>DC: login
     DC-->>Core: ClientReady
@@ -896,21 +903,30 @@ Details:
   is set up (`lifecycle.ready`). A module never sees an event before its switches are loaded and its `guildReady` has
   run.
 - **Refusing to start:** `prepare()` throws `StartupError` when the database is unsafe, for example a table without
-  row-level security, or an app role that is a superuser. The CLI prints the problems and exits with code 1.
+  row-level security, an app role that is a superuser, or a missing module role. The CLI prints the problems and
+  exits with code 1.
 
 ## 17. The database layer
 
-### Two roles
+### Roles
 
 - **The admin role** owns the schemas, runs migrations, writes `core.guilds` and module switches, and deletes servers.
-  It bypasses row-level security, as table owners do.
-- **The app role** (`bot_app`) runs all module handlers. It can read and write per-server tables, only read global
-  tables, and change no schema. Row-level security applies to it.
+  It bypasses row-level security, as table owners do. It needs `CREATEROLE` to create the app and module roles.
+- **The app role** (`bot_app`) is the login role of the app connection. On its own it reaches only `core`: it can read
+  and write `core`'s per-server tables and read `core.guilds`. It has no privileges on module schemas. Core's own
+  handlers, such as `/modules`, run as this role.
+- **Module roles** (`<app role>_<module>`, e.g. `bot_app_sticky`), one for each loaded module with a `db`. They are
+  `NOLOGIN`. Each can read and write its module's per-server tables and read its global tables, and has nothing on
+  `core` or other modules' schemas. The app role is a member `WITH INHERIT FALSE, SET TRUE`: it doesn't hold their
+  privileges, but `ScopedDb.run` switches to the module's role with `set_config('role', …, true)` (`SET LOCAL ROLE`)
+  next to `app.guild_id`. Handlers, queued tasks, hooks, API calls and the legacy importer's `forGuild` all run as the
+  module's role. Foreign keys to `core.guilds` need no grant, since Postgres checks them as the table owner.
 
 At startup, `ensureAppRole` checks whether the app URL can log in. If it can't, the bot creates the role or resets its
 password, using the admin connection. So a fresh Postgres needs no init script, and changing the password in the
-environment takes effect on the next start. `checkRoles` then refuses an app role that is a superuser, has
-`BYPASSRLS`, or is a member of the admin role.
+environment takes effect on the next start. After migrations, `ensureModuleRoles` creates missing module roles and
+their memberships. `checkRoles` then refuses an app role or module role that is a superuser, has `BYPASSRLS`, or is a
+member of the admin role, a module role that is missing, and one the app role can't switch to.
 
 ### How a server's rows stay apart
 
@@ -918,7 +934,7 @@ environment takes effect on the next start. `checkRoles` then refuses an app rol
 flowchart LR
     H[handler for guild G] -->|ctx.db.run fn| S[ScopedDb]
     S -->|BEGIN| T[transaction on the app pool]
-    T -->|"set_config('app.guild_id', G, true)"| T
+    T -->|"set_config('app.guild_id', G, true)<br/>set_config('role', module role, true)"| T
     T -->|fn tx| Q[queries]
     Q --> P{"RLS policy:<br/>guild_id = current_setting('app.guild_id')"}
     P -->|only G's rows| Q
@@ -933,7 +949,8 @@ flowchart LR
 - **Isolation is checked at every start** (`db/checks.ts`). Every non-global table must have row-level security, a
   policy, and a foreign key to `core.guilds` that cascades on delete. Tables declared with `globalTable` are exempt.
   Views aren't allowed, since a view runs with its owner's rights.
-- **Grants are recomputed at every start** (`db/grants.ts`). Tables with row-level security get
+- **Grants are recomputed at every start** (`db/grants.ts`). `core` goes to the app role; each module schema goes to
+  its module role, after revoking everything the app role had there. Tables with row-level security get
   select/insert/update/delete; tables without it (global ones) get select only.
 - **Deleting a server is one statement.** Every per-server table references `core.guilds` with a cascading foreign
   key, so deleting the server's row deletes all its rows in all modules.

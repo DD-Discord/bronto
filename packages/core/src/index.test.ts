@@ -10,7 +10,7 @@ describe('@bronto/core exports', () => {
       'core', 'guilds', 'guildModules',
       'upsertGuild', 'markGuildLeft', 'markMissingGuildsLeft', 'guildExists', 'guildsDueForPurge', 'purgeGuildIfDue', 'deleteGuildRow',
       'checkSchemas', 'checkRoles', 'formatSchemaProblems', 'purgeModuleSchema', 'listMigratedModules',
-      'assertModuleName', 'quoteIdent', 'MIGRATIONS_SCHEMA', 'GUILD_GRACE_DAYS',
+      'assertModuleName', 'quoteIdent', 'moduleRoleName', 'MIGRATIONS_SCHEMA', 'GUILD_GRACE_DAYS',
     ]) {
       expect(core, name).toHaveProperty(name);
     }
@@ -27,7 +27,7 @@ describe('@bronto/core exports', () => {
   });
 
   it('keeps connection-level helpers internal', () => {
-    for (const name of ['withMigrationLock', 'applyMigrations', 'grantAppRoleWith', 'checkSchemasWith']) {
+    for (const name of ['withMigrationLock', 'applyMigrations', 'grantRoles', 'ensureModuleRoles', 'checkSchemasWith']) {
       expect(core, name).not.toHaveProperty(name);
     }
   });

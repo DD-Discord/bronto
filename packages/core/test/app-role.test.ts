@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ensureAppRole } from '../src/db/app-role.js';
 import { createDatabase, type Database } from '../src/db/database.js';
+import { moduleRoleName } from '../src/db/module-roles.js';
 import { prepareDatabase } from '../src/db/prepare.js';
 import { createTestDatabase, schemaExpectations, widgetsTarget, type TestDatabase } from './test-db.js';
 
@@ -112,7 +114,14 @@ describe('ensureAppRole', () => {
           expect(await prepareDatabase(database, { modules: [widgetsTarget], expectations: schemaExpectations() })).toEqual(
             [],
           );
-          await expect(database.appPool.query('select count(*) from widgets.items')).resolves.toBeDefined();
+          const widgetsRole = moduleRoleName(role, 'widgets');
+          roles.push(widgetsRole);
+          await expect(
+            database.app.transaction(async (tx) => {
+              await tx.execute(sql`select set_config('role', ${widgetsRole}, true)`);
+              return tx.execute(sql`select count(*) from widgets.items`);
+            }),
+          ).resolves.toBeDefined();
         },
         other.adminUrl,
       );

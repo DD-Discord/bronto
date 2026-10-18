@@ -7,8 +7,10 @@ import { inject } from 'vitest';
 import { createDatabase, type Database } from '../src/db/database.js';
 import { formatSchemaProblems, type SchemaExpectation } from '../src/db/checks.js';
 import type { MigrationTarget } from '../src/db/migrate.js';
+import { moduleRoleName } from '../src/db/module-roles.js';
 import { prepareDatabase } from '../src/db/prepare.js';
 import { globalTableNames } from '../src/db/registry.js';
+import { createScopedDb, type ScopedDb } from '../src/db/scoped.js';
 import * as coreSchema from '../src/db/schema.js';
 import * as widgetsSchema from './fixtures/widgets/schema.js';
 
@@ -57,6 +59,11 @@ export async function setUpSchema(database: Database): Promise<void> {
   if (problems.length > 0) {
     throw new Error(`Test schema has problems:\n${formatSchemaProblems(problems)}`);
   }
+}
+
+/** Database access as the widgets fixture module, the way its handlers get it. */
+export function widgetsDb(database: Database, guildId: string): ScopedDb {
+  return createScopedDb(database.app, guildId, moduleRoleName(database.appRole, 'widgets'));
 }
 
 /** Message of an error and its cause; drizzle wraps driver errors. */

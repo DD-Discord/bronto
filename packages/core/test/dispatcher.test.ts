@@ -10,6 +10,8 @@ import { defineEvent, on } from '../src/runtime/events.js';
 import { defineModule } from '../src/runtime/module.js';
 import { KeyedQueue } from '../src/runtime/queue.js';
 import type { HandlerContext } from '../src/runtime/types.js';
+import { widgetsMigrations } from './fixtures/widgets/module.js';
+import * as widgetsSchema from './fixtures/widgets/schema.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
 import { captureLog, type LogLine } from '../src/testing/log.js';
 import { createTestDatabase, setUpSchema, type TestDatabase } from './test-db.js';
@@ -24,15 +26,17 @@ interface Seen {
 const counted = defineEvent<{ n: number }>('counted');
 const seen: Seen[] = [];
 
-const alpha = defineModule({
-  name: 'alpha',
+// Owns the widgets schema, so its handlers can write widget items.
+const widgets = defineModule({
+  name: 'widgets',
+  db: { schema: widgetsSchema, migrations: widgetsMigrations },
   events: { counted },
   listeners: [
     on(Events.MessageCreate, async (ctx, message) => {
-      seen.push({ module: 'alpha', guildId: ctx.guildId, actorId: ctx.actorId, detail: message.id });
-      if (message.content === 'fail') throw new Error('alpha failed');
+      seen.push({ module: 'widgets', guildId: ctx.guildId, actorId: ctx.actorId, detail: message.id });
+      if (message.content === 'fail') throw new Error('widgets failed');
       await ctx.db.run(async (tx) => {
-        await tx.insert(widgetItems).values({ id: message.id, label: 'alpha' });
+        await tx.insert(widgetItems).values({ id: message.id, label: 'widgets' });
       });
     }),
   ],
@@ -65,7 +69,7 @@ beforeAll(async () => {
   lines = captured.lines;
   enablement = new ModuleEnablement(t.database.admin);
   runtimes = createModuleRuntimes(
-    [alpha, beta].map((definition) => ({ packageName: `@test/${definition.name}`, definition, config: {} })),
+    [widgets, beta].map((definition) => ({ packageName: `@test/${definition.name}`, definition, config: {} })),
     { client: {} as Client, database: t.database, log: captured.log },
   );
   dispatcher = new Dispatcher({ runtimes, database: t.database, enablement, queue: new KeyedQueue(() => undefined) });
@@ -88,7 +92,7 @@ describe('Dispatcher', () => {
   it('runs gateway listeners with a context scoped to the event guild', async () => {
     await dispatcher.handleDiscord(Events.MessageCreate, [{ id: 'm1', guildId: 'g1', content: '' }]);
     expect(seen).toEqual([
-      { module: 'alpha', guildId: 'g1', actorId: null, detail: 'm1' },
+      { module: 'widgets', guildId: 'g1', actorId: null, detail: 'm1' },
       { module: 'beta', guildId: 'g1', actorId: null, detail: 'm1' },
     ]);
     const [row] = await t.database.admin.select().from(widgetItems).where(eq(widgetItems.id, 'm1'));
@@ -101,21 +105,21 @@ describe('Dispatcher', () => {
   });
 
   it('skips modules switched off in the guild', async () => {
-    await enablement.set('g2', 'alpha', false);
+    await enablement.set('g2', 'widgets', false);
     await dispatcher.handleDiscord(Events.MessageCreate, [{ id: 'm2', guildId: 'g2', content: '' }]);
     expect(seen.map((entry) => entry.module)).toEqual(['beta']);
   });
 
   it('keeps other modules running when one handler fails', async () => {
     await dispatcher.handleDiscord(Events.MessageCreate, [{ id: 'm3', guildId: 'g1', content: 'fail' }]);
-    expect(seen.map((entry) => entry.module)).toEqual(['alpha', 'beta']);
+    expect(seen.map((entry) => entry.module)).toEqual(['widgets', 'beta']);
     expect(lines).toContainEqual(
-      expect.objectContaining({ module: 'alpha', msg: 'Handler failed', guildId: 'g1', handler: 'messageCreate' }),
+      expect.objectContaining({ module: 'widgets', msg: 'Handler failed', guildId: 'g1', handler: 'messageCreate' }),
     );
   });
 
   it('passes guild and actor to listeners of an event emitted outside a transaction', async () => {
-    const result = await dispatcher.runHandler(runtime('alpha'), 'g1', 'u1', 'test', (ctx) => {
+    const result = await dispatcher.runHandler(runtime('widgets'), 'g1', 'u1', 'test', (ctx) => {
       ctx.emit(counted, { n: 1 });
     });
     expect(result).toEqual({ ok: true });
@@ -125,7 +129,7 @@ describe('Dispatcher', () => {
 
   it('delivers an event emitted in a transaction once it commits', async () => {
     const order: string[] = [];
-    await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', async (ctx) => {
+    await dispatcher.runHandler(runtime('widgets'), 'g1', null, 'test', async (ctx) => {
       await ctx.db.run(async () => {
         ctx.emit(counted, { n: 1 });
         order.push(`in transaction: ${seen.length}`);
@@ -139,7 +143,7 @@ describe('Dispatcher', () => {
   });
 
   it('drops events of a transaction that rolls back', async () => {
-    await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', async (ctx) => {
+    await dispatcher.runHandler(runtime('widgets'), 'g1', null, 'test', async (ctx) => {
       await ctx
         .db.run(async () => {
           ctx.emit(counted, { n: 2 });
@@ -152,7 +156,7 @@ describe('Dispatcher', () => {
   });
 
   it('delivers events of a nested run with the innermost transaction', async () => {
-    await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', async (ctx) => {
+    await dispatcher.runHandler(runtime('widgets'), 'g1', null, 'test', async (ctx) => {
       await ctx
         .db.run(async () => {
           await ctx.db.run(async () => {
@@ -169,7 +173,7 @@ describe('Dispatcher', () => {
 
   it('delivers an event emitted after its transaction settled at once', async () => {
     const emitLater: Array<() => void> = [];
-    const result = await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', async (ctx) => {
+    const result = await dispatcher.runHandler(runtime('widgets'), 'g1', null, 'test', async (ctx) => {
       await ctx.db.run(async () => {
         emitLater.push(() => ctx.emit(counted, { n: 7 }));
       });
@@ -187,7 +191,7 @@ describe('Dispatcher', () => {
   });
 
   it('drops an event emitted while its transaction is open when it rolls back', async () => {
-    const result = await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', async (ctx) => {
+    const result = await dispatcher.runHandler(runtime('widgets'), 'g1', null, 'test', async (ctx) => {
       await ctx
         .db.run(async () => {
           setTimeout(() => ctx.emit(counted, { n: 9 }), 0);
@@ -203,7 +207,7 @@ describe('Dispatcher', () => {
 
   it('delivers an event emitted outside a transaction at once', async () => {
     let seenDuringHandler = -1;
-    await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', async (ctx) => {
+    await dispatcher.runHandler(runtime('widgets'), 'g1', null, 'test', async (ctx) => {
       ctx.emit(counted, { n: 3 });
       await new Promise((resolve) => setTimeout(resolve, 20));
       seenDuringHandler = seen.length;
@@ -219,7 +223,7 @@ describe('Dispatcher', () => {
     await dispatcher.idle();
     expect(seen).toEqual([]);
     const failure = lines.find((line) => line.module === 'beta' && line.msg === 'Handler failed');
-    expect((failure?.err as { message: string }).message).toMatch(/cannot emit alpha\.counted/);
+    expect((failure?.err as { message: string }).message).toMatch(/cannot emit widgets\.counted/);
   });
 
   it('runs GuildDelete and GuildUnavailable listeners without waiting for the gate', async () => {
@@ -315,10 +319,10 @@ describe('Dispatcher', () => {
   it('logs expected errors at debug level and others at error level', async () => {
     class Stop extends Error {}
     const expectedError = (error: unknown) => error instanceof Stop;
-    const stopped: HandlerResult = await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'quiet', () => {
+    const stopped: HandlerResult = await dispatcher.runHandler(runtime('widgets'), 'g1', null, 'quiet', () => {
       throw new Stop('stop');
     }, { expectedError });
-    const failed = await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'loud', () => {
+    const failed = await dispatcher.runHandler(runtime('widgets'), 'g1', null, 'loud', () => {
       throw new Error('broken');
     }, { expectedError });
     expect(stopped.ok).toBe(false);
@@ -330,23 +334,23 @@ describe('Dispatcher', () => {
 
   it('refuses emits after the handler finished', async () => {
     let saved: HandlerContext | undefined;
-    await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', (ctx) => {
+    await dispatcher.runHandler(runtime('widgets'), 'g1', null, 'test', (ctx) => {
       saved = ctx;
     });
     expect(() => saved?.emit(counted, { n: 4 })).toThrow(
-      'Module "alpha" emitted alpha.counted after its handler finished; emit inside the handler or a queued task.',
+      'Module "widgets" emitted widgets.counted after its handler finished; emit inside the handler or a queued task.',
     );
   });
 
   it('runs queued tasks as handlers of the requesting guild and actor', async () => {
-    await enablement.set('g2', 'alpha', true);
+    await enablement.set('g2', 'widgets', true);
     let release!: () => void;
     const blocked = new Promise<void>((done) => {
       release = done;
     });
     const ran: Array<{ step: string; guildId: string; actorId: string | null }> = [];
     const enqueue = (guildId: string, actorId: string, step: string, wait = false) =>
-      dispatcher.runHandler(runtime('alpha'), guildId, actorId, 'test', (ctx) => {
+      dispatcher.runHandler(runtime('widgets'), guildId, actorId, 'test', (ctx) => {
         void ctx.queue.run('shared', async (task) => {
           if (wait) await blocked;
           ran.push({ step, guildId: task.guildId, actorId: task.actorId });
@@ -375,21 +379,21 @@ describe('Dispatcher', () => {
     const queue = new KeyedQueue(() => undefined);
     const run = vi.spyOn(queue, 'run');
     const keyed = new Dispatcher({ runtimes, database: t.database, enablement, queue });
-    await keyed.runHandler(runtime('alpha'), 'g2', null, 'test', async (ctx) => {
+    await keyed.runHandler(runtime('widgets'), 'g2', null, 'test', async (ctx) => {
       await ctx.queue.run('channel-1', async () => undefined);
     });
-    expect(run).toHaveBeenCalledWith('alpha/g2/channel-1', expect.any(Function));
+    expect(run).toHaveBeenCalledWith('widgets/g2/channel-1', expect.any(Function));
   });
 
   it('logs failing queued tasks on the module logger', async () => {
-    await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', (ctx) => {
+    await dispatcher.runHandler(runtime('widgets'), 'g1', null, 'test', (ctx) => {
       void ctx.queue.run('broken', async () => {
         throw new Error('queued failure');
       });
     });
     await dispatcher.idle();
     expect(lines).toContainEqual(
-      expect.objectContaining({ level: 50, module: 'alpha', msg: 'Handler failed', guildId: 'g1', handler: 'queue:broken' }),
+      expect.objectContaining({ level: 50, module: 'widgets', msg: 'Handler failed', guildId: 'g1', handler: 'queue:broken' }),
     );
   });
 
@@ -403,15 +407,15 @@ describe('Dispatcher', () => {
     await upsertGuild(t.database.admin, 'g7');
     const ran: string[] = [];
     const queueTask = () =>
-      dispatcher.runHandler(runtime('alpha'), 'g7', null, 'test', async (ctx) => {
+      dispatcher.runHandler(runtime('widgets'), 'g7', null, 'test', async (ctx) => {
         await ctx.queue.run('k', async () => {
           ran.push('task');
         });
       });
-    await enablement.set('g7', 'alpha', false);
+    await enablement.set('g7', 'widgets', false);
     await queueTask();
     expect(ran).toEqual([]);
-    await enablement.set('g7', 'alpha', true);
+    await enablement.set('g7', 'widgets', true);
     await queueTask();
     expect(ran).toEqual(['task']);
   });

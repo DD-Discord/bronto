@@ -1,9 +1,20 @@
+import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { coreMigrationTarget } from '../src/db/migrate.js';
+import { moduleRoleName } from '../src/db/module-roles.js';
 import { prepareDatabase } from '../src/db/prepare.js';
-import { createTestDatabase, schemaExpectations, widgetsTarget, type TestDatabase } from './test-db.js';
+import { createTestDatabase, errorText, schemaExpectations, widgetsTarget, type TestDatabase } from './test-db.js';
 
 let t: TestDatabase;
+
+/** Runs `query` as the widgets module role through the app connection, the way a widgets handler would. */
+function asWidgets(query: string) {
+  const role = moduleRoleName(t.database.appRole, 'widgets');
+  return t.database.app.transaction(async (tx) => {
+    await tx.execute(sql`select set_config('role', ${role}, true)`);
+    return tx.execute(sql.raw(query));
+  });
+}
 
 async function historyCount(test: TestDatabase, module: string): Promise<number> {
   const { rows } = await test.database.adminPool.query(`select count(*)::int as n from migrations.${module}`);
@@ -21,11 +32,12 @@ afterAll(async () => {
 describe('prepareDatabase', () => {
   const options = () => ({ modules: [widgetsTarget], expectations: schemaExpectations() });
 
-  it('migrates core and modules, grants the app role and checks the schemas', async () => {
+  it('migrates core and modules, grants the roles and checks the schemas', async () => {
     expect(await prepareDatabase(t.database, options())).toEqual([]);
     expect(await historyCount(t, 'core')).toBe(1);
     expect(await historyCount(t, 'widgets')).toBe(1);
-    await expect(t.database.appPool.query('select count(*) from widgets.items')).resolves.toBeDefined();
+    await expect(asWidgets('select count(*) from widgets.items')).resolves.toBeDefined();
+    await expect(t.database.appPool.query('select count(*) from widgets.items')).rejects.toThrow(/permission denied/);
   });
 
   it('returns the problems the checks find', async () => {
@@ -48,9 +60,10 @@ describe('prepareDatabase', () => {
       create policy later_guild_isolation on widgets.later using (guild_id = current_setting('app.guild_id', true));
     `);
     try {
-      await expect(t.database.appPool.query('select * from widgets.later')).rejects.toThrow(/permission denied/);
+      const refused = await asWidgets('select * from widgets.later').catch((e: unknown) => e);
+      expect(errorText(refused)).toMatch(/permission denied/);
       expect(await prepareDatabase(t.database, options())).toEqual([]);
-      await expect(t.database.appPool.query('select * from widgets.later')).resolves.toBeDefined();
+      await expect(asWidgets('select * from widgets.later')).resolves.toBeDefined();
     } finally {
       await t.database.adminPool.query('drop table widgets.later');
     }

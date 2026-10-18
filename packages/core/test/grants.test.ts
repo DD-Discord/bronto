@@ -1,9 +1,10 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { guildModules, guilds } from '../src/db/schema.js';
+import { moduleRoleName } from '../src/db/module-roles.js';
 import { createScopedDb } from '../src/db/scoped.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
-import { createTestDatabase, setUpSchema, type TestDatabase } from './test-db.js';
+import { createTestDatabase, errorText, setUpSchema, widgetsDb, type TestDatabase } from './test-db.js';
 
 let t: TestDatabase;
 
@@ -30,7 +31,7 @@ describe('app role grants', () => {
   });
 
   it('can write guild rows that reference core.guilds', async () => {
-    await createScopedDb(t.database.app, 'g1').run((tx) => tx.insert(widgetItems).values({ id: 'w1', label: 'W' }));
+    await widgetsDb(t.database, 'g1').run((tx) => tx.insert(widgetItems).values({ id: 'w1', label: 'W' }));
     const [row] = await t.database.admin.select().from(widgetItems).where(eq(widgetItems.id, 'w1'));
     expect(row?.guildId).toBe('g1');
   });
@@ -46,7 +47,24 @@ describe('app role grants', () => {
     expect(await t.database.admin.select().from(guildModules)).toEqual([]);
   });
 
-  it('can use but not alter module tables', async () => {
-    await expect(t.database.appPool.query('drop table widgets.items')).rejects.toThrow(/must be owner/);
+  it('gives a module role use but not alteration of its tables', async () => {
+    const role = moduleRoleName(t.database.appRole, 'widgets');
+    const asWidgets = (statement: string) =>
+      t.database.app.transaction(async (tx) => {
+        await tx.execute(sql`select set_config('role', ${role}, true)`);
+        await tx.execute(sql.raw(statement));
+      });
+    await expect(asWidgets('select count(*) from widgets.items')).resolves.toBeUndefined();
+    const error = await asWidgets('drop table widgets.items').catch((caught: unknown) => caught);
+    expect(errorText(error)).toMatch(/must be owner/);
+  });
+
+  it('gives the app role no access to module schemas', async () => {
+    await expect(t.database.appPool.query('select count(*) from widgets.items')).rejects.toThrow(/permission denied/);
+    const { rows } = await t.database.adminPool.query<{ usage: boolean }>(
+      `select has_schema_privilege($1, 'widgets', 'USAGE') as "usage"`,
+      [t.database.appRole],
+    );
+    expect(rows[0]!.usage).toBe(false);
   });
 });

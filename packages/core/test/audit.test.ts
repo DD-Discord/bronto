@@ -2,9 +2,9 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runInScope } from '../src/db/context.js';
 import { guilds } from '../src/db/schema.js';
-import { createScopedDb, type ScopedDb } from '../src/db/scoped.js';
+import type { ScopedDb } from '../src/db/scoped.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
-import { createTestDatabase, setUpSchema, type TestDatabase } from './test-db.js';
+import { createTestDatabase, setUpSchema, widgetsDb, type TestDatabase } from './test-db.js';
 
 let t: TestDatabase;
 let scoped: ScopedDb;
@@ -19,7 +19,7 @@ beforeAll(async () => {
   t = await createTestDatabase();
   await setUpSchema(t.database);
   await t.database.admin.insert(guilds).values({ id: 'g1' });
-  scoped = createScopedDb(t.database.app, 'g1');
+  scoped = widgetsDb(t.database, 'g1');
 });
 
 afterAll(async () => {

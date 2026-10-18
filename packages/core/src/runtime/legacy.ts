@@ -39,7 +39,8 @@ export async function runLegacyImport(options: LegacyImportOptions): Promise<str
       if (dryRun) refuse();
       await upsertGuild(database.admin, guildId);
     },
-    forGuild: (guildId, actorId = null) => (dryRun ? refuse() : attributed(createScopedDb(database.app, guildId), actorId)),
+    forGuild: (guildId, actorId = null) =>
+      dryRun ? refuse() : attributed(createScopedDb(database.app, guildId, runtime.dbRole), actorId),
   };
   return importer(ctx, options.path);
 }

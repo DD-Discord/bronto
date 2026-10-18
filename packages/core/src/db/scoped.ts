@@ -10,7 +10,11 @@ export interface ScopedDb {
   forGuild(guildId: string): ScopedDb;
 }
 
-export function createScopedDb(app: Db, guildId: string): ScopedDb {
+/**
+ * Opens guild-scoped access on the app connection. `role`: the module role the transaction runs as; null runs as the
+ * app role.
+ */
+export function createScopedDb(app: Db, guildId: string, role: string | null = null): ScopedDb {
   return {
     guildId,
     async run<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
@@ -20,8 +24,9 @@ export function createScopedDb(app: Db, guildId: string): ScopedDb {
       try {
         result = await runInScope({ guildId, pendingEvents }, () =>
           app.transaction(async (tx) => {
-            // Transaction-local, so a pooled connection never carries the guild into its next use.
+            // Transaction-local, so a pooled connection never carries the guild or the role into its next use.
             await tx.execute(sql`select set_config('app.guild_id', ${guildId}, true)`);
+            if (role !== null) await tx.execute(sql`select set_config('role', ${role}, true)`);
             return fn(tx);
           }),
         );
@@ -33,7 +38,7 @@ export function createScopedDb(app: Db, guildId: string): ScopedDb {
       return result;
     },
     forGuild(other: string): ScopedDb {
-      return createScopedDb(app, other);
+      return createScopedDb(app, other, role);
     },
   };
 }

@@ -2,7 +2,8 @@
 discord:
   token: ${DISCORD_TOKEN}
 database:
-  # The app role is subject to row-level security; the admin role owns the schema and runs migrations.
+  # The app role is subject to row-level security and switches to one role per module; the admin role owns the schema,
+  # runs migrations and creates those roles (it needs CREATEROLE).
   appUrl: ${DATABASE_APP_URL}
   adminUrl: ${DATABASE_ADMIN_URL}
 # One key per module package to load; an empty value loads the module with its defaults.

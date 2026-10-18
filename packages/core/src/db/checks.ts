@@ -1,4 +1,5 @@
 import type { Database, Queryable } from './database.js';
+import { moduleRoleName } from './module-roles.js';
 
 export interface SchemaExpectation {
   schema: string;
@@ -74,38 +75,67 @@ export function formatSchemaProblems(problems: SchemaProblem[]): string {
   return problems.map(({ schema, table, problem }) => `${schema}.${table}: ${problem}`).join('\n');
 }
 
-/** Finds app role setups that would make RLS ineffective. Returns one message per problem. */
-export async function checkRoles(database: Database): Promise<string[]> {
+interface RoleState {
+  admin: string;
+  exists: boolean;
+  super: boolean;
+  bypass: boolean;
+  member: boolean;
+  /** Whether the app role may SET ROLE to it; only read for module roles. */
+  switchable: boolean;
+}
+
+/**
+ * Finds app role and module role setups that would make RLS ineffective or block module work. `modules` names the
+ * loaded modules that have a database. Returns one message per problem.
+ */
+export async function checkRoles(database: Database, modules: string[] = []): Promise<string[]> {
   const role = database.appRole;
-  const { rows } = await database.adminPool.query<{
-    admin: string;
-    exists: boolean;
-    super: boolean;
-    bypass: boolean;
-    member: boolean;
-  }>(
+  const state = await roleState(database, role, role);
+  if (!state.exists) return [`App role "${role}" does not exist.`];
+  const problems: string[] = [];
+  if (state.admin === role) problems.push(`App role "${role}" is the admin role; use a separate role for the app.`);
+  problems.push(...privilegeProblems('App role', role, state));
+  for (const module of modules) {
+    const moduleRole = moduleRoleName(role, module);
+    const moduleState = await roleState(database, moduleRole, role);
+    if (!moduleState.exists) {
+      problems.push(`Module role "${moduleRole}" does not exist.`);
+      continue;
+    }
+    problems.push(...privilegeProblems('Module role', moduleRole, moduleState));
+    if (!moduleState.switchable) problems.push(`App role "${role}" cannot switch to module role "${moduleRole}".`);
+  }
+  return problems;
+}
+
+async function roleState(database: Database, role: string, appRole: string): Promise<RoleState> {
+  const { rows } = await database.adminPool.query<RoleState>(
     `select current_user as "admin",
             r.rolname is not null as "exists",
             coalesce(r.rolsuper, false) as "super",
             coalesce(r.rolbypassrls, false) as "bypass",
             coalesce(r.rolname <> current_user
                      and pg_has_role(r.oid, (select oid from pg_roles where rolname = current_user), 'MEMBER'),
-                     false) as "member"
+                     false) as "member",
+            coalesce((select pg_has_role(a.oid, r.oid, 'SET') from pg_roles a where a.rolname = $2), false)
+              as "switchable"
        from (select 1) as one
        left join pg_roles r on r.rolname = $1`,
-    [role],
+    [role, appRole],
   );
-  const state = rows[0];
-  if (state === undefined || !state.exists) return [`App role "${role}" does not exist.`];
+  return rows[0]!;
+}
+
+function privilegeProblems(kind: string, role: string, state: RoleState): string[] {
   const problems: string[] = [];
-  if (state.admin === role) problems.push(`App role "${role}" is the admin role; use a separate role for the app.`);
-  if (state.super) problems.push(`App role "${role}" is a superuser, which bypasses RLS.`);
-  if (state.bypass) problems.push(`App role "${role}" has BYPASSRLS.`);
+  if (state.super) problems.push(`${kind} "${role}" is a superuser, which bypasses RLS.`);
+  if (state.bypass) problems.push(`${kind} "${role}" has BYPASSRLS.`);
   // Members of the owning role pass ownership checks, and table owners are not subject to RLS.
   // Skip this check if already a superuser, since superusers already bypass RLS completely.
   if (state.member && !state.super) {
     problems.push(
-      `App role "${role}" is a member of the admin role "${state.admin}", so it bypasses RLS on the admin role's tables.`,
+      `${kind} "${role}" is a member of the admin role "${state.admin}", so it bypasses RLS on the admin role's tables.`,
     );
   }
   return problems;

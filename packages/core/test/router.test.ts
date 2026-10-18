@@ -24,6 +24,8 @@ import { KeyedQueue } from '../src/runtime/queue.js';
 import { FakeClient } from '../src/testing/fake-client.js';
 import { fakeAutocomplete, fakeButton, fakeCommand, fakeModal, type FakeInteraction } from '../src/testing/interactions.js';
 import { captureLog, type LogLine } from '../src/testing/log.js';
+import { widgetsMigrations } from './fixtures/widgets/module.js';
+import * as widgetsSchema from './fixtures/widgets/schema.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
 import { createTestDatabase, setUpSchema, type TestDatabase } from './test-db.js';
 
@@ -123,7 +125,13 @@ const form = defineModal({
   },
 });
 
-const demo = defineModule({ name: 'demo', commands: { demo: demoCommand }, components: [press, form] });
+// Owns the widgets schema, so its /demo write subcommand can write widget items.
+const demo = defineModule({
+  name: 'widgets',
+  db: { schema: widgetsSchema, migrations: widgetsMigrations },
+  commands: { demo: demoCommand },
+  components: [press, form],
+});
 
 let t: TestDatabase;
 let lines: LogLine[];
@@ -168,7 +176,7 @@ beforeAll(async () => {
   const client = new FakeClient().asClient();
   const { log, lines: captured } = captureLog();
   handlerLines = captured;
-  runtimes = createModuleRuntimes([{ packageName: '@test/demo', definition: demo, config: {} }], {
+  runtimes = createModuleRuntimes([{ packageName: '@test/widgets', definition: demo, config: {} }], {
     client,
     database: t.database,
     log,
@@ -185,7 +193,7 @@ beforeEach(async () => {
   ran.length = 0;
   gateOpen = true;
   gateDelayMs = 0;
-  await enablement.set('g1', 'demo', true);
+  await enablement.set('g1', 'widgets', true);
 });
 
 describe('InteractionRouter commands', () => {
@@ -226,7 +234,7 @@ describe('InteractionRouter commands', () => {
     const fake = await run(makeRouter(), fakeCommand({ command: 'demo', subcommand: 'oops' }));
     expect(fake.responses).toEqual([{ kind: 'reply', payload: privately(GENERIC_FAILURE) }]);
     expect(handlerLines).toContainEqual(
-      expect.objectContaining({ level: 50, msg: 'Handler failed', module: 'demo', handler: '/demo oops', guildId: 'g1' }),
+      expect.objectContaining({ level: 50, msg: 'Handler failed', module: 'widgets', handler: '/demo oops', guildId: 'g1' }),
     );
   });
 
@@ -239,7 +247,7 @@ describe('InteractionRouter commands', () => {
     const router = makeRouter();
     const unknown = await run(router, fakeCommand({ command: 'gone' }));
     const removed = await run(router, fakeCommand({ command: 'demo', subcommand: 'removed' }));
-    await enablement.set('g1', 'demo', false);
+    await enablement.set('g1', 'widgets', false);
     const disabled = await run(router, fakeCommand({ command: 'demo', subcommand: 'echo', options: { text: 'x' } }));
     for (const fake of [unknown, removed, disabled]) {
       expect(fake.responses).toEqual([{ kind: 'reply', payload: privately(NOT_AVAILABLE) }]);
@@ -339,7 +347,7 @@ describe('InteractionRouter autocomplete', () => {
     const router = makeRouter();
     const failing = await run(router, fakeAutocomplete({ command: 'demo', subcommand: 'pick', focused: 'thing', options: { thing: 'fail' } }));
     const plain = await run(router, fakeAutocomplete({ command: 'demo', subcommand: 'echo', focused: 'text' }));
-    await enablement.set('g1', 'demo', false);
+    await enablement.set('g1', 'widgets', false);
     const disabled = await run(router, fakeAutocomplete({ command: 'demo', subcommand: 'pick', focused: 'thing' }));
     for (const fake of [failing, plain, disabled]) {
       expect(fake.responses).toEqual([{ kind: 'respond', payload: [] }]);
@@ -364,7 +372,7 @@ describe('InteractionRouter components', () => {
     for (const fake of [unknown, garbage, wrongKind]) {
       expect(fake.responses).toEqual([{ kind: 'reply', payload: privately(COMPONENT_GONE) }]);
     }
-    await enablement.set('g1', 'demo', false);
+    await enablement.set('g1', 'widgets', false);
     const disabled = await run(router, fakeButton({ customId: press.customId() }));
     expect(disabled.responses).toEqual([{ kind: 'reply', payload: privately(COMPONENT_UNAVAILABLE) }]);
   });
@@ -379,7 +387,7 @@ describe('InteractionRouter setup', () => {
       { runtime: runtimes[0]!, commands: { demo: demoCommand }, components: [] },
     ]);
     expect(router.commandsFor('g1').map(([name]) => name)).toEqual(['modules', 'demo']);
-    await enablement.set('g1', 'demo', false);
+    await enablement.set('g1', 'widgets', false);
     expect(router.commandsFor('g1').map(([name]) => name)).toEqual(['modules']);
   });
 
@@ -396,7 +404,7 @@ describe('InteractionRouter setup', () => {
       return null;
     })();
     expect(error).toBeInstanceOf(ConfigError);
-    expect((error as ConfigError).problems).toEqual(['modules: command /demo is defined by both "demo" and "other"']);
+    expect((error as ConfigError).problems).toEqual(['modules: command /demo is defined by both "widgets" and "other"']);
   });
 
   it('refuses commands whose JSON Discord would reject', () => {
@@ -410,7 +418,7 @@ describe('InteractionRouter setup', () => {
     };
     expect(() => makeRouter([{ runtime: runtimes[0]!, commands: { demo: demoCommand, bad }, components: [] }])).toThrow(
       expect.objectContaining({
-        problems: ['modules: command /bad (demo): Option name "ignoreBots" must be 1 to 32 lowercase letters, digits, "-" or "_".'],
+        problems: ['modules: command /bad (widgets): Option name "ignoreBots" must be 1 to 32 lowercase letters, digits, "-" or "_".'],
       }),
     );
   });
