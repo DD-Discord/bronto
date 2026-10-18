@@ -19,7 +19,15 @@ export interface ReplyMessage {
   ephemeral?: boolean;
   /** Users and roles this message may ping; nobody by default. `@everyone` and `@here` never ping. */
   allowedMentions?: { users?: string[]; roles?: string[] };
+  /** Message flags from `REPLY_FLAGS`, e.g. `MessageFlags.IsComponentsV2`. */
+  flags?: number;
 }
+
+/** Flags a reply may set; visibility is chosen with `ephemeral`. */
+export const REPLY_FLAGS = MessageFlags.SuppressEmbeds | MessageFlags.SuppressNotifications | MessageFlags.IsComponentsV2;
+// Discord accepts SuppressNotifications only on new messages, not on edits.
+const EDIT_FLAGS = MessageFlags.SuppressEmbeds | MessageFlags.IsComponentsV2;
+
 
 export type Reply = string | ReplyMessage;
 
@@ -56,9 +64,25 @@ function body(message: ReplyMessage): InteractionEditReplyOptions {
   return options;
 }
 
+function replyFlags(message: ReplyMessage): number {
+  const flags = message.flags ?? 0;
+  if ((flags & ~REPLY_FLAGS) !== 0) {
+    throw new Error('Reply flags may only combine SuppressEmbeds, SuppressNotifications and IsComponentsV2.');
+  }
+  return flags;
+}
+
 function withVisibility(message: ReplyMessage, ephemeral: boolean): InteractionReplyOptions {
   const options = body(message) as InteractionReplyOptions;
-  if (ephemeral) options.flags = MessageFlags.Ephemeral;
+  const flags = replyFlags(message) | (ephemeral ? MessageFlags.Ephemeral : 0);
+  if (flags !== 0) options.flags = flags;
+  return options;
+}
+
+function editBody(message: ReplyMessage): InteractionEditReplyOptions {
+  const options = body(message);
+  const flags = replyFlags(message) & EDIT_FLAGS;
+  if (flags !== 0) options.flags = flags;
   return options;
 }
 
@@ -82,7 +106,7 @@ export class Responder {
       if (this.state === 'open') {
         await this.target.reply(withVisibility(message, ephemeral));
       } else if (this.state === 'deferred') {
-        await this.target.editReply(body(message));
+        await this.target.editReply(editBody(message));
       } else {
         await this.target.followUp(withVisibility(message, ephemeral));
       }
@@ -125,7 +149,7 @@ export class Responder {
     if (this.state === 'open') {
       await this.target.reply(withVisibility(message, true));
     } else if (this.state === 'deferred') {
-      await this.target.editReply(body(message));
+      await this.target.editReply(editBody(message));
     } else {
       await this.target.followUp(withVisibility(message, true));
     }

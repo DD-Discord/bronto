@@ -39,6 +39,33 @@ describe('Responder', () => {
     expect(fake.responses[1]!.payload).toEqual({ content: '<@1>', allowedMentions: { parse: [], users: ['1'] } });
   });
 
+  it('adds reply flags to the ephemeral flag', async () => {
+    const { fake, responder: r } = responder(true);
+    await r.send({ content: 'quiet', flags: MessageFlags.SuppressEmbeds | MessageFlags.SuppressNotifications });
+    expect(fake.responses[0]!.payload).toMatchObject({
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressEmbeds | MessageFlags.SuppressNotifications,
+    });
+  });
+
+  it('drops SuppressNotifications when editing a deferred answer', async () => {
+    const { fake, responder: r } = responder();
+    await r.defer();
+    await r.send({ content: 'x', flags: MessageFlags.SuppressNotifications | MessageFlags.SuppressEmbeds });
+    expect(fake.responses[1]!.payload).toMatchObject({ flags: MessageFlags.SuppressEmbeds });
+  });
+
+  it('omits flags on an edit when none remain', async () => {
+    const { fake, responder: r } = responder();
+    await r.defer();
+    await r.send({ content: 'x', flags: MessageFlags.SuppressNotifications });
+    expect(fake.responses[1]!.payload).not.toHaveProperty('flags');
+  });
+
+  it('refuses flags a reply cannot set', async () => {
+    const { responder: r } = responder();
+    await expect(r.send({ content: 'x', flags: MessageFlags.Ephemeral })).rejects.toThrow('Reply flags');
+  });
+
   it('uses its default visibility', async () => {
     const { fake, responder: r } = responder(true);
     await r.send('private');
