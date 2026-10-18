@@ -74,7 +74,10 @@ export function guildTable<
     .enableRLS();
 }
 
-/** A table shared by all guilds: audit columns only, no guild_id and no RLS. Use sparingly. */
+/**
+ * A table shared by all guilds: audit columns only, no guild_id and no RLS. Use sparingly. It is writable only by its
+ * own module's role, and a write affects every server; core's global tables are read-only for handlers.
+ */
 export function globalTable<
   TSchema extends string,
   TName extends string,

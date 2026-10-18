@@ -4,10 +4,12 @@ import { checkRoles, checkSchemas, formatSchemaProblems } from '../src/db/checks
 import { createDatabase } from '../src/db/database.js';
 import { globalTableNames } from '../src/db/registry.js';
 import * as coreSchema from '../src/db/schema.js';
+import * as widgetsSchema from './fixtures/widgets/schema.js';
 import { createTestDatabase, setUpSchema, type TestDatabase } from './test-db.js';
 
 let t: TestDatabase;
 const coreExpectation = () => ({ schema: 'core', globalTables: globalTableNames(coreSchema) });
+const widgetsExpectation = () => ({ schema: 'widgets', globalTables: globalTableNames(widgetsSchema) });
 
 beforeAll(async () => {
   t = await createTestDatabase();
@@ -20,7 +22,7 @@ afterAll(async () => {
 
 describe('checkSchemas', () => {
   it('accepts tables built with guildTable and declared globals', async () => {
-    expect(await checkSchemas(t.database, [coreExpectation(), { schema: 'widgets', globalTables: [] }])).toEqual([]);
+    expect(await checkSchemas(t.database, [coreExpectation(), widgetsExpectation()])).toEqual([]);
   });
 
   it('flags a global table that was not declared global', async () => {
@@ -35,7 +37,7 @@ describe('checkSchemas', () => {
   it('flags a table created without guildTable', async () => {
     await t.database.adminPool.query('create table widgets.bad (id text primary key)');
     try {
-      const problems = await checkSchemas(t.database, [{ schema: 'widgets', globalTables: [] }]);
+      const problems = await checkSchemas(t.database, [widgetsExpectation()]);
       expect(problems).toEqual([
         { schema: 'widgets', table: 'bad', problem: 'missing-rls' },
         { schema: 'widgets', table: 'bad', problem: 'missing-policy' },
@@ -55,7 +57,7 @@ describe('checkSchemas', () => {
       alter table widgets.half enable row level security;
     `);
     try {
-      expect(await checkSchemas(t.database, [{ schema: 'widgets', globalTables: [] }])).toEqual([
+      expect(await checkSchemas(t.database, [widgetsExpectation()])).toEqual([
         { schema: 'widgets', table: 'half', problem: 'missing-policy' },
       ]);
     } finally {
@@ -70,7 +72,7 @@ describe('checkSchemas', () => {
       create policy stuck_guild_isolation on widgets.stuck using (guild_id = current_setting('app.guild_id', true));
     `);
     try {
-      expect(await checkSchemas(t.database, [{ schema: 'widgets', globalTables: [] }])).toEqual([
+      expect(await checkSchemas(t.database, [widgetsExpectation()])).toEqual([
         { schema: 'widgets', table: 'stuck', problem: 'guild-fk-not-cascade' },
       ]);
     } finally {
@@ -84,7 +86,7 @@ describe('checkSchemas', () => {
       create materialized view widgets.item_counts as select guild_id, count(*) from widgets.items group by guild_id;
     `);
     try {
-      expect(await checkSchemas(t.database, [{ schema: 'widgets', globalTables: [] }])).toEqual([
+      expect(await checkSchemas(t.database, [widgetsExpectation()])).toEqual([
         { schema: 'widgets', table: 'all_items', problem: 'view-bypasses-rls' },
         { schema: 'widgets', table: 'item_counts', problem: 'view-bypasses-rls' },
       ]);

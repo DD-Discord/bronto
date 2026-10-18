@@ -223,7 +223,8 @@ Tables are Drizzle tables, declared with two helpers from `@bronto/core/tables`:
   - a row-level security policy that only shows rows of the current server
   - the audit columns `created_at`, `updated_at`, `created_by` and `updated_by`
 - **`globalTable(schema, name, columns, extra?)`** for data shared by all servers. It adds only the audit columns. Use
-  it rarely: a module can only read its global tables, so writes need the admin connection.
+  it rarely. Only the owning module's role can write it, and a write affects every server; core's global tables are
+  read-only for handlers.
 
 The startup checks look at what Postgres holds in core's schema and in each loaded module's schema. They reject any
 table that doesn't keep servers apart: it needs row-level security, a policy and a foreign key to `core.guilds` with
@@ -251,7 +252,8 @@ export const points = guildTable(
 Things to know:
 
 - **Global tables are shared by all servers.** A `globalTable` has no `guild_id` and no row-level security, so the
-  startup checks skip it. Use it sparingly. Handlers can only read it; see the database roles part for who may write.
+  startup checks skip it. Use it sparingly. Only the owning module's role can write it, and a write affects every server, so keep it
+  for genuinely shared data. Core's global tables are read-only for handlers.
 - **Prefer `@bronto/core/tables` in schema files.** drizzle-kit loads schema files, and the main entry point pulls in
   discord.js, pino and the runtime. Importing from `@bronto/core` works too.
 - **Keys:** a Discord ID that is only unique within a server (a user, a member) needs `guildId` in its primary key or
@@ -918,7 +920,7 @@ Details:
   and write `core`'s per-server tables and read `core.guilds`. It has no privileges on module schemas. Core's own
   handlers, such as `/modules`, run as this role.
 - **Module roles** (`<app role>_<module>`, e.g. `bot_app_sticky`), one for each loaded module with a `db`. They are
-  `NOLOGIN`. Each can read and write its module's per-server tables and read its global tables, and has nothing on
+  `NOLOGIN`. Each can read and write its module's per-server tables and its own global tables, and has nothing on
   `core` or other modules' schemas. The app role is a member `WITH INHERIT FALSE, SET TRUE`: it doesn't hold their
   privileges, but `ScopedDb.run` switches to the module's role with `set_config('role', …, true)` (`SET LOCAL ROLE`)
   next to `app.guild_id`. Handlers, queued tasks, hooks, API calls and the legacy importer's `forGuild` all run as the
@@ -957,7 +959,8 @@ flowchart LR
 - **Grants are recomputed at every start** (`db/grants.ts`). `core` goes to the app role; each module schema goes to
   its module role, after revoking everything the app role had there. The app role also loses access to the schemas of
   migrated modules that are no longer loaded. Tables with row-level security get
-  select/insert/update/delete; tables without it (global ones) get select only.
+  select/insert/update/delete; in `core`, tables without it (global ones) get select only, while a module role may
+  also write its own global tables.
 - **Deleting a server is one statement.** Every per-server table references `core.guilds` with a cascading foreign
   key, so deleting the server's row deletes all its rows in all modules.
 

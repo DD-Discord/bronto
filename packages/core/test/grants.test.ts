@@ -2,7 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { guildModules, guilds } from '../src/db/schema.js';
 import { createScopedDb } from '../src/db/scoped.js';
-import { widgetItems } from './fixtures/widgets/schema.js';
+import { widgetCatalog, widgetItems } from './fixtures/widgets/schema.js';
 import { asModuleRole, createTestDatabase, errorText, setUpSchema, widgetsDb, type TestDatabase } from './test-db.js';
 
 let t: TestDatabase;
@@ -44,6 +44,18 @@ describe('app role grants', () => {
     ]);
     await scoped.run((tx) => tx.delete(guildModules));
     expect(await t.database.admin.select().from(guildModules)).toEqual([]);
+  });
+
+  it('lets a module role write its own global tables', async () => {
+    await widgetsDb(t.database, 'g1').run((tx) => tx.insert(widgetCatalog).values({ id: 'c1', label: 'C' }));
+    expect(await t.database.admin.select().from(widgetCatalog)).toHaveLength(1);
+  });
+
+  it('keeps core global tables read-only for module roles', async () => {
+    const error = await widgetsDb(t.database, 'g1')
+      .run((tx) => tx.insert(guilds).values({ id: 'g9' }))
+      .catch((e: unknown) => e);
+    expect(errorText(error)).toMatch(/permission denied/);
   });
 
   it('gives a module role use but not alteration of its tables', async () => {

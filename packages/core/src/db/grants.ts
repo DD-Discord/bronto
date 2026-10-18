@@ -8,8 +8,9 @@ const CORE = 'core';
 /**
  * Gives data access, but no DDL, to the tables that exist in each schema now; run it after every migration. `core`
  * goes to the app role; each module schema goes to that module's role only, and the app role loses all access to it.
- * Tables with RLS get read and write access. Tables without RLS (global tables such as core.guilds) are read-only,
- * since writes there are not limited to one guild. A module whose role does not exist is skipped; checkRoles reports
+ * Module roles get read and write access to every table of their schema, including their global tables (RLS still
+ * limits guild tables to one guild). The app role gets read and write access to core's RLS tables and read-only
+ * access to core's global tables such as core.guilds. A module whose role does not exist is skipped; checkRoles reports
  * it. Not safe to run concurrently: at startup use prepareDatabase, which runs it under the migration lock.
  */
 export async function grantAppRole(database: Database, modules: string[]): Promise<void> {
@@ -41,12 +42,13 @@ export async function grantRoles(admin: Queryable, appRole: string, modules: str
         order by c.relname`,
       [schema],
     );
+    const writesAll = schema !== CORE;
     statements.push(`grant usage on schema ${target} to ${grantee}`);
     for (const { name, rls } of rows) {
       const table = `${target}.${quoteIdent(name)}`;
       // Revoking first keeps the grants exact when a table's RLS setting changes between starts.
       statements.push(`revoke all on ${table} from ${grantee}`);
-      statements.push(`grant ${rls ? 'select, insert, update, delete' : 'select'} on ${table} to ${grantee}`);
+      statements.push(`grant ${rls || writesAll ? 'select, insert, update, delete' : 'select'} on ${table} to ${grantee}`);
     }
     statements.push(`grant usage, select on all sequences in schema ${target} to ${grantee}`);
     // One simple-protocol query runs as one transaction, so no role sees a table without its grants.

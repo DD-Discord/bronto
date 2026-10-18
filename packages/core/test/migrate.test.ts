@@ -31,12 +31,12 @@ describe('migrateAll', () => {
       `select table_schema || '.' || table_name as name from information_schema.tables
        where table_schema in ('core', 'widgets') order by 1`,
     );
-    expect(tables.rows.map((row) => row.name)).toEqual(['core.guild_modules', 'core.guilds', 'widgets.items']);
+    expect(tables.rows.map((row) => row.name)).toEqual(['core.guild_modules', 'core.guilds', 'widgets.catalog', 'widgets.items']);
   });
 
   it('does nothing when run again', async () => {
     await migrateAll(t.database, targets);
-    expect(await historyCount(t, 'widgets')).toBe(1);
+    expect(await historyCount(t, 'widgets')).toBe(2);
   });
 
   it('applies migrations exactly once when two processes start together', async () => {
@@ -44,7 +44,7 @@ describe('migrateAll', () => {
     try {
       await Promise.all([migrateAll(other.database, targets), migrateAll(other.database, targets)]);
       expect(await historyCount(other, 'core')).toBe(1);
-      expect(await historyCount(other, 'widgets')).toBe(1);
+      expect(await historyCount(other, 'widgets')).toBe(2);
     } finally {
       await other.drop();
     }
