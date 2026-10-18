@@ -225,7 +225,9 @@ Tables are Drizzle tables, declared with two helpers from `@bronto/core/tables`:
 - **`globalTable(schema, name, columns, extra?)`** for data shared by all servers. It adds only the audit columns. Use
   it rarely: the app role can only read global tables, so writes need the admin connection.
 
-The startup checks reject any table made another way.
+The startup checks look at what Postgres holds in core's schema and in each loaded module's schema. They reject any
+table that doesn't keep servers apart: it needs row-level security, a policy and a foreign key to `core.guilds` with
+`on delete cascade`. Tables declared with `globalTable` are exempt. Views are always rejected.
 
 ```ts
 // src/db/schema.ts
@@ -248,6 +250,8 @@ export const points = guildTable(
 
 Things to know:
 
+- **Global tables are shared by all servers.** A `globalTable` has no `guild_id` and no row-level security, so the
+  startup checks skip it. Use it sparingly. Handlers can only read it; see the database roles part for who may write.
 - **Import from `@bronto/core/tables`, not `@bronto/core`.** drizzle-kit loads schema files, and the main entry
   point pulls in discord.js.
 - **Keys:** a Discord ID that is only unique within a server (a user, a member) needs `guildId` in its primary key or
@@ -917,8 +921,8 @@ flowchart LR
   server and actor. The `guild_id` default and the audit columns read it. The dispatcher opens the scope for every
   handler run; `ScopedDb.run` opens one for its server.
 - **Isolation is checked at every start** (`db/checks.ts`). Every non-global table must have row-level security, a
-  policy, and a foreign key to `core.guilds` that cascades on delete. Views aren't allowed, since a view runs with its
-  owner's rights.
+  policy, and a foreign key to `core.guilds` that cascades on delete. Tables declared with `globalTable` are exempt.
+  Views aren't allowed, since a view runs with its owner's rights.
 - **Grants are recomputed at every start** (`db/grants.ts`). Tables with row-level security get
   select/insert/update/delete; tables without it (global ones) get select only.
 - **Deleting a server is one statement.** Every per-server table references `core.guilds` with a cascading foreign
