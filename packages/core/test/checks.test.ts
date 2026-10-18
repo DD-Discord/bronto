@@ -103,7 +103,7 @@ describe('checkRoles', () => {
     appUrl.username = role;
     const database = createDatabase({ adminUrl: t.adminUrl, appUrl: appUrl.toString() });
     try {
-      return await checkRoles(database);
+      return await checkRoles(database, []);
     } finally {
       await database.end();
       await t.database.adminPool.query(`drop role ${role}`);
@@ -113,14 +113,14 @@ describe('checkRoles', () => {
   const uniqueRole = () => `r_${randomUUID().replaceAll('-', '')}`;
 
   it('accepts a plain app role', async () => {
-    expect(await checkRoles(t.database)).toEqual([]);
+    expect(await checkRoles(t.database, [])).toEqual([]);
   });
 
   it('flags an app role that is the admin role', async () => {
     const database = createDatabase({ adminUrl: t.adminUrl, appUrl: t.adminUrl });
     try {
       // The container's admin is the bootstrap superuser, which also has BYPASSRLS.
-      expect(await checkRoles(database)).toEqual([
+      expect(await checkRoles(database, [])).toEqual([
         expect.stringMatching(/is the admin role/),
         expect.stringMatching(/is a superuser/),
         expect.stringMatching(/BYPASSRLS/),
@@ -147,7 +147,7 @@ describe('checkRoles', () => {
     appUrl.username = uniqueRole();
     const database = createDatabase({ adminUrl: t.adminUrl, appUrl: appUrl.toString() });
     try {
-      expect(await checkRoles(database)).toEqual([expect.stringMatching(/does not exist/)]);
+      expect(await checkRoles(database, [])).toEqual([expect.stringMatching(/does not exist/)]);
     } finally {
       await database.end();
     }

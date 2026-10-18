@@ -8,7 +8,7 @@ import { createDatabase } from '../src/db/database.js';
 import { ensureModuleRoles, moduleRoleName } from '../src/db/module-roles.js';
 import { guilds } from '../src/db/schema.js';
 import { createScopedDb } from '../src/db/scoped.js';
-import { widgetItems } from './fixtures/widgets/schema.js';
+import { widgetCatalog, widgetItems } from './fixtures/widgets/schema.js';
 import { createTestDatabase, errorText, setUpSchema, type TestDatabase } from './test-db.js';
 
 let t: TestDatabase;
@@ -48,6 +48,20 @@ describe('module roles', () => {
       .run((tx) => tx.select().from(guilds))
       .catch((e: unknown) => e);
     expect(errorText(error)).toMatch(/permission denied/);
+  });
+
+  it("keeps a module role away from another module's tables", async () => {
+    await ensureModuleRoles(t.database.adminPool, t.database.appRole, ['other']);
+    const other = createScopedDb(t.database.app, 'g1', moduleRoleName(t.database.appRole, 'other'));
+    const attempts = [
+      () => other.run((tx) => tx.select().from(widgetItems)),
+      () => other.run((tx) => tx.insert(widgetItems).values({ id: 'x', label: 'X' })),
+      () => other.run((tx) => tx.select().from(widgetCatalog)),
+      () => other.run((tx) => tx.insert(widgetCatalog).values({ id: 'x', label: 'X' })),
+    ];
+    for (const attempt of attempts) {
+      expect(errorText(await attempt().catch((e: unknown) => e))).toMatch(/permission denied/);
+    }
   });
 
   it('keeps the role when switching guild', async () => {

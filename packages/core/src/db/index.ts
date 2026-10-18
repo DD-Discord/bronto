@@ -8,9 +8,8 @@ export {
   type SchemaProblemKind,
 } from './checks.js';
 export * from './constants.js';
-export * from './context.js';
+export { currentActor, currentGuildId, runInScope, type Scope } from './context.js';
 export * from './database.js';
-export { grantAppRole } from './grants.js';
 export { moduleRoleName } from './module-roles.js';
 export * from './guilds.js';
 export { coreMigrationTarget, migrateAll, type MigrationTarget } from './migrate.js';

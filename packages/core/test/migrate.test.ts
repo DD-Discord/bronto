@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { grantAppRole } from '../src/db/grants.js';
+import { grantRoles } from '../src/db/grants.js';
 import { coreMigrationTarget, migrateAll } from '../src/db/migrate.js';
 import { ensureModuleRoles, moduleRoleName } from '../src/db/module-roles.js';
 import { createTestDatabase, widgetsTarget, type TestDatabase } from './test-db.js';
@@ -57,7 +57,7 @@ describe('migrateAll', () => {
   });
 });
 
-describe('grantAppRole', () => {
+describe('grantRoles', () => {
   it('moves module schema access from the app role to the module role', async () => {
     const app = t.database.appRole;
     const role = moduleRoleName(app, 'widgets');
@@ -66,7 +66,7 @@ describe('grantAppRole', () => {
       `grant usage on schema widgets to ${app}; grant all on all tables in schema widgets to ${app};
        grant all on all sequences in schema widgets to ${app}`,
     );
-    await grantAppRole(t.database, ['core', 'widgets']);
+    await grantRoles(t.database.adminPool, app, ['core', 'widgets']);
     // has_table_privilege with a list is true when any of the privileges is held.
     const { rows } = await t.database.adminPool.query<{ app: boolean; module: boolean }>(
       `select has_schema_privilege($1, 'widgets', 'USAGE')

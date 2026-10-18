@@ -996,6 +996,9 @@ Details:
 
 ### Roles
 
+The database must be Postgres 16 or newer: module roles rely on its `SET` and `INHERIT` membership options, and
+`prepareDatabase` refuses to start on an older server.
+
 - **The admin role** owns the schemas, runs migrations, writes `core.guilds` and module switches, and deletes servers.
   It bypasses row-level security, as table owners do. It needs `CREATEROLE` to create the app and module roles.
 - **The app role** (`bot_app`) is the login role of the app connection. On its own it reaches only `core`: it can read

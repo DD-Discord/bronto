@@ -10,7 +10,7 @@ picks the modules it loads in its `config.yaml`.
 
 ## Running
 
-1. Create a Postgres database and an admin role that owns it. For local development,
+1. Create a Postgres 16 or newer database and an admin role that owns it. For local development,
    `docker compose -f compose.dev.yml up -d` does this. The bot connects with two roles: the admin role for schema
    work and an app role, subject to row-level security, for everything else. Each module with tables runs as its own
    role, `<app role>_<module>`, which the app role switches to. On start the bot creates the app role named in the app
@@ -50,7 +50,7 @@ When the bot leaves a guild, that guild's data is deleted after 30 days.
 Images are published as `ghcr.io/dd-discord/bronto:main`. Copy `compose.example.yml` (as `compose.yml`),
 `config.example.yaml` (as `config.yaml`) into a directory, create a `.env` with `DISCORD_TOKEN`,
 `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `BOT_APP_PASSWORD` and (for modules with buttons or modals)
-`INTERACTION_SECRET`, then:
+`INTERACTION_SECRET`, then (the bundled database is Postgres 18; an external one must be 16 or newer):
 
 ```bash
 docker compose up -d

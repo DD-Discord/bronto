@@ -28,7 +28,7 @@ export interface ModuleContext<TConfig = any> {
 }
 
 /**
- * Context of one handler run for one guild. In the context an API factory receives, `guildId`, `actorId`, `db`, `queue`
+ * Context of one handler run for one guild. In the context an API factory receives, `guildId`, `actorId`, `db`, `queue`,
  * `emit` and `customId` resolve to the calling handler's run at each access and throw outside a handler.
  */
 export interface HandlerContext<TConfig = any> extends ModuleContext<TConfig> {

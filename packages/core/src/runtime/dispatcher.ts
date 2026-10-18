@@ -193,6 +193,9 @@ export class Dispatcher {
         afterCommit(() => this.deliver(event, payload, guildId, actorId));
       },
       customId: (component, args = [], target = {}) => {
+        if (component.owner === null) {
+          throw new Error(`Component "${component.name}" is not part of a module yet; list it in defineModule.`);
+        }
         if (component.owner !== runtime.name) {
           throw new Error(`Module "${runtime.name}" cannot sign components of module "${component.owner}".`);
         }

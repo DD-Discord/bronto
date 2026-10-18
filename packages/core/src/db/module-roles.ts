@@ -19,7 +19,8 @@ export function moduleRoleName(appRole: string, module: string): string {
 
 /**
  * Creates missing module roles and lets the app role SET (not inherit) them. Safe to run concurrently. An admin that
- * may not create roles or grant them leaves them missing; checkRoles reports it.
+ * may not create roles or grant them leaves them missing, and the remaining roles are still tried; checkRoles reports
+ * the missing ones.
  */
 export async function ensureModuleRoles(admin: Queryable, appRole: string, modules: string[]): Promise<void> {
   for (const module of modules) {
@@ -34,10 +35,10 @@ export async function ensureModuleRoles(admin: Queryable, appRole: string, modul
     );
     const state = rows[0]!;
     if (state.granted) continue;
-    if (!state.exists && !(await runTolerant(admin, `create role ${quoteIdent(role)} nologin`))) return;
+    if (!state.exists && !(await runTolerant(admin, `create role ${quoteIdent(role)} nologin`))) continue;
     // INHERIT FALSE: the app role gets the module's privileges only after SET ROLE inside ScopedDb.run.
     const grant = `grant ${quoteIdent(role)} to ${quoteIdent(appRole)} with inherit false, set true`;
-    if (!(await runTolerant(admin, grant))) return;
+    if (!(await runTolerant(admin, grant))) continue;
   }
 }
 

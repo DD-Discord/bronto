@@ -28,7 +28,6 @@ export const REPLY_FLAGS = MessageFlags.SuppressEmbeds | MessageFlags.SuppressNo
 // Discord accepts SuppressNotifications only on new messages, not on edits.
 const EDIT_FLAGS = MessageFlags.SuppressEmbeds | MessageFlags.IsComponentsV2;
 
-
 export type Reply = string | ReplyMessage;
 
 export type ModalPayload = JSONEncodable<APIModalInteractionResponseCallbackData> | APIModalInteractionResponseCallbackData;

@@ -22,7 +22,7 @@ afterAll(async () => {
 
 describe('checkRoles', () => {
   it('accepts a separate app role', async () => {
-    expect(await checkRoles(t.database)).toEqual([]);
+    expect(await checkRoles(t.database, [])).toEqual([]);
   });
 
   it('flags an app role that is a member of the admin role', async () => {
@@ -31,7 +31,7 @@ describe('checkRoles', () => {
     url.password = 'pw';
     const database = createDatabase({ adminUrl: t.adminUrl, appUrl: url.toString() });
     try {
-      expect(await checkRoles(database)).toEqual([
+      expect(await checkRoles(database, [])).toEqual([
         `App role "${member}" is a member of the admin role "${admin}", so it bypasses RLS on the admin role's tables.`,
       ]);
     } finally {

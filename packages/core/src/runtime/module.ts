@@ -44,8 +44,8 @@ export interface ModuleDefinition<TConfig = any, TApi = unknown> {
   /** Discord permissions the bot needs for this module; missing ones are logged when a guild is set up. */
   botPermissions?: bigint[];
   /**
-   * Built once at startup; `guildId`, `actorId`, `db`, `queue` and `emit` resolve to the calling handler's run, with
-   * this module's database role and events.
+   * Built once at startup; `guildId`, `actorId`, `db`, `queue`, `emit` and `customId` resolve to the calling handler's
+   * run, with this module's database role and events.
    */
   api?: (ctx: HandlerContext<TConfig>) => TApi;
   hooks?: ModuleHooks<TConfig>;

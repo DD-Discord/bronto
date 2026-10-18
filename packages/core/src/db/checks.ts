@@ -91,7 +91,7 @@ interface RoleState {
  * Finds app role and module role setups that would make RLS ineffective or block module work. `modules` names the
  * loaded modules that have a database. Returns one message per problem.
  */
-export async function checkRoles(database: Database, modules: string[] = []): Promise<string[]> {
+export async function checkRoles(database: Database, modules: string[]): Promise<string[]> {
   const role = database.appRole;
   const state = await roleState(database, role, role);
   if (!state.exists) return [`App role "${role}" does not exist.`];

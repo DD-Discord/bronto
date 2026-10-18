@@ -80,7 +80,15 @@ describe('createModuleRuntimes', () => {
       },
     });
     createModuleRuntimes([loaded(reader)], services());
-    for (const read of [() => ctx!.guildId, () => ctx!.actorId, () => ctx!.db, () => ctx!.queue, () => ctx!.emit]) {
+    const reads = [
+      () => ctx!.guildId,
+      () => ctx!.actorId,
+      () => ctx!.db,
+      () => ctx!.queue,
+      () => ctx!.emit,
+      () => ctx!.customId,
+    ];
+    for (const read of reads) {
       expect(read).toThrow('A module API was used outside a handler.');
     }
   });

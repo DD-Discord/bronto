@@ -13,10 +13,6 @@ const CORE = 'core';
  * access to core's global tables such as core.guilds. A module whose role does not exist is skipped; checkRoles reports
  * it. Not safe to run concurrently: at startup use prepareDatabase, which runs it under the migration lock.
  */
-export async function grantAppRole(database: Database, modules: string[]): Promise<void> {
-  await grantRoles(database.adminPool, database.appRole, modules);
-}
-
 export async function grantRoles(admin: Queryable, appRole: string, modules: string[]): Promise<void> {
   const app = quoteIdent(appRole);
   for (const schema of modules) {

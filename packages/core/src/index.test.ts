@@ -5,7 +5,7 @@ describe('@bronto/core exports', () => {
   it('exposes the config and db API', () => {
     for (const name of [
       'loadConfig', 'parseConfig', 'ConfigError', 'substituteEnv',
-      'createDatabase', 'prepareDatabase', 'migrateAll', 'coreMigrationTarget', 'grantAppRole', 'createScopedDb',
+      'createDatabase', 'prepareDatabase', 'migrateAll', 'coreMigrationTarget', 'createScopedDb',
       'guildTable', 'globalTable', 'globalTableNames', 'auditColumns', 'runInScope', 'currentGuildId', 'currentActor',
       'core', 'guilds', 'guildModules',
       'upsertGuild', 'markGuildLeft', 'markMissingGuildsLeft', 'guildExists', 'guildsDueForPurge', 'purgeGuildIfDue', 'deleteGuildRow',
