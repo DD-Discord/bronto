@@ -169,7 +169,7 @@ describe('/sticky delete', () => {
   it('deletes the sticky, its post and its webhook', async () => {
     await say('create', { channel: channel(CHANNEL), template: link() });
     const [row] = await stickyRows(t);
-    expect(contents(await say('delete'))).toEqual([`**Sticky deleted:** <#${CHANNEL}>`]);
+    expect(contents(await say('delete', { channel: channel(CHANNEL) }))).toEqual([`**Sticky deleted:** <#${CHANNEL}>`]);
     expect(discord.liveMessages()).toEqual([]);
     expect(discord.deletedWebhooks).toEqual([row!.webhookId]);
     expect(await stickyRows(t)).toEqual([]);
@@ -181,7 +181,7 @@ describe('/sticky delete', () => {
   it('keeps a webhook another sticky still uses', async () => {
     await say('create', { channel: channel(CHANNEL), template: link() });
     await say('create', { channel: channel(THREAD, CHANNEL), template: link() });
-    await say('delete', {}, THREAD);
+    await say('delete', { channel: channel(THREAD, CHANNEL) }, THREAD);
     expect(discord.deletedWebhooks).toEqual([]);
     expect(discord.liveMessages(THREAD)).toEqual([]);
     expect(discord.liveMessages(CHANNEL)).toHaveLength(1);
@@ -191,7 +191,7 @@ describe('/sticky delete', () => {
     await say('create', { channel: channel(CHANNEL), template: link() });
     const [row] = await stickyRows(t);
     discord.failDeleteMessage = true;
-    expect(contents(await say('delete'))).toEqual([`**Sticky deleted:** <#${CHANNEL}>`]);
+    expect(contents(await say('delete', { channel: channel(CHANNEL) }))).toEqual([`**Sticky deleted:** <#${CHANNEL}>`]);
     expect(discord.deletedWebhooks).toEqual([row!.webhookId]);
     expect(sb.lines).toContainEqual(expect.objectContaining({ level: 40, msg: 'Deleting the sticky post failed' }));
   });
@@ -201,7 +201,7 @@ describe('/sticky delete', () => {
     const [row] = await stickyRows(t);
     const [post] = discord.liveMessages();
     discord.removeWebhook(row!.webhookId);
-    expect(contents(await say('delete'))).toEqual([`**Sticky deleted:** <#${CHANNEL}>`]);
+    expect(contents(await say('delete', { channel: channel(CHANNEL) }))).toEqual([`**Sticky deleted:** <#${CHANNEL}>`]);
     expect(discord.liveMessages()).toEqual([]);
     expect(discord.botDeleted).toContain(post!);
   });
@@ -223,7 +223,7 @@ describe('/sticky delete', () => {
     };
     sb.client.emit(Events.MessageCreate, message(CHANNEL));
     await inRecovery;
-    const fake = fakeCommand({ command: 'sticky', subcommand: 'delete', guildId: GUILD, channelId: CHANNEL, userId: USER, options: {} });
+    const fake = fakeCommand({ command: 'sticky', subcommand: 'delete', guildId: GUILD, channelId: CHANNEL, userId: USER, options: { channel: channel(CHANNEL) } });
     sb.client.emit(Events.InteractionCreate, fake);
     await sleep(100);
     release();
@@ -247,7 +247,7 @@ describe('/sticky delete', () => {
     await say('create', { channel: channel(CHANNEL), template: link(), debounce: 80 });
     sb.client.emit(Events.MessageCreate, message(CHANNEL));
     await sb.bot.idle();
-    await say('delete');
+    await say('delete', { channel: channel(CHANNEL) });
     await sleep(150);
     await sb.bot.idle();
     expect(discord.sent).toHaveLength(1);

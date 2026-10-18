@@ -18,7 +18,7 @@ export interface CrudKey<TName extends string, TValue> {
   toKey: (value: TValue) => string;
   /** How a key appears in messages; `` `key` `` by default. */
   format?: (key: string) => string;
-  /** Key `show` and `delete` use when the option is omitted, e.g. the current channel. */
+  /** Key `show` uses when the option is omitted, e.g. the current channel. Other subcommands always need the option. */
   fallback?: (ctx: CommandContext) => string | null;
   /** Generates keys for `create`, which then has no key option. */
   generate?: () => string;
@@ -221,7 +221,7 @@ export function crudSubcommands<
   };
 
   const remove = async (ctx: CommandContext, raw: Record<string, unknown>): Promise<void> => {
-    const recordKey = keyFrom(ctx, raw, true);
+    const recordKey = keyFrom(ctx, raw, false);
     const record = await load(ctx, recordKey);
     await hooks.beforeDelete?.(ctx, record);
     const deleted = await ctx.db.run(async (tx) => {
@@ -256,7 +256,7 @@ export function crudSubcommands<
     delete: defineSubcommand({
       description: describe('delete', `Deletes ${article(lower)}`),
       ephemeral,
-      options: keyed(key.fallback === undefined),
+      options: keyed(true),
       execute: remove,
     }),
   };

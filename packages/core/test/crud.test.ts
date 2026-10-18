@@ -138,7 +138,7 @@ describe('crudSubcommands definitions', () => {
       edit: ['id!*', 'label', 'count'],
       show: ['id*'],
       list: [],
-      delete: ['id*'],
+      delete: ['id!*'],
     });
     expect((json.options as Array<{ type: number }>).every((sub) => sub.type === ApplicationCommandOptionType.Subcommand)).toBe(true);
   });
@@ -281,6 +281,13 @@ describe('show, list and delete', () => {
     await say('widget', 'create', { id: 'w1', label: 'vanish' });
     expect(contents(await say('widget', 'delete', { id: 'w1' }))).toEqual(['There is no widget for `w1`.']);
     expect(await rows()).toEqual([]);
+  });
+
+  it('needs the key to delete even when show falls back to the channel', async () => {
+    await say('widget', 'create', { id: 'w1', label: 'Blue' });
+    // The key option is required on delete, so a missing value never reaches the handler.
+    expect(contents(await say('widget', 'delete', {}, 'w1'))).toEqual(['Something went wrong. The error was logged.']);
+    expect((await rows()).map((row) => row.id)).toEqual(['w1']);
   });
 
   it('deletes a record after beforeDelete', async () => {

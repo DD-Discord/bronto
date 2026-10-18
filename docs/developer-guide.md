@@ -652,8 +652,11 @@ What you get:
 
 - **Required options:** `create` requires every field without a `default`; `edit` takes any subset.
 - **Key option:** string keys get autocomplete from `formatShort`. A key can come from a non-string option, such as a
-  channel (`toKey: (channel) => channel.id`), and `fallback: (ctx) => ctx.channelId` makes `show` and `delete` default
-  to the current channel.
+  channel (`toKey: (channel) => channel.id`).
+- **`generate`:** with `generate: () => randomUUID()`, `create` gets no key option and `generate()` makes the key. Use it
+  for internal IDs, not for keys the user chooses, such as a channel.
+- **`fallback`:** `fallback: (ctx) => ctx.channelId` makes `show` default to the current channel. `create`, `edit` and
+  `delete` always need the option, so nothing is changed or deleted "here" by accident.
 - **Replies:** embeds built by `formatFull`, which gets a base embed with a stable color per record. Answers are
   private by default (`ephemeral: false` changes that). Long lists are split across messages.
 - **Customizing:** `omit: ['edit']` leaves a subcommand out, `override: { list: mySubcommand }` replaces one, and

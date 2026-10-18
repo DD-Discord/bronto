@@ -27,7 +27,7 @@ below the new message. The sticky is a copy of a template message (text and embe
 | `/sticky edit channel [template] [ignore-bots] [silent] [debounce]` | Changes a sticky; a new template is read again |
 | `/sticky show [channel]` | Shows a sticky (default: this channel) |
 | `/sticky list` | Lists the stickies of this server |
-| `/sticky delete [channel]` | Deletes a sticky, its post and its webhook (unless another sticky shares it) |
+| `/sticky delete channel` | Deletes a sticky, its post and its webhook (unless another sticky shares it) |
 
 - `ignore-bots` (default yes): messages from bots and system messages (joins, pins, boosts) don't move the sticky.
 - `silent` (default yes): reposts don't notify.
