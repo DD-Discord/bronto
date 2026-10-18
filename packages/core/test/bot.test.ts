@@ -46,15 +46,14 @@ function makeBot(modules: ModuleDefinition[], database: Database = t.database, p
 /** Widgets with a /widgets command and recorded guildReady calls. */
 function commandWidgets(calls: string[]): ModuleDefinition {
   return widgetsModule({
-    commands: [
-      defineCommand({
-        name: 'widgets',
+    commands: {
+      widgets: defineCommand({
         description: 'Widgets',
         execute: async (ctx) => {
           await ctx.reply(`widgets in ${ctx.guildId} for ${ctx.actorId}`);
         },
       }),
-    ],
+    },
     hooks: {
       guildReady: (ctx) => {
         calls.push(`ready:${ctx.guildId}`);
@@ -396,8 +395,8 @@ describe('createBot', () => {
   });
 
   it('refuses two modules defining the same command', () => {
-    const clash = defineCommand({ name: 'widgets', description: 'Clash', execute: () => undefined });
-    const other = widgetsModule({ name: 'gadgets', db: undefined, commands: [clash] });
+    const clash = defineCommand({ description: 'Clash', execute: () => undefined });
+    const other = widgetsModule({ name: 'gadgets', db: undefined, commands: { widgets: clash } });
     expect(() => makeBot([commandWidgets([]), other])).toThrow(ConfigError);
   });
 });

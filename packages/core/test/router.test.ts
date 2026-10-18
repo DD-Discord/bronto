@@ -31,7 +31,6 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const ran: string[] = [];
 
 const demoCommand = defineCommand({
-  name: 'demo',
   description: 'Demo',
   subcommands: {
     echo: defineSubcommand({
@@ -124,7 +123,7 @@ const form = defineModal({
   },
 });
 
-const demo = defineModule({ name: 'demo', commands: [demoCommand], components: [press, form] });
+const demo = defineModule({ name: 'demo', commands: { demo: demoCommand }, components: [press, form] });
 
 let t: TestDatabase;
 let lines: LogLine[];
@@ -139,7 +138,7 @@ function makeRouter(sources?: InteractionSource[], deferAfterMs = 40): Interacti
   const captured = captureLog();
   lines = captured.lines;
   return new InteractionRouter({
-    sources: sources ?? [{ runtime: runtimes[0]!, commands: [demoCommand], components: [press, form] }],
+    sources: sources ?? [{ runtime: runtimes[0]!, commands: { demo: demoCommand }, components: [press, form] }],
     dispatcher,
     enablement,
     guildGate: async () => {
@@ -373,23 +372,23 @@ describe('InteractionRouter components', () => {
 
 describe('InteractionRouter setup', () => {
   it('lists the commands of enabled modules plus always-enabled ones', async () => {
-    const coreCommand = defineCommand({ name: 'modules', description: 'Modules', execute: () => undefined });
+    const coreCommand = defineCommand({ description: 'Modules', execute: () => undefined });
     const core = createCoreRuntime({ client: new FakeClient().asClient(), database: t.database, log: captureLog().log });
     const router = makeRouter([
-      { runtime: core, commands: [coreCommand], components: [], alwaysEnabled: true },
-      { runtime: runtimes[0]!, commands: [demoCommand], components: [] },
+      { runtime: core, commands: { modules: coreCommand }, components: [], alwaysEnabled: true },
+      { runtime: runtimes[0]!, commands: { demo: demoCommand }, components: [] },
     ]);
-    expect(router.commandsFor('g1').map((command) => command.name)).toEqual(['modules', 'demo']);
+    expect(router.commandsFor('g1').map(([name]) => name)).toEqual(['modules', 'demo']);
     await enablement.set('g1', 'demo', false);
-    expect(router.commandsFor('g1').map((command) => command.name)).toEqual(['modules']);
+    expect(router.commandsFor('g1').map(([name]) => name)).toEqual(['modules']);
   });
 
   it('refuses two modules defining the same command', () => {
     const error = (() => {
       try {
         makeRouter([
-          { runtime: runtimes[0]!, commands: [demoCommand], components: [] },
-          { runtime: { ...runtimes[0]!, name: 'other' }, commands: [demoCommand], components: [] },
+          { runtime: runtimes[0]!, commands: { demo: demoCommand }, components: [] },
+          { runtime: { ...runtimes[0]!, name: 'other' }, commands: { demo: demoCommand }, components: [] },
         ]);
       } catch (caught) {
         return caught;
@@ -402,7 +401,6 @@ describe('InteractionRouter setup', () => {
 
   it('refuses commands whose JSON Discord would reject', () => {
     const bad: CommandDefinition = {
-      name: 'bad',
       description: 'Bad',
       permissions: null,
       nsfw: false,
@@ -410,7 +408,7 @@ describe('InteractionRouter setup', () => {
       subcommands: {},
       groups: {},
     };
-    expect(() => makeRouter([{ runtime: runtimes[0]!, commands: [demoCommand, bad], components: [] }])).toThrow(
+    expect(() => makeRouter([{ runtime: runtimes[0]!, commands: { demo: demoCommand, bad }, components: [] }])).toThrow(
       expect.objectContaining({
         problems: ['modules: command /bad (demo): Option name "ignoreBots" must be 1 to 32 lowercase letters, digits, "-" or "_".'],
       }),

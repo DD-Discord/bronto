@@ -68,10 +68,11 @@ describe('defineModule interactions', () => {
     );
   });
 
-  it('refuses duplicate command and component names', () => {
-    const a = defineCommand({ name: 'same', description: 'a', execute: () => undefined });
-    const b = defineCommand({ name: 'same', description: 'b', execute: () => undefined });
-    expect(() => defineModule({ name: 'dupe', commands: [a, b] })).toThrow('Command "same" is defined twice');
+  it('validates commands under their record key', () => {
+    expect(() => defineModule({ name: 'cmds', commands: { 'Bad Name': defineCommand({ description: 'x', execute: () => undefined }) } })).toThrow();
+  });
+
+  it('refuses duplicate component names', () => {
     const x = defineButton({ name: 'x', execute: () => undefined });
     const y = defineButton({ name: 'x', execute: () => undefined });
     expect(() => defineModule({ name: 'dupe2', components: [x, y] })).toThrow('Button "x" is defined twice');

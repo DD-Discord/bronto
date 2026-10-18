@@ -67,7 +67,7 @@ export default defineModule({
   intents: [...],                // gateway intents it needs
   config: zodSchema,             // validates its section of config.yaml
   db: { schema, migrations },    // its tables and migration folder
-  commands: [...],               // slash commands
+  commands: { name: ... },       // slash commands, keyed by name
   components: [...],             // buttons and modals
   listeners: [on(...)],          // Discord events and other modules' events
   events: {...},                 // events it emits
@@ -352,12 +352,13 @@ const show = defineSubcommand({
 
 export default defineModule<KarmaConfig>({
   // ...
-  commands: [defineCommand({ name: 'karma', description: 'Thank people who helped you', subcommands: { give, show } })],
+  commands: { karma: defineCommand({ description: 'Thank people who helped you', subcommands: { give, show } }) },
 });
 ```
 
 ### Defining commands
 
+- Command names are record keys, like subcommands, groups and options.
 - A command has either its own `execute` and `options`, or `subcommands` and/or `groups` (`/karma admin reset`), never
   both.
 - `permissions: PermissionFlagsBits.ManageMessages` hides the command from members without that permission. Server
@@ -626,8 +627,8 @@ export const noteEntity = defineEntity({
   formatFull: (note, base) => base().addFields({ name: 'Text', value: truncate(note.body, 1024) }),
 });
 
+// Register it as `commands: { notes: … }` in defineModule.
 defineCommand({
-  name: 'notes',
   description: 'Shared notes of this server',
   permissions: PermissionFlagsBits.ManageMessages,
   subcommands: {

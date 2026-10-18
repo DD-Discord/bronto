@@ -11,7 +11,7 @@ import type { ModuleRuntime } from '../runtime/context.js';
 import type { Dispatcher } from '../runtime/dispatcher.js';
 import type { ModuleEnablement } from '../runtime/enablement.js';
 import type { HandlerContext } from '../runtime/types.js';
-import { commandToJson, findHandler, subcommandPath, type CommandDefinition } from './commands.js';
+import { checkCommand, commandToJson, findHandler, subcommandPath, type CommandDefinition } from './commands.js';
 import { parseCustomId, type ComponentDefinition } from './components.js';
 import { interactionContext, type ButtonContext, type CommandContext, type ModalContext } from './context.js';
 import { isUserError } from './errors.js';
@@ -29,7 +29,7 @@ const MAX_CHOICE_LENGTH = 100;
 
 export interface InteractionSource {
   runtime: ModuleRuntime;
-  commands: CommandDefinition[];
+  commands: Record<string, CommandDefinition>;
   components: ComponentDefinition[];
   /** Core's own commands: never switched off per guild. */
   alwaysEnabled?: boolean;
@@ -71,21 +71,22 @@ export class InteractionRouter {
     this.deferAfterMs = options.deferAfterMs ?? 2000;
     const problems: string[] = [];
     for (const source of options.sources) {
-      for (const command of source.commands) {
+      for (const [name, command] of Object.entries(source.commands)) {
         // Sync builds this JSON per guild; checking it at startup keeps one bad command from failing every sync.
         try {
-          commandToJson(command);
+          checkCommand(name, command);
+          commandToJson(name, command);
         } catch (error) {
-          problems.push(`modules: command /${command.name} (${source.runtime.name}): ${(error as Error).message}`);
+          problems.push(`modules: command /${name} (${source.runtime.name}): ${(error as Error).message}`);
         }
-        const existing = this.commands.get(command.name);
+        const existing = this.commands.get(name);
         if (existing !== undefined) {
           problems.push(
-            `modules: command /${command.name} is defined by both "${existing.source.runtime.name}" and "${source.runtime.name}"`,
+            `modules: command /${name} is defined by both "${existing.source.runtime.name}" and "${source.runtime.name}"`,
           );
           continue;
         }
-        this.commands.set(command.name, { source, value: command });
+        this.commands.set(name, { source, value: command });
       }
       for (const component of source.components) {
         this.components.set(componentKey(source.runtime.name, component.kind, component.name), { source, value: component });
@@ -94,8 +95,10 @@ export class InteractionRouter {
     if (problems.length > 0) throw new ConfigError(problems);
   }
 
-  commandsFor(guildId: string): CommandDefinition[] {
-    return [...this.commands.values()].filter(({ source }) => this.enabled(source, guildId)).map(({ value }) => value);
+  commandsFor(guildId: string): Array<[string, CommandDefinition]> {
+    return [...this.commands.entries()]
+      .filter(([, { source }]) => this.enabled(source, guildId))
+      .map(([name, { value }]): [string, CommandDefinition] => [name, value]);
   }
 
   async handle(interaction: Interaction): Promise<void> {

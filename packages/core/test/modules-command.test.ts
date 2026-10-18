@@ -42,7 +42,7 @@ function build() {
     setModuleEnabled: (guildId, module, enabled, actorId) => lifecycle.setModuleEnabled(guildId, module, enabled, actorId),
   });
   const router = new InteractionRouter({
-    sources: [{ runtime: createCoreRuntime(services), commands: [command], components: [], alwaysEnabled: true }],
+    sources: [{ runtime: createCoreRuntime(services), commands: { modules: command }, components: [], alwaysEnabled: true }],
     dispatcher,
     enablement,
     guildGate: async (guildId) => {
@@ -65,7 +65,7 @@ function build() {
 
 describe('/modules', () => {
   it('is for administrators', () => {
-    expect(commandToJson(build().command).default_member_permissions).toBe(String(PermissionFlagsBits.Administrator));
+    expect(commandToJson('modules', build().command).default_member_permissions).toBe(String(PermissionFlagsBits.Administrator));
   });
 
   it('lists the modules and their state in this server', async () => {

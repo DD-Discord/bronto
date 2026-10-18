@@ -30,7 +30,6 @@ const widgets = defineEntity({
 });
 
 const widgetCommand = defineCommand({
-  name: 'widget',
   description: 'Widgets',
   subcommands: crudSubcommands(widgets, {
     key: { name: 'id', option: opt.string({ description: 'Widget ID' }), toKey: (value) => value, fallback: (ctx) => ctx.channelId },
@@ -63,7 +62,6 @@ const widgetCommand = defineCommand({
 });
 
 const gadgetCommand = defineCommand({
-  name: 'gadget',
   description: 'Gadgets',
   subcommands: crudSubcommands(widgets, {
     key: { name: 'gadget', option: opt.string({ description: 'Gadget' }), toKey: (value) => value, generate: () => `gen-${++generated}` },
@@ -83,7 +81,7 @@ beforeAll(async () => {
   await upsertGuild(t.database.admin, 'g1');
   await upsertGuild(t.database.admin, 'g2');
   const { log } = captureLog();
-  const definition = widgetsModule({ commands: [widgetCommand, gadgetCommand] });
+  const definition = widgetsModule({ commands: { widget: widgetCommand, gadget: gadgetCommand } });
   const runtimes = createModuleRuntimes([{ packageName: '@test/widgets', definition, config: {} }], {
     client: {} as Client,
     database: t.database,
@@ -92,7 +90,7 @@ beforeAll(async () => {
   const enablement = new ModuleEnablement(t.database.admin);
   const dispatcher = new Dispatcher({ runtimes, database: t.database, enablement, queue: new KeyedQueue(() => undefined) });
   router = new InteractionRouter({
-    sources: [{ runtime: runtimes[0]!, commands: [widgetCommand, gadgetCommand], components: [] }],
+    sources: [{ runtime: runtimes[0]!, commands: { widget: widgetCommand, gadget: gadgetCommand }, components: [] }],
     dispatcher,
     enablement,
     guildGate: async () => true,
@@ -129,7 +127,7 @@ async function rows() {
 
 describe('crudSubcommands definitions', () => {
   it('builds create, edit, show, list and delete with the right required options', () => {
-    const json = commandToJson(widgetCommand);
+    const json = commandToJson('widget', widgetCommand);
     const options = Object.fromEntries(
       (json.options as Array<{ name: string; options: Array<{ name: string; required: boolean; autocomplete?: boolean }> }>).map(
         (sub) => [sub.name, sub.options.map((option) => `${option.name}${option.required ? '!' : ''}${option.autocomplete ? '*' : ''}`)],
@@ -146,7 +144,7 @@ describe('crudSubcommands definitions', () => {
   });
 
   it('omits and overrides subcommands, and skips the key option for generated keys', () => {
-    const json = commandToJson(gadgetCommand);
+    const json = commandToJson('gadget', gadgetCommand);
     const subs = json.options as Array<{ name: string; description: string; options: Array<{ name: string }> }>;
     expect(subs.map((sub) => sub.name)).toEqual(['create', 'show', 'list', 'delete']);
     expect(subs[0]!.options.map((option) => option.name)).toEqual(['label']);

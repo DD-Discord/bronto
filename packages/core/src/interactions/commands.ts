@@ -28,7 +28,6 @@ export interface SubcommandGroup {
 }
 
 interface CommandBase {
-  name: string;
   description: string;
   /** Members need these permissions to see the command (`default_member_permissions`); server admins can change it. */
   permissions?: bigint | null;
@@ -46,7 +45,6 @@ export type CommandInput<O extends OptionMap> =
     });
 
 export interface CommandDefinition {
-  readonly name: string;
   readonly description: string;
   readonly permissions: bigint | null;
   readonly nsfw: boolean;
@@ -73,43 +71,45 @@ function checkSubcommands(owner: string, subcommands: Record<string, SubcommandD
   }
 }
 
+/** Shapes a command; `checkCommand` validates it under its name. */
 export function defineCommand<O extends OptionMap = {}>(input: CommandInput<O>): CommandDefinition {
-  assertName('Command', input.name);
-  assertDescription('Command', input.name, input.description);
-  const subcommands = input.subcommands ?? {};
-  const groups = input.groups ?? {};
-  const nested = Object.keys(subcommands).length + Object.keys(groups).length;
-  const hasExecute = typeof input.execute === 'function';
-  if (hasExecute === nested > 0) {
-    throw new Error(`Command "${input.name}" needs either execute or subcommands, not both or neither.`);
-  }
-  if (nested > MAX_PER_LEVEL) throw new Error(`Command "${input.name}" can have at most ${MAX_PER_LEVEL} subcommands and groups.`);
-  checkSubcommands(input.name, subcommands);
-  for (const [name, group] of Object.entries(groups)) {
-    if (Object.hasOwn(subcommands, name)) throw new Error(`Command "${input.name}": "${name}" is both a subcommand and a group.`);
-    assertName('Subcommand group', name);
-    assertDescription('Subcommand group', name, group.description);
-    const count = Object.keys(group.subcommands).length;
-    if (count === 0 || count > MAX_PER_LEVEL) {
-      throw new Error(`Subcommand group "${input.name} ${name}" needs 1 to ${MAX_PER_LEVEL} subcommands.`);
-    }
-    checkSubcommands(`${input.name} ${name}`, group.subcommands);
-  }
   let handler: SubcommandDefinition<any> | null = null;
-  if (hasExecute) {
+  if (typeof input.execute === 'function') {
     const leaf = input as SubcommandDefinition<O>;
-    checkOptions(`Command "${input.name}"`, leaf.options);
     handler = { description: input.description, options: leaf.options, ephemeral: leaf.ephemeral, execute: leaf.execute };
   }
   return {
-    name: input.name,
     description: input.description,
     permissions: input.permissions ?? null,
     nsfw: input.nsfw ?? false,
     handler,
-    subcommands,
-    groups,
+    subcommands: input.subcommands ?? {},
+    groups: input.groups ?? {},
   };
+}
+
+/** Validates a command registered under `name`; throws errors that name the command. */
+export function checkCommand(name: string, command: CommandDefinition): void {
+  assertName('Command', name);
+  assertDescription('Command', name, command.description);
+  const { subcommands, groups } = command;
+  const nested = Object.keys(subcommands).length + Object.keys(groups).length;
+  if ((command.handler !== null) === nested > 0) {
+    throw new Error(`Command "${name}" needs either execute or subcommands, not both or neither.`);
+  }
+  if (nested > MAX_PER_LEVEL) throw new Error(`Command "${name}" can have at most ${MAX_PER_LEVEL} subcommands and groups.`);
+  checkSubcommands(name, subcommands);
+  for (const [groupName, group] of Object.entries(groups)) {
+    if (Object.hasOwn(subcommands, groupName)) throw new Error(`Command "${name}": "${groupName}" is both a subcommand and a group.`);
+    assertName('Subcommand group', groupName);
+    assertDescription('Subcommand group', groupName, group.description);
+    const count = Object.keys(group.subcommands).length;
+    if (count === 0 || count > MAX_PER_LEVEL) {
+      throw new Error(`Subcommand group "${name} ${groupName}" needs 1 to ${MAX_PER_LEVEL} subcommands.`);
+    }
+    checkSubcommands(`${name} ${groupName}`, group.subcommands);
+  }
+  if (command.handler !== null) checkOptions(`Command "${name}"`, command.handler.options);
 }
 
 /** The handler for an invoked command path, or null when the command no longer has it. */
@@ -146,7 +146,10 @@ function subcommandsToJson(subcommands: Record<string, SubcommandDefinition<any>
   }));
 }
 
-export function commandToJson(command: CommandDefinition): RESTPostAPIChatInputApplicationCommandsJSONBody {
+export function commandToJson(
+  name: string,
+  command: CommandDefinition,
+): RESTPostAPIChatInputApplicationCommandsJSONBody {
   const options =
     command.handler !== null
       ? optionsToJson(command.handler.options)
@@ -161,7 +164,7 @@ export function commandToJson(command: CommandDefinition): RESTPostAPIChatInputA
         ];
   return {
     type: ApplicationCommandType.ChatInput,
-    name: command.name,
+    name,
     description: command.description,
     default_member_permissions: command.permissions === null ? null : String(command.permissions),
     nsfw: command.nsfw,

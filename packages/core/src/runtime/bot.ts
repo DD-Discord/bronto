@@ -90,10 +90,10 @@ export function createBot(options: BotOptions): Bot {
   });
   const router = new InteractionRouter({
     sources: [
-      { runtime: createCoreRuntime({ client, database, log }), commands: [modulesCommand], components: [], alwaysEnabled: true },
+      { runtime: createCoreRuntime({ client, database, log }), commands: { modules: modulesCommand }, components: [], alwaysEnabled: true },
       ...runtimes.map((runtime) => ({
         runtime,
-        commands: runtime.loaded.definition.commands ?? [],
+        commands: runtime.loaded.definition.commands ?? {},
         components: runtime.loaded.definition.components ?? [],
       })),
     ],
@@ -105,7 +105,7 @@ export function createBot(options: BotOptions): Bot {
   });
   const commands = new CommandSync({
     registry: restCommandRegistry(client),
-    desired: (guildId) => router.commandsFor(guildId).map(commandToJson),
+    desired: (guildId) => router.commandsFor(guildId).map(([name, command]) => commandToJson(name, command)),
     log,
   });
   const lifecycle = new GuildLifecycle({

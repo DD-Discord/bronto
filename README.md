@@ -79,7 +79,6 @@ in a Postgres schema named after the module.
 import { defineCommand, defineSubcommand, opt, UserError } from '@bronto/core';
 
 const greet = defineCommand({
-  name: 'greet',
   description: 'Greets someone',
   options: { who: opt.user({ description: 'Who to greet', required: true }) },
   execute: async (ctx, { who }) => {
@@ -89,7 +88,7 @@ const greet = defineCommand({
 });
 ```
 
-- List commands in `commands` and buttons/modals (`defineButton`, `defineModal`) in `components` of `defineModule`.
+- Put commands in `commands`, keyed by name (`commands: { greet }`), and buttons/modals (`defineButton`, `defineModal`) in `components` of `defineModule`.
   Use `defineSubcommand` and `subcommands`/`groups` for `/name sub`.
 - Answer through `ctx.reply`, `ctx.followUp`, `ctx.defer` and `ctx.showModal`, never through `ctx.interaction`.
   Commands that take longer than 2 seconds are deferred automatically; set `ephemeral: true` on a subcommand to keep

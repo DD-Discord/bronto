@@ -53,7 +53,6 @@ async function loadTemplate(ctx: StickyContext, discord: StickyDiscord, link: st
 
 export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition {
   return defineCommand({
-    name: 'sticky',
     description: 'Keeps a message at the bottom of a channel',
     permissions: PermissionFlagsBits.ManageMessages,
     subcommands: crudSubcommands(stickyEntity, {

@@ -56,7 +56,6 @@ export function createModulesCommand(options: ModulesCommandOptions): CommandDef
   }
 
   return defineCommand({
-    name: 'modules',
     description: 'Shows and switches the modules of this server',
     permissions: PermissionFlagsBits.Administrator,
     subcommands: {

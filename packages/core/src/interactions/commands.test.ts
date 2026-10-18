@@ -1,6 +1,6 @@
 import { ApplicationCommandOptionType, ApplicationCommandType, PermissionFlagsBits } from 'discord.js';
 import { describe, expect, it } from 'vitest';
-import { commandToJson, defineCommand, defineSubcommand, findHandler, subcommandPath } from './commands.js';
+import { checkCommand, commandToJson, defineCommand, defineSubcommand, findHandler, subcommandPath } from './commands.js';
 import { opt } from './options.js';
 
 const noop = () => undefined;
@@ -8,13 +8,12 @@ const noop = () => undefined;
 describe('defineCommand', () => {
   it('builds a leaf command with required options first', () => {
     const command = defineCommand({
-      name: 'ping',
       description: 'Checks the bot',
       permissions: PermissionFlagsBits.ManageMessages,
       options: { note: opt.string({ description: 'Note' }), times: opt.integer({ description: 'Times', required: true }) },
       execute: noop,
     });
-    expect(commandToJson(command)).toEqual({
+    expect(commandToJson('ping', command)).toEqual({
       type: ApplicationCommandType.ChatInput,
       name: 'ping',
       description: 'Checks the bot',
@@ -32,12 +31,11 @@ describe('defineCommand', () => {
     const create = defineSubcommand({ description: 'Creates', execute: noop });
     const add = defineSubcommand({ description: 'Adds', execute: noop });
     const command = defineCommand({
-      name: 'thing',
       description: 'Things',
       subcommands: { create },
       groups: { rules: { description: 'Rules', subcommands: { add } } },
     });
-    expect(commandToJson(command)).toMatchObject({
+    expect(commandToJson('thing', command)).toMatchObject({
       default_member_permissions: null,
       options: [
         { type: ApplicationCommandOptionType.Subcommand, name: 'create', description: 'Creates', options: [] },
@@ -59,43 +57,53 @@ describe('defineCommand', () => {
   });
 
   it('rejects invalid definitions', () => {
-    expect(() => defineCommand({ name: 'Bad', description: 'x', execute: noop })).toThrow('Command name "Bad"');
-    expect(() => defineCommand({ name: 'empty', description: 'x' } as never)).toThrow(
+    const check = (name: string, command: unknown) => () => checkCommand(name, command as never);
+    expect(check('Bad', defineCommand({ description: 'x', execute: noop }))).toThrow('Command name "Bad"');
+    expect(check('empty', defineCommand({ description: 'x' } as never))).toThrow(
       'Command "empty" needs either execute or subcommands',
     );
-    expect(() =>
-      defineCommand({ name: 'both', description: 'x', execute: noop, subcommands: { a: defineSubcommand({ description: 'a', execute: noop }) } } as never),
+    expect(
+      check('both', defineCommand({ description: 'x', execute: noop, subcommands: { a: defineSubcommand({ description: 'a', execute: noop }) } } as never)),
     ).toThrow('Command "both" needs either execute or subcommands');
     const many = Object.fromEntries(
       Array.from({ length: 26 }, (_, i) => [`o${i}`, opt.string({ description: 'x' })]),
     );
-    expect(() => defineCommand({ name: 'many', description: 'x', options: many, execute: noop })).toThrow(
-      'at most 25',
-    );
-    expect(() =>
-      defineCommand({
-        name: 'clash',
-        description: 'x',
-        subcommands: { a: defineSubcommand({ description: 'a', execute: noop }) },
-        groups: { a: { description: 'g', subcommands: { b: defineSubcommand({ description: 'b', execute: noop }) } } },
-      }),
+    expect(check('many', defineCommand({ description: 'x', options: many, execute: noop }))).toThrow('at most 25');
+    expect(
+      check(
+        'clash',
+        defineCommand({
+          description: 'x',
+          subcommands: { a: defineSubcommand({ description: 'a', execute: noop }) },
+          groups: { a: { description: 'g', subcommands: { b: defineSubcommand({ description: 'b', execute: noop }) } } },
+        }),
+      ),
     ).toThrow('"a" is both a subcommand and a group');
   });
 
-  it('rejects bad option names and descriptions when the command is defined', () => {
+  it('names the command in validation errors', () => {
+    const command = defineCommand({ description: 'Demo', subcommands: {} });
+    expect(() => checkCommand('demo', command)).toThrow('Command "demo" needs either execute or subcommands, not both or neither.');
+  });
+
+  it('rejects invalid command names', () => {
+    const command = defineCommand({ description: 'Demo', execute: noop });
+    expect(() => checkCommand('Bad Name', command)).toThrow();
+  });
+
+  it('rejects bad option names and descriptions', () => {
     const camel = { ignoreBots: opt.boolean({ description: 'Ignore bots' }) };
     expect(() =>
-      defineCommand({
-        name: 'cfg',
-        description: 'x',
-        subcommands: { set: defineSubcommand({ description: 'Sets', options: camel, execute: noop }) },
-      }),
+      checkCommand(
+        'cfg',
+        defineCommand({ description: 'x', subcommands: { set: defineSubcommand({ description: 'Sets', options: camel, execute: noop }) } }),
+      ),
     ).toThrow('Option name "ignoreBots"');
-    expect(() => defineCommand({ name: 'leaf', description: 'x', options: camel, execute: noop })).toThrow(
+    expect(() => checkCommand('leaf', defineCommand({ description: 'x', options: camel, execute: noop }))).toThrow(
       'Option name "ignoreBots"',
     );
     expect(() =>
-      defineCommand({ name: 'long', description: 'x', options: { note: opt.string({ description: 'n'.repeat(101) }) }, execute: noop }),
+      checkCommand('long', defineCommand({ description: 'x', options: { note: opt.string({ description: 'n'.repeat(101) }) }, execute: noop })),
     ).toThrow('Option "note" needs a description of 1 to 100 characters.');
   });
 });

@@ -93,9 +93,8 @@ const editText = defineSubcommand({
 export default defineModule({
   name: 'notes',
   db: { schema, migrations: new URL('../drizzle/', import.meta.url) },
-  commands: [
-    defineCommand({
-      name: 'notes',
+  commands: {
+    notes: defineCommand({
       description: 'Shared notes of this server',
       permissions: PermissionFlagsBits.ManageMessages,
       subcommands: {
@@ -110,6 +109,6 @@ export default defineModule({
         'edit-text': editText,
       },
     }),
-  ],
+  },
   components: [readButton, textForm],
 });

@@ -39,7 +39,7 @@ describe('@bronto/core exports', () => {
   it('exposes the interaction API', () => {
     for (const name of [
       'defineCommand', 'defineSubcommand', 'defineButton', 'defineModal', 'opt', 'UserError', 'isUserError',
-      'InteractionRouter', 'CommandSync', 'restCommandRegistry', 'createModulesCommand', 'commandToJson', 'Responder',
+      'InteractionRouter', 'CommandSync', 'restCommandRegistry', 'createModulesCommand', 'commandToJson', 'checkCommand', 'Responder',
       'batchLines', 'truncate', 'plainText', 'createCoreRuntime',
       'defineEntity', 'crudSubcommands', 'colorFromId', 'entityAutocomplete',
     ]) {

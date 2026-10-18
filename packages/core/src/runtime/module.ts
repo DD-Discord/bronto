@@ -1,7 +1,7 @@
 import type { GatewayIntentBits, Partials } from 'discord.js';
 import type { z } from 'zod';
 import { assertModuleName } from '../db/names.js';
-import type { CommandDefinition } from '../interactions/commands.js';
+import { checkCommand, type CommandDefinition } from '../interactions/commands.js';
 import type { ComponentDefinition } from '../interactions/components.js';
 import type { EventDefinition, Listener } from './events.js';
 import type { LegacyImporter } from './legacy.js';
@@ -37,8 +37,8 @@ export interface ModuleDefinition<TConfig = any, TApi = unknown> {
   };
   events?: Record<string, EventDefinition<any>>;
   listeners?: Listener[];
-  /** Top-level slash commands; registered in a guild while the module is enabled there. */
-  commands?: CommandDefinition[];
+  /** Top-level slash commands keyed by name; registered in a guild while the module is enabled there. */
+  commands?: Record<string, CommandDefinition>;
   /** Buttons and modals, routed by the custom-ID prefix `<module>:<name>`. */
   components?: ComponentDefinition[];
   /** Discord permissions the bot needs for this module; missing ones are logged when a guild is set up. */
@@ -64,11 +64,7 @@ export function defineModule<TConfig = Record<string, never>, TApi = undefined>(
     }
     event.owner = definition.name;
   }
-  const commandNames = new Set<string>();
-  for (const command of definition.commands ?? []) {
-    if (commandNames.has(command.name)) throw new Error(`Command "${command.name}" is defined twice in module "${definition.name}".`);
-    commandNames.add(command.name);
-  }
+  for (const [name, command] of Object.entries(definition.commands ?? {})) checkCommand(name, command);
   const componentNames = new Set<string>();
   for (const component of definition.components ?? []) {
     const label = component.kind === 'button' ? 'Button' : 'Modal';

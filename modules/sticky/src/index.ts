@@ -36,7 +36,7 @@ export function createStickyModule(options: StickyModuleOptions = {}): ModuleDef
       PermissionFlagsBits.ReadMessageHistory,
     ],
     listeners: [on(Events.MessageCreate, (ctx, message) => reposter.onMessage(ctx, message))],
-    commands: [createStickyCommand({ index, reposter, discord })],
+    commands: { sticky: createStickyCommand({ index, reposter, discord }) },
     importLegacy: (ctx, path) => importLegacyStickies(ctx, path, discordFor(ctx.client)),
     hooks: {
       guildReady: async (ctx) => {

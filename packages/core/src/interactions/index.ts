@@ -1,4 +1,5 @@
 export {
+  checkCommand,
   commandToJson,
   defineCommand,
   defineSubcommand,

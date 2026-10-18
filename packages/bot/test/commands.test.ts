@@ -78,10 +78,10 @@ function commandDeps(definitions: Record<string, ModuleDefinition>) {
 
 /** Two modules defining the same command, which createBot refuses. */
 function clashingModules(): Record<string, ModuleDefinition> {
-  const ping = defineCommand({ name: 'ping', description: 'Ping', execute: () => undefined });
+  const ping = defineCommand({ description: 'Ping', execute: () => undefined });
   return {
-    '@test/widgets': widgetsModule({ commands: [ping] }),
-    '@test/other': defineModule({ name: 'other', commands: [ping] }),
+    '@test/widgets': widgetsModule({ commands: { ping } }),
+    '@test/other': defineModule({ name: 'other', commands: { ping } }),
   };
 }
 
