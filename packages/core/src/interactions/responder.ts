@@ -17,6 +17,8 @@ export interface ReplyMessage {
   components?: BaseMessageOptions['components'];
   /** Visible only to the user. Ignored for the answer to a deferred interaction, which keeps the defer's visibility. */
   ephemeral?: boolean;
+  /** Users and roles this message may ping; nobody by default. `@everyone` and `@here` never ping. */
+  allowedMentions?: { users?: string[]; roles?: string[] };
 }
 
 export type Reply = string | ReplyMessage;
@@ -34,15 +36,20 @@ export interface ResponseTarget {
 
 type State = 'open' | 'deferred' | 'answered';
 
-// Replies never ping: content can come from users (names, notes) and must not mention @everyone or roles.
-const NO_PINGS = { parse: [] };
+// Content can come from users (names, notes), so nothing pings unless the reply names who may be pinged.
+function mentions(message: ReplyMessage): InteractionEditReplyOptions['allowedMentions'] {
+  const allowed: { parse: []; users?: string[]; roles?: string[] } = { parse: [] };
+  if (message.allowedMentions?.users !== undefined) allowed.users = [...message.allowedMentions.users];
+  if (message.allowedMentions?.roles !== undefined) allowed.roles = [...message.allowedMentions.roles];
+  return allowed;
+}
 
 function toMessage(reply: Reply): ReplyMessage {
   return typeof reply === 'string' ? { content: reply } : reply;
 }
 
 function body(message: ReplyMessage): InteractionEditReplyOptions {
-  const options: InteractionEditReplyOptions = { allowedMentions: NO_PINGS };
+  const options: InteractionEditReplyOptions = { allowedMentions: mentions(message) };
   if (message.content !== undefined) options.content = message.content;
   if (message.embeds !== undefined) options.embeds = message.embeds;
   if (message.components !== undefined) options.components = message.components;

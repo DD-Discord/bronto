@@ -23,6 +23,22 @@ describe('Responder', () => {
     ]);
   });
 
+  it('pings only the users and roles a reply allows', async () => {
+    const { fake, responder: r } = responder();
+    await r.send({ content: '<@1> <@&2> @everyone', allowedMentions: { users: ['1'], roles: ['2'] } });
+    expect(fake.responses[0]!.payload).toEqual({
+      content: '<@1> <@&2> @everyone',
+      allowedMentions: { parse: [], users: ['1'], roles: ['2'] },
+    });
+  });
+
+  it('keeps allowed mentions on the answer to a deferred interaction', async () => {
+    const { fake, responder: r } = responder();
+    await r.defer();
+    await r.send({ content: '<@1>', allowedMentions: { users: ['1'] } });
+    expect(fake.responses[1]!.payload).toEqual({ content: '<@1>', allowedMentions: { parse: [], users: ['1'] } });
+  });
+
   it('uses its default visibility', async () => {
     const { fake, responder: r } = responder(true);
     await r.send('private');

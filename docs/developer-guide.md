@@ -401,10 +401,11 @@ Answer only through the context:
 - `ctx.defer()` shows "thinking…".
 - `ctx.showModal(modal)` opens a form. It must be the first answer.
 
-A message is a string or `{ content, embeds, components, ephemeral }`. Answers follow these rules:
+A message is a string or `{ content, embeds, components, ephemeral, allowedMentions }`. Answers follow these rules:
 
-- **Nobody gets pinged.** User text can contain `@everyone`, so replies disable all mentions. `<@id>` still renders as
-  a mention, but doesn't notify.
+- **Nobody gets pinged by default.** User text can contain `@everyone`, so replies disable all mentions. `<@id>` still
+  renders as a mention, but doesn't notify. To ping on purpose, list who may be pinged:
+  `allowedMentions: { users: ['123'], roles: ['456'] }`. `@everyone` and `@here` never ping.
 - **Slow answers are deferred automatically.** Discord drops interactions that get no answer within 3 seconds, so
   after 2 seconds the router defers for you.
 - **Visibility:** `ephemeral: true` on a subcommand makes its answers and its automatic defer visible only to the user.
