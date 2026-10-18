@@ -114,7 +114,7 @@ describe('Dispatcher', () => {
     );
   });
 
-  it('delivers emitted events after the handler succeeds', async () => {
+  it('passes guild and actor to listeners of an event emitted outside a transaction', async () => {
     const result = await dispatcher.runHandler(runtime('alpha'), 'g1', 'u1', 'test', (ctx) => {
       ctx.emit(counted, { n: 1 });
     });
@@ -165,6 +165,23 @@ describe('Dispatcher', () => {
     });
     await dispatcher.idle();
     expect(seen.map((entry) => entry.detail)).toEqual([5]);
+  });
+
+  it('delivers an event emitted after its transaction settled at once', async () => {
+    await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', async (ctx) => {
+      await ctx.db.run(async () => {
+        setTimeout(() => ctx.emit(counted, { n: 7 }), 0);
+      });
+      await ctx.db
+        .run(async () => {
+          setTimeout(() => ctx.emit(counted, { n: 8 }), 0);
+          throw new Error('rollback');
+        })
+        .catch(() => undefined);
+      await vi.waitFor(() => expect(seen).toHaveLength(2));
+    });
+    await dispatcher.idle();
+    expect(seen.map((entry) => entry.detail).sort()).toEqual([7, 8]);
   });
 
   it('delivers an event emitted outside a transaction at once', async () => {

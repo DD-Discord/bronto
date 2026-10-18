@@ -5,7 +5,13 @@ export interface Scope {
   guildId: string | null;
   actorId: string | null;
   /** Deliveries waiting for the current transaction to commit; null outside a transaction. */
-  pendingEvents: Array<() => void> | null;
+  pendingEvents: PendingEvents | null;
+}
+
+/** The deliveries of one transaction; `open` is false once it has committed or rolled back. */
+export interface PendingEvents {
+  deliveries: Array<() => void>;
+  open: boolean;
 }
 
 const storage = new AsyncLocalStorage<Scope>();
@@ -27,6 +33,7 @@ export function currentActor(): string | null {
 /** Runs `deliver` after the current transaction commits, or now when there is none. */
 export function afterCommit(deliver: () => void): void {
   const pending = storage.getStore()?.pendingEvents ?? null;
-  if (pending === null) deliver();
-  else pending.push(deliver);
+  // Work that outlives its transaction counts as running outside one.
+  if (pending === null || !pending.open) deliver();
+  else pending.deliveries.push(deliver);
 }
