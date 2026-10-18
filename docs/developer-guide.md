@@ -133,7 +133,7 @@ points at the `.ts` file. Pin exact versions, the same ones the core uses:
 ```json
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src", "test", "drizzle.config.ts", "../../packages/core/test/global-setup.ts"]
+  "include": ["src", "test", "drizzle.config.ts"]
 }
 ```
 

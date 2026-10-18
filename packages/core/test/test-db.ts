@@ -1,3 +1,5 @@
+// Brings the vitest `inject('pgRootUrl')` declaration into every project that uses this helper.
+import type {} from './global-setup.js';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
