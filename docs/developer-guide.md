@@ -252,8 +252,8 @@ export const points = guildTable(
 Things to know:
 
 - **Global tables are shared by all servers.** A `globalTable` has no `guild_id` and no row-level security, so the
-  startup checks skip it. Use it sparingly. Only the owning module's role can write it, and a write affects every server, so keep it
-  for genuinely shared data. Core's global tables are read-only for handlers.
+  startup checks skip it. Use it sparingly. Only the owning module's role can write it, and a write affects
+  every server, so keep it for genuinely shared data. Core's global tables are read-only for handlers.
 - **Prefer `@bronto/core/tables` in schema files.** drizzle-kit loads schema files, and the main entry point pulls in
   discord.js, pino and the runtime. Importing from `@bronto/core` works too.
 - **Keys:** a Discord ID that is only unique within a server (a user, a member) needs `guildId` in its primary key or
