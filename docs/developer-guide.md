@@ -155,8 +155,9 @@ import { defineModule } from '@bronto/core';
 export default defineModule({ name: 'karma' });
 ```
 
-Module names become Postgres identifiers. They must start with a lowercase letter and may only contain lowercase
-letters, digits and `_`. `core` is reserved.
+Module names become Postgres schema names. A name must match `^[a-z][a-z0-9_]{0,62}$`: a lowercase letter first, then
+lowercase letters, digits and `_`, at most 63 characters. These names are reserved: `core`, `migrations`, `public`,
+`information_schema` and anything starting with `pg_`.
 
 To load the module:
 
