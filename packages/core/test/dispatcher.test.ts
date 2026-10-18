@@ -168,20 +168,37 @@ describe('Dispatcher', () => {
   });
 
   it('delivers an event emitted after its transaction settled at once', async () => {
-    await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', async (ctx) => {
+    const emitLater: Array<() => void> = [];
+    const result = await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', async (ctx) => {
       await ctx.db.run(async () => {
-        setTimeout(() => ctx.emit(counted, { n: 7 }), 0);
+        emitLater.push(() => ctx.emit(counted, { n: 7 }));
       });
       await ctx.db
         .run(async () => {
-          setTimeout(() => ctx.emit(counted, { n: 8 }), 0);
+          emitLater.push(() => ctx.emit(counted, { n: 8 }));
           throw new Error('rollback');
         })
         .catch(() => undefined);
-      await vi.waitFor(() => expect(seen).toHaveLength(2));
+      for (const emit of emitLater) emit();
     });
+    expect(result).toEqual({ ok: true });
     await dispatcher.idle();
-    expect(seen.map((entry) => entry.detail).sort()).toEqual([7, 8]);
+    expect(seen.map((entry) => entry.detail)).toEqual([7, 8]);
+  });
+
+  it('drops an event emitted while its transaction is open when it rolls back', async () => {
+    const result = await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', async (ctx) => {
+      await ctx
+        .db.run(async () => {
+          setTimeout(() => ctx.emit(counted, { n: 9 }), 0);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          throw new Error('rollback');
+        })
+        .catch(() => undefined);
+    });
+    expect(result).toEqual({ ok: true });
+    await dispatcher.idle();
+    expect(seen).toEqual([]);
   });
 
   it('delivers an event emitted outside a transaction at once', async () => {

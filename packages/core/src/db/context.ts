@@ -8,7 +8,7 @@ export interface Scope {
   pendingEvents: PendingEvents | null;
 }
 
-/** The deliveries of one transaction; `open` is false once it has committed or rolled back. */
+/** The deliveries of one transaction: an emit while `open` goes with the transaction; after it settled, it runs at once. */
 export interface PendingEvents {
   deliveries: Array<() => void>;
   open: boolean;
