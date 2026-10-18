@@ -1,6 +1,7 @@
 import { createBot, type Bot } from '@bronto/core';
-import { captureLog, fakeButton, fakeCommand, fakeModal, FakeClient } from '@bronto/core/testing';
+import { captureLog, fakeButton, fakeCommand, fakeModal, FakeClient, TEST_INTERACTION_SECRET } from '@bronto/core/testing';
 import { Events, type ActionRowBuilder, type ButtonBuilder, type ModalBuilder } from 'discord.js';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import notesModule from '../src/index.js';
@@ -15,7 +16,12 @@ beforeEach(async () => {
   client = new FakeClient();
   client.guilds.cache.set('g1', { id: 'g1', available: true });
   bot = createBot({
-    config: { discord: { token: 'token' }, database: { appUrl: t.appUrl, adminUrl: t.adminUrl }, modules: {} },
+    config: {
+      discord: { token: 'token' },
+      database: { appUrl: t.appUrl, adminUrl: t.adminUrl },
+      modules: {},
+      interactions: { secret: TEST_INTERACTION_SECRET },
+    },
     modules: [{ packageName: '@bronto/example-notes', definition: notesModule, config: {} }],
     database: t.database,
     client: client.asClient(),
@@ -55,7 +61,7 @@ describe('example notes module', () => {
     expect(message.content).toBe('**Rules**');
     expect(message.flags).toBeUndefined();
     const customId = (message.components[0]!.toJSON().components[0] as { custom_id: string }).custom_id;
-    expect(customId).toBe(`notes:text:${note!.id}`);
+    expect(customId).toMatch(new RegExp(`^notes:text:${note!.id}:[A-Za-z0-9_-]{11}$`));
 
     const read = await send(fakeButton({ customId, userId: 'u2' }));
     expect(read.responses[0]!.payload).toMatchObject({ content: 'Be nice' });
@@ -63,17 +69,28 @@ describe('example notes module', () => {
     const opened = await send(fakeCommand({ command: 'notes', subcommand: 'edit-text', options: { note: note!.id } }));
     expect(opened.responses[0]!.kind).toBe('showModal');
     const modal = (opened.responses[0]!.payload as ModalBuilder).toJSON();
-    expect(modal.custom_id).toBe(`notes:text:${note!.id}`);
+    expect(modal.custom_id).toMatch(new RegExp(`^notes:text:${note!.id}:[A-Za-z0-9_-]{11}$`));
     expect(modal.title).toBe('Rules');
 
-    const saved = await send(fakeModal({ customId: modal.custom_id, fields: { body: 'Be very nice' }, userId: 'u3' }));
+    // The form is bound to the user it was shown to.
+    const stolen = await send(fakeModal({ customId: modal.custom_id, fields: { body: 'Be mean' }, userId: 'u3' }));
+    expect(stolen.responses[0]!.payload).toMatchObject({ content: 'This no longer works.' });
+
+    const saved = await send(fakeModal({ customId: modal.custom_id, fields: { body: 'Be very nice' } }));
     expect(saved.responses[0]!.payload).toMatchObject({ content: '**Note updated.**' });
     const [updated] = await t.database.admin.select().from(notes);
-    expect(updated).toMatchObject({ body: 'Be very nice', updatedBy: 'u3' });
+    expect(updated).toMatchObject({ body: 'Be very nice', updatedBy: 'u1' });
   });
 
   it('refuses buttons for notes that are gone', async () => {
-    const read = await send(fakeButton({ customId: 'notes:text:missing' }));
+    const posted = await send(fakeCommand({ command: 'notes', subcommand: 'create', options: { title: 'Gone', text: 'Soon' } }));
+    expect(posted.responses[0]!.payload).toMatchObject({ content: '**Note created.**' });
+    const [note] = await t.database.admin.select().from(notes).where(eq(notes.title, 'Gone'));
+    const shown = await send(fakeCommand({ command: 'notes', subcommand: 'post', options: { note: note!.id } }));
+    const message = shown.responses[0]!.payload as { components: ActionRowBuilder<ButtonBuilder>[] };
+    const customId = (message.components[0]!.toJSON().components[0] as { custom_id: string }).custom_id;
+    await send(fakeCommand({ command: 'notes', subcommand: 'delete', options: { note: note!.id } }));
+    const read = await send(fakeButton({ customId }));
     expect(read.responses[0]!.payload).toMatchObject({ content: 'There is no such note.' });
   });
 });

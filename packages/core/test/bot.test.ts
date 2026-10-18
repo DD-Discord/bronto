@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConfigError } from '../src/config/errors.js';
 import { defineCommand } from '../src/interactions/commands.js';
+import { defineButton } from '../src/interactions/components.js';
 import { createDatabase, type Database } from '../src/db/database.js';
 import { markGuildLeft, upsertGuild } from '../src/db/guilds.js';
 import { guildModules, guilds } from '../src/db/schema.js';
@@ -10,7 +11,8 @@ import { createBot, StartupError, type Bot } from '../src/runtime/bot.js';
 import { coreEvents, on } from '../src/runtime/events.js';
 import type { ModuleDefinition } from '../src/runtime/module.js';
 import { FakeClient } from '../src/testing/fake-client.js';
-import { fakeCommand } from '../src/testing/interactions.js';
+import { fakeButton, fakeCommand } from '../src/testing/interactions.js';
+import { TEST_INTERACTION_SECRET } from '../src/testing/index.js';
 import { widgetsModule } from './fixtures/widgets/module.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
 import { captureLog } from '../src/testing/log.js';
@@ -28,11 +30,16 @@ afterEach(async () => {
   await t.drop();
 });
 
-function makeBot(modules: ModuleDefinition[], database: Database = t.database, purgeIntervalMs?: number) {
+function makeBot(
+  modules: ModuleDefinition[],
+  database: Database = t.database,
+  purgeIntervalMs?: number,
+  interactions: { secret?: string } = {},
+) {
   const client = new FakeClient();
   const { log, lines } = captureLog();
   const bot = createBot({
-    config: { discord: { token: 'token-1' }, database: { appUrl: t.appUrl, adminUrl: t.adminUrl }, modules: {} },
+    config: { discord: { token: 'token-1' }, database: { appUrl: t.appUrl, adminUrl: t.adminUrl }, modules: {}, interactions },
     modules: modules.map((definition) => ({ packageName: `@test/${definition.name}`, definition, config: {} })),
     database,
     client: client.asClient(),
@@ -398,5 +405,44 @@ describe('createBot', () => {
     const clash = defineCommand({ description: 'Clash', execute: () => undefined });
     const other = widgetsModule({ name: 'gadgets', db: undefined, commands: { widgets: clash } });
     expect(() => makeBot([commandWidgets([]), other])).toThrow(ConfigError);
+  });
+
+  it('requires interactions.secret only when a module defines components', () => {
+    const tap = defineButton({ name: 'tap', execute: () => undefined });
+    expect(() => makeBot([widgetsModule({ components: [tap] })])).toThrow(/interactions\.secret/);
+    expect(() => makeBot([widgetsModule({ components: [tap] })])).toThrow(ConfigError);
+    expect(() => makeBot([widgetsModule()])).not.toThrow();
+  });
+
+  it('routes component IDs its modules sign', async () => {
+    const tap = defineButton({
+      name: 'tap',
+      execute: async (ctx, args) => {
+        await ctx.reply(`tapped ${args.join(',')}`);
+      },
+    });
+    const module = widgetsModule({
+      components: [tap],
+      commands: {
+        widgets: defineCommand({
+          description: 'Widgets',
+          execute: async (ctx) => {
+            await ctx.reply(ctx.customId(tap, ['w1']));
+          },
+        }),
+      },
+    });
+    const { bot, client } = makeBot([module], t.database, undefined, { secret: TEST_INTERACTION_SECRET });
+    cache(client, 'g1');
+    await bot.start();
+    await ready(bot, client);
+    const command = fakeCommand({ command: 'widgets' });
+    client.emit(Events.InteractionCreate, command.asInteraction());
+    await bot.idle();
+    const customId = (command.responses[0]!.payload as { content: string }).content;
+    const button = fakeButton({ customId });
+    client.emit(Events.InteractionCreate, button.asInteraction());
+    await bot.idle();
+    expect(button.responses[0]!.payload).toMatchObject({ content: 'tapped w1' });
   });
 });

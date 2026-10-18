@@ -1,6 +1,10 @@
 # Copy to config.yaml next to your .env. Values like ${NAME} come from the environment.
 discord:
   token: ${DISCORD_TOKEN}
+# Signs button and modal custom IDs; needed when a loaded module has buttons or modals (example-notes does).
+# At least 32 characters, e.g. `openssl rand -base64 32`. Changing it breaks every button and modal already posted.
+interactions:
+  secret: ${INTERACTION_SECRET}
 database:
   # The app role is subject to row-level security and switches to one role per module; the admin role owns the schema,
   # runs migrations and creates those roles (it needs CREATEROLE).

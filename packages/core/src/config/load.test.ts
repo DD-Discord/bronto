@@ -35,7 +35,17 @@ describe('parseConfig', () => {
       discord: { token: 'token-1' },
       database: { appUrl: 'postgres://bot_app:pw@db:5432/bronto', adminUrl: 'postgres://admin:pw@db:5432/bronto' },
       modules: { '@bronto/sticky': { webhookName: 'Sticky' }, '@bronto/other': {} },
+      interactions: {},
     });
+  });
+
+  it('reads an interaction secret of at least 32 characters', () => {
+    const text = `${YAML}interactions:\n  secret: \${INTERACTION_SECRET}\n`;
+    const secret = 'x'.repeat(32);
+    expect(parseConfig(text, { ...ENV, INTERACTION_SECRET: secret }).interactions).toEqual({ secret });
+    expect(problemsOf(() => parseConfig(text, { ...ENV, INTERACTION_SECRET: 'short' }))).toEqual([
+      'interactions.secret: must be at least 32 characters',
+    ]);
   });
 
   it('keeps secrets with YAML syntax verbatim', () => {

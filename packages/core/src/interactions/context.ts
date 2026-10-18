@@ -29,11 +29,16 @@ export interface ModalContext<TConfig = any> extends InteractionContext<TConfig>
   field(customId: string): string;
 }
 
-/** Adds the reply methods to a handler context; spreading keeps the handler's emit and queue working. */
+/**
+ * Adds the reply methods to a handler context; spreading keeps the handler's emit and queue working. Custom IDs default
+ * to the interaction's channel.
+ */
 export function interactionContext(ctx: HandlerContext, channelId: string | null, responder: Responder): InteractionContext {
   return {
     ...ctx,
     channelId,
+    customId: (component, args, target = {}) =>
+      ctx.customId(component, args, { ...target, channelId: target.channelId ?? channelId ?? undefined }),
     reply: (message) => responder.send(message),
     followUp: (message) => responder.send(message),
     defer: (options) => responder.defer(options?.ephemeral),

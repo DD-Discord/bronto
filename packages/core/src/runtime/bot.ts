@@ -1,5 +1,6 @@
 import { Events, type Client, type Guild, type Interaction } from 'discord.js';
 import type { Logger } from 'pino';
+import { ConfigError } from '../config/errors.js';
 import type { CoreConfig } from '../config/schema.js';
 import { checkRoles, formatSchemaProblems } from '../db/checks.js';
 import type { Database } from '../db/database.js';
@@ -8,6 +9,7 @@ import { listMigratedModules } from '../db/purge.js';
 import { commandToJson } from '../interactions/commands.js';
 import { createModulesCommand } from '../interactions/modules-command.js';
 import { InteractionRouter } from '../interactions/router.js';
+import { ComponentSigner } from '../interactions/signing.js';
 import { CommandSync, restCommandRegistry } from '../interactions/sync.js';
 import { createCoreRuntime, createModuleRuntimes, type ModuleRuntime } from './context.js';
 import { Dispatcher } from './dispatcher.js';
@@ -41,6 +43,8 @@ export interface BotOptions {
   purgeIntervalMs?: number;
   /** Time after which an unanswered interaction is deferred; 2 s by default. */
   deferAfterMs?: number;
+  /** Clock for custom ID expiry, in milliseconds; Date.now by default. */
+  now?: () => number;
 }
 
 export interface Bot {
@@ -62,6 +66,11 @@ export interface Bot {
 
 export function createBot(options: BotOptions): Bot {
   const { config, modules, database, client, log } = options;
+  const secret = config.interactions.secret;
+  if (secret === undefined && modules.some((module) => (module.definition.components ?? []).length > 0)) {
+    throw new ConfigError(['interactions.secret: required because a module defines buttons or modals']);
+  }
+  const signer = secret === undefined ? null : new ComponentSigner(secret);
   const queue = new KeyedQueue((key, error) => log.error({ err: error, key }, 'Queued task failed'));
   const enablement = new ModuleEnablement(database.admin);
   const runtimes = createModuleRuntimes(modules, { client, database, log });
@@ -82,7 +91,7 @@ export function createBot(options: BotOptions): Bot {
       return false;
     }
   };
-  const dispatcher = new Dispatcher({ runtimes, database, enablement, queue, guildGate });
+  const dispatcher = new Dispatcher({ runtimes, database, enablement, queue, guildGate, signer, now: options.now });
   const modulesCommand = createModulesCommand({
     runtimes,
     enablement,
@@ -102,6 +111,8 @@ export function createBot(options: BotOptions): Bot {
     guildGate,
     log,
     deferAfterMs: options.deferAfterMs,
+    signer,
+    now: options.now,
   });
   const commands = new CommandSync({
     registry: restCommandRegistry(client),

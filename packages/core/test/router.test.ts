@@ -3,11 +3,13 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { upsertGuild } from '../src/db/guilds.js';
 import { defineCommand, defineSubcommand, type CommandDefinition } from '../src/interactions/commands.js';
-import { defineButton, defineModal } from '../src/interactions/components.js';
+import { createCustomId, defineButton, defineModal, type ComponentDefinition } from '../src/interactions/components.js';
+import { ComponentSigner } from '../src/interactions/signing.js';
 import { UserError } from '../src/interactions/errors.js';
 import { opt } from '../src/interactions/options.js';
 import { DONE, GENERIC_FAILURE } from '../src/interactions/responder.js';
 import {
+  COMPONENT_EXPIRED,
   COMPONENT_GONE,
   COMPONENT_UNAVAILABLE,
   InteractionRouter,
@@ -125,12 +127,29 @@ const form = defineModal({
   },
 });
 
+const brief = defineButton({
+  name: 'brief',
+  expiresAfterMs: 60_000,
+  execute: async (ctx) => {
+    await ctx.reply('in time');
+  },
+});
+
+// Bound to the presser and channel; a press hands out a fresh ID for the same button, signed by the handler.
+const mine = defineButton({
+  name: 'mine',
+  bind: { user: true, channel: true },
+  execute: async (ctx, args) => {
+    await ctx.reply(ctx.customId(mine, [...args, 'again']));
+  },
+});
+
 // Owns the widgets schema, so its /demo write subcommand can write widget items.
 const demo = defineModule({
   name: 'widgets',
   db: { schema: widgetsSchema, migrations: widgetsMigrations },
   commands: { demo: demoCommand },
-  components: [press, form],
+  components: [press, form, brief, mine],
 });
 
 let t: TestDatabase;
@@ -141,13 +160,23 @@ let runtimes: ModuleRuntime[];
 let dispatcher: Dispatcher;
 let gateOpen: boolean;
 let gateDelayMs: number;
+let now: number;
+
+const signer = new ComponentSigner('s'.repeat(32));
+const sign = (
+  component: ComponentDefinition,
+  args: string[] = [],
+  target: { guildId?: string; userId?: string; channelId?: string } = {},
+) => createCustomId(signer, component, { guildId: 'g1', userId: 'u1', channelId: 'c1', ...target }, args, now);
 
 function makeRouter(sources?: InteractionSource[], deferAfterMs = 40): InteractionRouter {
   const captured = captureLog();
   lines = captured.lines;
   return new InteractionRouter({
-    sources: sources ?? [{ runtime: runtimes[0]!, commands: { demo: demoCommand }, components: [press, form] }],
+    sources: sources ?? [{ runtime: runtimes[0]!, commands: { demo: demoCommand }, components: [press, form, brief, mine] }],
     dispatcher,
+    signer,
+    now: () => now,
     enablement,
     guildGate: async () => {
       if (gateDelayMs > 0) await sleep(gateDelayMs);
@@ -182,7 +211,14 @@ beforeAll(async () => {
     log,
   });
   enablement = new ModuleEnablement(t.database.admin);
-  dispatcher = new Dispatcher({ runtimes, database: t.database, enablement, queue: new KeyedQueue(() => undefined) });
+  dispatcher = new Dispatcher({
+    runtimes,
+    database: t.database,
+    enablement,
+    queue: new KeyedQueue(() => undefined),
+    signer,
+    now: () => now,
+  });
 });
 
 afterAll(async () => {
@@ -193,6 +229,7 @@ beforeEach(async () => {
   ran.length = 0;
   gateOpen = true;
   gateDelayMs = 0;
+  now = 1_000_000;
   await enablement.set('g1', 'widgets', true);
 });
 
@@ -293,7 +330,7 @@ describe('InteractionRouter commands', () => {
   it('tells the user to wait in a guild that is not cached yet', async () => {
     const router = makeRouter();
     const command = await run(router, fakeCommand({ command: 'demo', subcommand: 'echo', options: { text: 'x' }, cached: false }));
-    const button = await run(router, fakeButton({ customId: press.customId(), cached: false }));
+    const button = await run(router, fakeButton({ customId: sign(press), cached: false }));
     for (const fake of [command, button]) {
       expect(fake.responses).toEqual([{ kind: 'reply', payload: privately(NOT_READY) }]);
     }
@@ -358,9 +395,9 @@ describe('InteractionRouter autocomplete', () => {
 describe('InteractionRouter components', () => {
   it('routes buttons and modals with their custom ID arguments', async () => {
     const router = makeRouter();
-    const button = await run(router, fakeButton({ customId: press.customId('a', 'b') }));
+    const button = await run(router, fakeButton({ customId: sign(press, ['a', 'b']) }));
     expect(button.responses).toEqual([{ kind: 'reply', payload: privately('pressed a,b') }]);
-    const modal = await run(router, fakeModal({ customId: form.customId('n1'), fields: { body: 'text' } }));
+    const modal = await run(router, fakeModal({ customId: sign(form, ['n1']), fields: { body: 'text' } }));
     expect(modal.responses).toEqual([{ kind: 'reply', payload: { content: 'n1: text', allowedMentions: { parse: [] } } }]);
   });
 
@@ -368,13 +405,68 @@ describe('InteractionRouter components', () => {
     const router = makeRouter();
     const unknown = await run(router, fakeButton({ customId: 'demo:missing' }));
     const garbage = await run(router, fakeButton({ customId: 'garbage' }));
-    const wrongKind = await run(router, fakeButton({ customId: form.customId('x') }));
+    const wrongKind = await run(router, fakeButton({ customId: sign(form, ['x']) }));
     for (const fake of [unknown, garbage, wrongKind]) {
       expect(fake.responses).toEqual([{ kind: 'reply', payload: privately(COMPONENT_GONE) }]);
     }
     await enablement.set('g1', 'widgets', false);
-    const disabled = await run(router, fakeButton({ customId: press.customId() }));
+    const disabled = await run(router, fakeButton({ customId: sign(press) }));
     expect(disabled.responses).toEqual([{ kind: 'reply', payload: privately(COMPONENT_UNAVAILABLE) }]);
+  });
+
+  it('refuses tampered IDs without running the handler', async () => {
+    const router = makeRouter();
+    const tampered = sign(press, ['a']).replace(':a:', ':b:');
+    const otherGuild = sign(press, ['a'], { guildId: 'g2' });
+    for (const customId of [tampered, otherGuild, 'widgets:press', 'widgets:press:!!!', 'widgets:press:a:b:c']) {
+      const fake = await run(router, fakeButton({ customId }));
+      expect(fake.responses).toEqual([{ kind: 'reply', payload: privately(COMPONENT_GONE) }]);
+    }
+    expect(lines.filter((line) => line.msg === 'Rejected a component custom ID')).toHaveLength(5);
+  });
+
+  it('answers expired IDs with COMPONENT_EXPIRED', async () => {
+    const router = makeRouter();
+    const customId = sign(brief);
+    now += 59_000;
+    const early = await run(router, fakeButton({ customId }));
+    expect(early.responses).toEqual([{ kind: 'reply', payload: { content: 'in time', allowedMentions: { parse: [] } } }]);
+    now += 2_000;
+    const late = await run(router, fakeButton({ customId }));
+    expect(late.responses).toEqual([{ kind: 'reply', payload: privately(COMPONENT_EXPIRED) }]);
+  });
+
+  it('refuses a modal submitted by another user', async () => {
+    const router = makeRouter();
+    const fake = await run(router, fakeModal({ customId: sign(form, ['n1']), fields: { body: 'text' }, userId: 'u2' }));
+    expect(fake.responses).toEqual([{ kind: 'reply', payload: privately(COMPONENT_GONE) }]);
+  });
+
+  it('checks bound buttons against the presser and channel and signs new IDs for them', async () => {
+    const router = makeRouter();
+    const customId = sign(mine, ['a'], { userId: 'u2', channelId: 'c2' });
+    const wrongUser = await run(router, fakeButton({ customId, channelId: 'c2' }));
+    const wrongChannel = await run(router, fakeButton({ customId, userId: 'u2' }));
+    for (const fake of [wrongUser, wrongChannel]) {
+      expect(fake.responses).toEqual([{ kind: 'reply', payload: privately(COMPONENT_GONE) }]);
+    }
+    const pressed = await run(router, fakeButton({ customId, userId: 'u2', channelId: 'c2' }));
+    const again = (pressed.responses[0]!.payload as { content: string }).content;
+    expect(again).toBe(sign(mine, ['a', 'again'], { userId: 'u2', channelId: 'c2' }));
+  });
+
+  it('refuses every component when no secret is configured', async () => {
+    const captured = captureLog();
+    const router = new InteractionRouter({
+      sources: [{ runtime: runtimes[0]!, commands: {}, components: [press] }],
+      dispatcher,
+      enablement,
+      guildGate: async () => true,
+      log: captured.log,
+      signer: null,
+    });
+    const fake = await run(router, fakeButton({ customId: sign(press) }));
+    expect(fake.responses).toEqual([{ kind: 'reply', payload: privately(COMPONENT_GONE) }]);
   });
 });
 

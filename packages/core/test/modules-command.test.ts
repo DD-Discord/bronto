@@ -50,6 +50,7 @@ function build() {
       return true;
     },
     log,
+    signer: null,
   });
   const say = async (subcommand: string, options: Record<string, unknown> = {}) => {
     const fake = fakeCommand({ command: 'modules', subcommand, options });

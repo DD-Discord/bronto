@@ -57,7 +57,7 @@ export async function prepareStickyBot(
   client.guilds.cache.set(GUILD, { id: GUILD, available: true });
   const { log, lines } = captureLog();
   const bot = createBot({
-    config: { discord: { token: 'token' }, database: { appUrl: t.appUrl, adminUrl: t.adminUrl }, modules: {} },
+    config: { discord: { token: 'token' }, database: { appUrl: t.appUrl, adminUrl: t.adminUrl }, modules: {}, interactions: {} },
     modules: [stickyModule(discord, options.config), ...(options.extra ?? [])],
     database: t.database,
     client: client.asClient(),

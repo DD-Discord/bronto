@@ -13,6 +13,10 @@ export const coreConfigSchema = z.object({
   }).strict(),
   // Keys are module package names; a key without settings (YAML null) loads the module with its defaults.
   modules: z.record(z.string(), z.unknown().transform((value): unknown => value ?? {})).default({}),
+  // Signs button and modal custom IDs; required once a loaded module defines components.
+  interactions: z.object({
+    secret: z.string().min(32, 'must be at least 32 characters').optional(),
+  }).strict().default({}),
 }).strict();
 
 export type CoreConfig = z.infer<typeof coreConfigSchema>;

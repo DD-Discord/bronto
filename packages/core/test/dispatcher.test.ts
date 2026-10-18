@@ -2,6 +2,8 @@ import { Collection, Events, Guild, type Client } from 'discord.js';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { upsertGuild } from '../src/db/guilds.js';
+import { checkCustomId, defineButton } from '../src/interactions/components.js';
+import { ComponentSigner } from '../src/interactions/signing.js';
 import { guilds } from '../src/db/schema.js';
 import { createModuleRuntimes, type ModuleRuntime } from '../src/runtime/context.js';
 import { Dispatcher, guildIdOf, type HandlerResult } from '../src/runtime/dispatcher.js';
@@ -24,6 +26,9 @@ interface Seen {
 }
 
 const counted = defineEvent<{ n: number }>('counted');
+const signer = new ComponentSigner('s'.repeat(32));
+const tap = defineButton({ name: 'tap', execute: () => undefined });
+const own = defineButton({ name: 'own', bind: { user: true }, execute: () => undefined });
 const seen: Seen[] = [];
 
 // Owns the widgets schema, so its handlers can write widget items.
@@ -31,6 +36,7 @@ const widgets = defineModule({
   name: 'widgets',
   db: { schema: widgetsSchema, migrations: widgetsMigrations },
   events: { counted },
+  components: [tap, own],
   listeners: [
     on(Events.MessageCreate, async (ctx, message) => {
       seen.push({ module: 'widgets', guildId: ctx.guildId, actorId: ctx.actorId, detail: message.id });
@@ -421,15 +427,44 @@ describe('Dispatcher', () => {
   });
 });
 
+describe('ctx.customId', () => {
+  it('signs components of its own module for the run guild and actor', async () => {
+    const signing = new Dispatcher({ runtimes, database: t.database, enablement, queue: new KeyedQueue(() => undefined), signer, now: () => 0 });
+    let ids: string[] = [];
+    const result = await signing.runHandler(runtime('widgets'), 'g1', 'u1', 'test', (ctx) => {
+      ids = [ctx.customId(tap, ['a']), ctx.customId(own), ctx.customId(own, [], { userId: 'u2' })];
+    });
+    expect(result).toEqual({ ok: true });
+    const target = { guildId: 'g1', userId: 'u1', channelId: null };
+    expect(checkCustomId(signer, tap, ids[0]!, target, 0)).toEqual({ ok: true, args: ['a'] });
+    expect(checkCustomId(signer, own, ids[1]!, target, 0).ok).toBe(true);
+    expect(checkCustomId(signer, own, ids[2]!, target, 0).ok).toBe(false);
+    expect(checkCustomId(signer, own, ids[2]!, { ...target, userId: 'u2' }, 0).ok).toBe(true);
+  });
+
+  it("refuses another module's components, a bound user without an actor and a missing secret", async () => {
+    const signing = new Dispatcher({ runtimes, database: t.database, enablement, queue: new KeyedQueue(() => undefined), signer });
+    const foreign = await signing.runHandler(runtime('beta'), 'g1', 'u1', 'test', (ctx) => ctx.customId(tap));
+    expect(foreign).toMatchObject({ ok: false, error: { message: 'Module "beta" cannot sign components of module "widgets".' } });
+    const noActor = await signing.runHandler(runtime('widgets'), 'g1', null, 'test', (ctx) => ctx.customId(own));
+    expect(noActor).toMatchObject({ ok: false, error: { message: expect.stringContaining('needs a user') } });
+    const unsigned = await dispatcher.runHandler(runtime('widgets'), 'g1', 'u1', 'test', (ctx) => ctx.customId(tap));
+    expect(unsigned).toMatchObject({ ok: false, error: { message: 'Components need interactions.secret in the config.' } });
+  });
+});
+
 describe('module APIs', () => {
   const given = defineEvent<{ to: string }>('given');
   const queued: Array<{ module: string; guildId: string; actorId: string | null }> = [];
   // Named widgets so its database role owns the widget items it writes.
+  const badge = defineButton({ name: 'badge', bind: { user: true }, execute: () => undefined });
   const provider = defineModule({
     name: 'widgets',
     db: { schema: widgetsSchema, migrations: widgetsMigrations },
     events: { given },
+    components: [badge],
     api: (ctx) => ({
+      badgeId: (id: string) => ctx.customId(badge, [id]),
       async award(to: string) {
         await ctx.db.run(async (tx) => {
           await tx.insert(widgetItems).values({ id: `award-${to}`, label: ctx.actorId ?? 'bot' });
@@ -468,6 +503,8 @@ describe('module APIs', () => {
       database: t.database,
       enablement,
       queue: new KeyedQueue(() => undefined),
+      signer,
+      now: () => 0,
     });
   });
 
@@ -487,6 +524,15 @@ describe('module APIs', () => {
     expect(row).toMatchObject({ guildId: 'g1', createdBy: 'u1', label: 'u1' });
     await apiDispatcher.idle();
     expect(received).toEqual([{ guildId: 'g1', actorId: 'u1', to: 'u2' }]);
+  });
+
+  it("signs the provider's components for the calling run", async () => {
+    let id = '';
+    await apiDispatcher.runHandler(callerRuntime(), 'g1', 'u1', 'test', (ctx) => {
+      id = ctx.modules.get(provider).badgeId('b1');
+    });
+    expect(id).toMatch(/^widgets:badge:b1:/);
+    expect(checkCustomId(signer, badge, id, { guildId: 'g1', userId: 'u1', channelId: null }, 0)).toEqual({ ok: true, args: ['b1'] });
   });
 
   it('runs tasks an API queues as the providing module', async () => {

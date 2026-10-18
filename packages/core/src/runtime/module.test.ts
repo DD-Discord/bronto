@@ -62,7 +62,7 @@ describe('defineModule interactions', () => {
   it('claims its components', () => {
     const button = defineButton({ name: 'copy', execute: () => undefined });
     defineModule({ name: 'notes', components: [button] });
-    expect(button.customId('1')).toBe('notes:copy:1');
+    expect(button.owner).toBe('notes');
     expect(() => defineModule({ name: 'other', components: [button] })).toThrow(
       'Component "copy" already belongs to module "notes"',
     );

@@ -1,5 +1,7 @@
 import { Collection, Events, Guild } from 'discord.js';
 import { afterCommit, runInScope } from '../db/context.js';
+import { createCustomId } from '../interactions/components.js';
+import type { ComponentSigner } from '../interactions/signing.js';
 import type { Database } from '../db/database.js';
 import { createScopedDb } from '../db/scoped.js';
 import type { ModuleRuntime } from './context.js';
@@ -23,6 +25,10 @@ export interface DispatcherOptions {
   queue: KeyedQueue;
   /** Decides whether gateway events of a guild run handlers; resolving false drops the event. */
   guildGate?: (guildId: string) => Promise<boolean>;
+  /** Signs the custom IDs handlers create; null when no interaction secret is configured. */
+  signer?: ComponentSigner | null;
+  /** Clock for custom ID expiry, in milliseconds. */
+  now?: () => number;
 }
 
 /** How a handler run ended; `error` is what the handler threw. */
@@ -54,6 +60,8 @@ export class Dispatcher {
   private readonly enablement: ModuleEnablement;
   private readonly queue: KeyedQueue;
   private readonly guildGate: ((guildId: string) => Promise<boolean>) | undefined;
+  private readonly signer: ComponentSigner | null;
+  private readonly now: () => number;
   private readonly discordListeners = new Map<DiscordEventName, Array<{ runtime: ModuleRuntime; listener: DiscordListener }>>();
   private readonly moduleListeners = new Map<EventDefinition<unknown>, Array<{ runtime: ModuleRuntime; listener: ModuleListener }>>();
   private readonly inFlight = new Set<Promise<unknown>>();
@@ -63,6 +71,8 @@ export class Dispatcher {
     this.enablement = options.enablement;
     this.queue = options.queue;
     this.guildGate = options.guildGate;
+    this.signer = options.signer ?? null;
+    this.now = options.now ?? Date.now;
     for (const runtime of options.runtimes) {
       for (const listener of runtime.loaded.definition.listeners ?? []) {
         if (listener.kind === 'discord') {
@@ -181,6 +191,19 @@ export class Dispatcher {
           );
         }
         afterCommit(() => this.deliver(event, payload, guildId, actorId));
+      },
+      customId: (component, args = [], target = {}) => {
+        if (component.owner !== runtime.name) {
+          throw new Error(`Module "${runtime.name}" cannot sign components of module "${component.owner}".`);
+        }
+        if (this.signer === null) throw new Error('Components need interactions.secret in the config.');
+        return createCustomId(
+          this.signer,
+          component,
+          { guildId, userId: target.userId ?? actorId, channelId: target.channelId ?? null },
+          args,
+          this.now(),
+        );
       },
       queue: {
         run: (key, task) =>

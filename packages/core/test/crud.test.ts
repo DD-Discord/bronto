@@ -94,6 +94,7 @@ beforeAll(async () => {
     enablement,
     guildGate: async () => true,
     log,
+    signer: null,
   });
 });
 

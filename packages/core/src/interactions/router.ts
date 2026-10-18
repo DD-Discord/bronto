@@ -12,16 +12,18 @@ import type { Dispatcher } from '../runtime/dispatcher.js';
 import type { ModuleEnablement } from '../runtime/enablement.js';
 import type { HandlerContext } from '../runtime/types.js';
 import { checkCommand, commandToJson, findHandler, subcommandPath, type CommandDefinition } from './commands.js';
-import { parseCustomId, type ComponentDefinition } from './components.js';
+import { checkCustomId, parseCustomId, type ComponentDefinition, type CustomIdCheck } from './components.js';
 import { interactionContext, type ButtonContext, type CommandContext, type ModalContext } from './context.js';
 import { isUserError } from './errors.js';
 import { truncate } from './format.js';
 import { readOptions, type Choice } from './options.js';
 import { GENERIC_FAILURE, Responder, type ResponseTarget } from './responder.js';
+import type { ComponentSigner } from './signing.js';
 
 export const NOT_AVAILABLE = 'This command is not available here.';
 export const COMPONENT_UNAVAILABLE = 'This is not available here.';
 export const COMPONENT_GONE = 'This no longer works.';
+export const COMPONENT_EXPIRED = 'This has expired.';
 export const NOT_READY = 'The bot is not ready in this server yet. Try again in a moment.';
 
 const MAX_CHOICES = 25;
@@ -44,6 +46,10 @@ export interface RouterOptions {
   log: Logger;
   /** Defers answers not sent after this long; Discord drops interactions not answered within 3 s. */
   deferAfterMs?: number;
+  /** Verifies component custom IDs; null refuses every button and modal. */
+  signer: ComponentSigner | null;
+  /** Clock for custom ID expiry, in milliseconds. */
+  now?: () => number;
 }
 
 interface Owned<T> {
@@ -62,6 +68,8 @@ export class InteractionRouter {
   private readonly guildGate: (guildId: string) => Promise<boolean>;
   private readonly log: Logger;
   private readonly deferAfterMs: number;
+  private readonly signer: ComponentSigner | null;
+  private readonly now: () => number;
 
   constructor(options: RouterOptions) {
     this.dispatcher = options.dispatcher;
@@ -69,6 +77,8 @@ export class InteractionRouter {
     this.guildGate = options.guildGate;
     this.log = options.log;
     this.deferAfterMs = options.deferAfterMs ?? 2000;
+    this.signer = options.signer;
+    this.now = options.now ?? Date.now;
     const problems: string[] = [];
     for (const source of options.sources) {
       for (const [name, command] of Object.entries(source.commands)) {
@@ -172,6 +182,16 @@ export class InteractionRouter {
       return this.answer(responder.fail(COMPONENT_UNAVAILABLE), label, stopTimer);
     }
     const component = entry.value;
+    const target = { guildId: interaction.guildId, userId: interaction.user.id, channelId: interaction.channelId };
+    const check: CustomIdCheck =
+      this.signer === null
+        ? { ok: false, reason: 'invalid' }
+        : checkCustomId(this.signer, component, interaction.customId, target, this.now());
+    if (!check.ok) {
+      if (check.reason === 'expired') return this.answer(responder.fail(COMPONENT_EXPIRED), label, stopTimer);
+      this.log.debug({ handler: label }, 'Rejected a component custom ID');
+      return this.answer(responder.fail(COMPONENT_GONE), label, stopTimer);
+    }
     await this.run(entry.source, interaction, responder, label, stopTimer, (ctx) => {
       const base = interactionContext(ctx, interaction.channelId, responder);
       if (component.kind === 'button') {
@@ -180,7 +200,7 @@ export class InteractionRouter {
           interaction: interaction as ButtonInteraction<'cached'>,
           showModal: (modal) => responder.showModal(modal),
         };
-        return component.execute(context, parsed.args);
+        return component.execute(context, check.args);
       }
       const submitted = interaction as ModalSubmitInteraction<'cached'>;
       const context: ModalContext = {
@@ -188,7 +208,7 @@ export class InteractionRouter {
         interaction: submitted,
         field: (customId) => submitted.fields.getTextInputValue(customId),
       };
-      return component.execute(context, parsed.args);
+      return component.execute(context, check.args);
     });
   }
 

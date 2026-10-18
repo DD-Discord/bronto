@@ -70,7 +70,7 @@ const post = defineSubcommand({
   options: { note: noteOption },
   execute: async (ctx, { note: id }) => {
     const note = await findNote(ctx, id);
-    const read = new ButtonBuilder().setCustomId(readButton.customId(note.id)).setLabel('Read').setStyle(ButtonStyle.Secondary);
+    const read = new ButtonBuilder().setCustomId(ctx.customId(readButton, [note.id])).setLabel('Read').setStyle(ButtonStyle.Secondary);
     await ctx.reply({ content: `**${note.title}**`, components: [new ActionRowBuilder<ButtonBuilder>().addComponents(read)] });
   },
 });
@@ -83,7 +83,7 @@ const editText = defineSubcommand({
     const input = new TextInputBuilder().setCustomId('body').setStyle(TextInputStyle.Paragraph).setMaxLength(2000).setValue(note.body);
     await ctx.showModal(
       new ModalBuilder()
-        .setCustomId(textForm.customId(note.id))
+        .setCustomId(ctx.customId(textForm, [note.id]))
         .setTitle(truncate(note.title, 45))
         .addLabelComponents(new LabelBuilder().setLabel('Text').setTextInputComponent(input)),
     );

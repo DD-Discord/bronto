@@ -212,6 +212,15 @@ modules:
 
 Settings apply to the whole deployment. They aren't per server; per-server settings belong in a table.
 
+The core has one setting of its own besides `discord`, `database` and `modules`: `interactions.secret` signs the custom
+IDs of buttons and modals (section 6). It must be at least 32 characters and is required once a loaded module defines
+components:
+
+```yaml
+interactions:
+  secret: ${INTERACTION_SECRET}   # openssl rand -base64 32
+```
+
 ## 4. Storing data
 
 ### Tables
@@ -430,8 +439,9 @@ it, or the router's bookkeeping breaks.
 
 ## 6. Buttons and modals
 
-Buttons and modals are components. Their custom ID is `<module>:<name>:<args…>`, and the router uses it to find the
-handler, even after a restart:
+Buttons and modals are components. A handler creates their custom IDs with `ctx.customId(component, args, target?)`,
+and the router uses the ID to find the handler, even after a restart. The bot signs every ID it hands out, so a client
+can't edit the arguments or use the ID somewhere else:
 
 ```ts
 import { defineButton } from '@bronto/core';
@@ -448,7 +458,7 @@ const thankBack = defineButton({
 
 // In /karma give:
 const button = new ButtonBuilder()
-  .setCustomId(thankBack.customId(ctx.actorId!))   // "karma:thank:<user id>"
+  .setCustomId(ctx.customId(thankBack, [ctx.actorId!]))   // "karma:thank:<user id>:<signature>"
   .setLabel('Thank back')
   .setStyle(ButtonStyle.Secondary);
 await ctx.reply({
@@ -462,14 +472,48 @@ export default defineModule({
 });
 ```
 
-- Arguments must not contain `:`, and the whole ID is limited to 100 characters. Store large state in a table and put
-  its key in the ID.
+The ID is `<module>:<name>[:<arg>…][:<expiry>]:<signature>`. The signature is 11 characters, so it and its `:` take
+12 of Discord's 100; an expiry takes about 6 more. Arguments must not contain `:`, and `ctx.customId` throws when the
+ID would be longer than 100 characters. Store large state in a table and put its key in the ID.
+
+**Binding.** Every ID only works in the server it was made for. Beyond that, the definition decides what else the ID is
+bound to:
+
+| Definition | Bound to | Default |
+| --- | --- | --- |
+| `defineButton({ bind: { user: true } })` | the user it was made for | off |
+| `defineButton({ bind: { channel: true } })` | the channel it was made for | off |
+| `defineModal(...)` | the user it was shown to | always |
+| `defineModal({ bind: { channel: true } })` | also the channel | off |
+
+The user defaults to `ctx.actorId`, and in an interaction handler the channel defaults to the interaction's channel.
+Pass `target: { userId, channelId }` to sign for someone or somewhere else, for example a button only the mentioned
+user may press: `ctx.customId(accept, [offerId], { userId: other.id })`. A binding without a value throws, e.g. a
+user-bound button made in a gateway listener, which has no actor. A pressed ID that doesn't match answers "This no
+longer works." The bound user and channel are part of the signature only; they aren't in the ID.
+
+**Expiry.** `expiresAfterMs: 15 * 60_000` on a definition makes its IDs stop working after that time; pressing one
+later answers "This has expired." Without it, IDs never expire.
+
+The binding and expiry belong to the definition. The router checks an ID against the definition's current settings
+only, so changing them invalidates IDs already posted.
+
+**The secret.** IDs are signed with `interactions.secret` from `config.yaml` (section 3). A deployment that loads any
+module with components must set it. Changing the secret breaks every button and modal already posted; there is no
+rotation.
+
+**Signed doesn't mean current.** The signature proves the bot issued the ID with those arguments, nothing more.
+Handlers re-check anything that can change after that (does the note still exist, is the role still self-assignable),
+and treat modal field values as untrusted user input.
+
 - `defineModal` works the same way. Its handler reads fields with `ctx.field('inputCustomId')`. `examples/notes`
   shows a command that opens a modal and a modal that saves the result.
 - **Open a modal first.** Call `ctx.showModal` before any slow work: once an interaction is deferred, it can't show a
   modal anymore.
 - **Old buttons:** a button whose module is switched off answers "This is not available here." A button whose
-  definition no longer exists answers "This no longer works."
+  definition no longer exists, or whose ID doesn't verify, answers "This no longer works."
+- A module API (section 8) can call `ctx.customId` for its own module's components; the ID is made for the calling
+  handler's server and actor.
 
 ## 7. Listening to Discord events
 
@@ -563,7 +607,7 @@ export const badgesModule = defineModule({
 ```
 
 - **The context is a normal `HandlerContext`.** The factory runs once at startup, but `guildId`, `actorId`, `db`,
-  `queue` and `emit` are read when an API function uses them, and resolve to the handler that is calling. Reading them
+  `queue`, `emit` and `customId` are read when an API function uses them, and resolve to the handler that is calling. Reading them
   outside a handler, or after the calling handler finished, throws `A module API was used outside a handler.`
 - **Don't destructure them in the factory.** `const { db } = ctx` in the factory body runs at startup and throws. Read
   `ctx.db` inside the API function.
@@ -577,6 +621,7 @@ export const badgesModule = defineModule({
   | `db` | the provider's database role, in the caller's server; rows are attributed to the caller's actor |
   | `emit` | the provider's own events, delivered like any emit (after the innermost `db.run` commits) |
   | `queue` | the provider's queue in the caller's server; tasks run as the provider's handlers |
+  | `customId` | signs the provider's own components for the caller's server and actor |
   | `module`, `log`, `config`, `client`, `modules` | the provider |
 
 - **`dependsOn` matters elsewhere too.** Modules load in dependency order. `/modules enable badges` asks to turn on
@@ -734,8 +779,8 @@ Discord: `@bronto/core/testing` provides a fake client and fake interactions.
 
 ```ts
 import { createBot, createScopedDb, moduleRoleName, type Bot } from '@bronto/core';
-import { captureLog, fakeButton, fakeCommand, FakeClient } from '@bronto/core/testing';
-import { Events } from 'discord.js';
+import { captureLog, fakeButton, fakeCommand, FakeClient, TEST_INTERACTION_SECRET } from '@bronto/core/testing';
+import { Events, type ActionRowBuilder, type ButtonBuilder } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import karmaModule from '../src/index.js';
@@ -750,7 +795,12 @@ beforeEach(async () => {
   client = new FakeClient();
   client.guilds.cache.set('g1', { id: 'g1', available: true });
   bot = createBot({
-    config: { discord: { token: 'token' }, database: { appUrl: t.appUrl, adminUrl: t.adminUrl }, modules: {} },
+    config: {
+      discord: { token: 'token' },
+      database: { appUrl: t.appUrl, adminUrl: t.adminUrl },
+      modules: {},
+      interactions: { secret: TEST_INTERACTION_SECRET },   // needed because karma has a button
+    },
     modules: [{ packageName: '@bronto/karma', definition: karmaModule, config: { step: 2 } }],
     database: t.database,
     client: client.asClient(),
@@ -780,7 +830,10 @@ describe('karma', () => {
   });
 
   it('answers buttons', async () => {
-    const thanked = await send(fakeButton({ customId: 'karma:thank:u1', userId: 'u2' }));
+    const given = await send(fakeCommand({ command: 'karma', subcommand: 'give', options: { user: { id: 'u2' } } }));
+    const { components } = given.responses[0]!.payload as { components: ActionRowBuilder<ButtonBuilder>[] };
+    const customId = (components[0]!.toJSON().components[0] as { custom_id: string }).custom_id;
+    const thanked = await send(fakeButton({ customId, userId: 'u2' }));
     expect(thanked.responses[0]!.payload).toMatchObject({ content: '<@u2> thanked <@u1> back (2 points).' });
   });
 
@@ -796,6 +849,10 @@ describe('karma', () => {
   `u1` and channel `c1`. Every answer is recorded in `responses`, as `{ kind, payload }` with kinds such as `reply`,
   `deferReply`, `editReply`, `followUp` and `showModal`.
 - **Object options** (users, channels, roles) are passed as objects, e.g. `{ id: 'u2' }`.
+- **Buttons and modals:** pass `interactions: { secret: TEST_INTERACTION_SECRET }` in the config, as above. Press a
+  button with the custom ID your module posted, as above, or build one with
+  `createCustomId(new ComponentSigner(TEST_INTERACTION_SECRET), component, { guildId: 'g1', userId: 'u1', channelId: 'c1' }, args, Date.now())`.
+  A modal ID only works for the user it was made for, so submit it with the same `userId`.
 - **Inspecting data:** `t.database.admin` reads every server's rows (the admin connection bypasses row-level
   security). To read or write the way a handler does, pass the module's role to `createScopedDb`, as above; the plain
   app connection can't reach module tables.
@@ -818,6 +875,9 @@ Run one module's tests with `pnpm vitest run modules/karma`. `pnpm test` runs ev
   never call Discord inside it.
 - **Answering interactions:** answer through `ctx.reply`, `ctx.followUp`, `ctx.defer` and `ctx.showModal`. Throw
   `UserError` for messages meant for the user.
+- **Component arguments:** a signed custom ID says what the bot meant when it issued it. Re-check anything that can
+  change since (does the record still exist, is the role still self-assignable), and treat modal field values as
+  untrusted input.
 - **Module boundaries:** a module emits only its own events and uses other modules only through their `api` (declared
   in `dependsOn`). Its database role reaches only its own schema, so other modules' and core's tables are off limits.
 - **Per-server state:** rebuild timers and in-memory state in `guildReady` (idempotent) and drop them in
@@ -922,7 +982,7 @@ Details:
   A dependency cycle is also a `ConfigError`.
 - **Building runtimes** (`runtime/context.ts`): each module gets a `ModuleContext` (name, child logger, settings,
   client, `modules.get`). APIs are built in dependency order, so an API factory can capture the APIs it depends on.
-  An API factory gets that context with getters for `guildId`, `actorId`, `db`, `queue` and `emit`. Each read asks
+  An API factory gets that context with getters for `guildId`, `actorId`, `db`, `queue`, `emit` and `customId`. Each read asks
   the current handler scope (`runtime/handler-scope.ts`, an `AsyncLocalStorage` that `runHandler` installs) for the
   provider's context in that run, and throws outside a handler.
 - **The guild gate:** gateway events and interactions for a server wait until the start hooks have run and the server
@@ -1045,10 +1105,19 @@ sequenceDiagram
    3 seconds.
 4. **Gate checks:** wait for the guild gate, then check that the owning module is enabled. Core's `/modules` is always
    enabled.
-5. **Run the handler:** `dispatcher.runHandler(...)` with `expectedError: isUserError`. The router extends the context
-   with the `Responder`-backed `reply`, `followUp`, `defer` and `showModal`, plus the parsed options or custom-ID
-   arguments.
-6. **Answer:** on success, `responder.finish()` sends "Done." if the handler never answered. On failure,
+5. **Verify a component's custom ID** (`checkCustomId` in `interactions/components.ts`): take the signature, and the
+   expiry if the definition has `expiresAfterMs`, from the end of the ID; recompute the signature from the
+   definition's kind, module and name, the remaining arguments, the interaction's server, and its user and channel
+   where the definition binds them; compare in constant time (`ComponentSigner` in `interactions/signing.ts`). Only the
+   definition decides what is bound and whether an expiry is expected; nothing read from the ID does. A mismatch or a
+   malformed ID answers "This no longer works." and is logged at debug level. A valid ID past its expiry answers "This
+   has expired."; the expiry is checked after the signature, so a forged one counts as a mismatch. Without a
+   configured secret every component answers "This no longer works." (startup already refuses that when a module
+   has components).
+6. **Run the handler:** `dispatcher.runHandler(...)` with `expectedError: isUserError`. The router extends the context
+   with the `Responder`-backed `reply`, `followUp`, `defer` and `showModal`, plus the parsed options or the verified
+   custom-ID arguments (without expiry and signature). Its `customId` defaults the channel to the interaction's.
+7. **Answer:** on success, `responder.finish()` sends "Done." if the handler never answered. On failure,
    `responder.fail(...)` sends the `UserError` message or the generic failure, privately.
 
 The **`Responder`** (`interactions/responder.ts`) is a small state machine, `open → deferred → answered`, that runs all

@@ -24,7 +24,9 @@ picks the modules it loads in its `config.yaml`.
 
    The app role must not inherit a module role; the bot refuses to start if it does.
 2. Copy `config.example.yaml` to `config.yaml` and `.env.example` to `.env`, then fill in the values. The CLI reads
-   `.env` from the current directory; variables already set in the environment win.
+   `.env` from the current directory; variables already set in the environment win. Modules with buttons or modals
+   need `interactions.secret` (at least 32 characters, e.g. from `openssl rand -base64 32`); changing it breaks every
+   button and modal already posted.
 3. Invite the bot with the `bot` and `applications.commands` scopes, then start it:
 
 ```bash
@@ -47,7 +49,8 @@ When the bot leaves a guild, that guild's data is deleted after 30 days.
 
 Images are published as `ghcr.io/dd-discord/bronto:main`. Copy `compose.example.yml` (as `compose.yml`),
 `config.example.yaml` (as `config.yaml`) into a directory, create a `.env` with `DISCORD_TOKEN`,
-`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` and `BOT_APP_PASSWORD`, then:
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `BOT_APP_PASSWORD` and (for modules with buttons or modals)
+`INTERACTION_SECRET`, then:
 
 ```bash
 docker compose up -d
@@ -104,7 +107,9 @@ const greet = defineCommand({
   its answers private.
 - Throw `UserError` for problems the user can fix; they see its message privately. Other errors are logged and the
   user sees a generic message.
-- A button or modal gets its custom ID from `button.customId(...args)`; the handler receives the args.
+- A button or modal gets its custom ID from `ctx.customId(button, args)`; the handler receives the args. IDs are
+  signed with `interactions.secret` and only work in their server; modals (and buttons with `bind`) also only for
+  their user or channel, and `expiresAfterMs` makes them expire. Handlers still re-check anything that can change.
 - A handler that opens a modal must call `ctx.showModal` first, before any slow work: once the interaction is
   deferred, it can no longer show a modal.
 

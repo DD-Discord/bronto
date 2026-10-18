@@ -11,11 +11,16 @@ export {
   type SubcommandGroup,
 } from './commands.js';
 export {
+  checkCustomId,
+  createCustomId,
   defineButton,
   defineModal,
   parseCustomId,
   type ButtonDefinition,
+  type ComponentBinding,
   type ComponentDefinition,
+  type CustomIdCheck,
+  type CustomIdTarget,
   type ModalDefinition,
 } from './components.js';
 export {
@@ -51,6 +56,7 @@ export {
   type ResponseTarget,
 } from './responder.js';
 export {
+  COMPONENT_EXPIRED,
   COMPONENT_GONE,
   COMPONENT_UNAVAILABLE,
   InteractionRouter,
@@ -59,6 +65,7 @@ export {
   type InteractionSource,
   type RouterOptions,
 } from './router.js';
+export { ComponentSigner, MIN_SECRET_LENGTH, type SignatureInput } from './signing.js';
 export {
   CommandSync,
   commandsEqual,
