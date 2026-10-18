@@ -166,15 +166,27 @@ importers:
 
   .:
     dependencies:
+      '@bronto/core':
+        specifier: workspace:*
+        version: link:packages/core
       '@bronto/example-notes':
         specifier: workspace:*
         version: link:examples/notes
       '@bronto/sticky':
         specifier: workspace:*
         version: link:modules/sticky
+      discord.js:
+        specifier: 14.27.0
+        version: 14.27.0
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@types/pg@8.23.1)(pg@8.23.1)
       tsx:
         specifier: 4.23.15
         version: 4.23.15
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       '@testcontainers/postgresql':
         specifier: 12.2.1

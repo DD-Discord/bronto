@@ -135,7 +135,8 @@ points at the `.ts` file. Pin exact versions, the same ones the core uses:
 The framework libraries are peer dependencies: a peer means "use the host's copy", so discord.js and drizzle-orm exist
 once in the running bot and `instanceof` and drizzle's `is()` checks work across the module boundary. pnpm warns when
 the host's version does not match the declared one. The `devDependencies` copies are only for the module's own
-typecheck and tests.
+typecheck and tests: a production install (`pnpm install --prod`) skips them, so the workspace root must list every
+peer in its `dependencies`, at the same versions.
 
 `tsconfig.json`:
 

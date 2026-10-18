@@ -18,6 +18,8 @@ COPY modules modules
 COPY examples examples
 COPY docker/bronto /usr/local/bin/bronto
 RUN chmod 755 /usr/local/bin/bronto
+# Fails the build when a module can't resolve its imports from the production install.
+RUN node --import tsx --input-type=module -e "await import('@bronto/sticky')"
 
 ENV NODE_ENV=production
 USER node

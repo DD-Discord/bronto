@@ -12,9 +12,13 @@
     "bronto": "tsx packages/bot/src/cli.ts"
   },
   "dependencies": {
+    "@bronto/core": "workspace:*",
     "@bronto/example-notes": "workspace:*",
     "@bronto/sticky": "workspace:*",
-    "tsx": "4.23.15"
+    "discord.js": "14.27.0",
+    "drizzle-orm": "0.45.4",
+    "tsx": "4.23.15",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "12.2.1",
