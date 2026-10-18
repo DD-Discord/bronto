@@ -12,7 +12,7 @@
 - A module emits only its own events, uses other modules only through their `api` (declared in `dependsOn`), and never touches another module's tables.
 - Tests never connect to Discord; use `FakeClient` and the fake interactions from `@bronto/core/testing`.
 - Interaction handlers answer only through `ctx.reply`/`ctx.followUp`/`ctx.defer`/`ctx.showModal`, and throw `UserError` for messages meant for the user.
-- Module schema files import `guildTable`/`globalTable` from `@bronto/core/tables`; drizzle-kit loads schema files, so they must not import discord.js.
+- Module schema files import `guildTable`/`globalTable` from `@bronto/core/tables`; prefer this over `@bronto/core`, since drizzle-kit loads schema files and the main entry pulls in discord.js, pino and the runtime.
 - Never keep a transaction (`ctx.db.run`) open across a Discord API call.
 - A queued task (`ctx.queue.run`) never waits for a task of its own key.
 - Modules with timers or in-memory state per server stop them in `hooks.guildStopped` and rebuild them in `hooks.guildReady` (which may run more than once).

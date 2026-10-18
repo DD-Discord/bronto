@@ -252,8 +252,8 @@ Things to know:
 
 - **Global tables are shared by all servers.** A `globalTable` has no `guild_id` and no row-level security, so the
   startup checks skip it. Use it sparingly. Handlers can only read it; see the database roles part for who may write.
-- **Import from `@bronto/core/tables`, not `@bronto/core`.** drizzle-kit loads schema files, and the main entry
-  point pulls in discord.js.
+- **Prefer `@bronto/core/tables` in schema files.** drizzle-kit loads schema files, and the main entry point pulls in
+  discord.js, pino and the runtime. Importing from `@bronto/core` works too.
 - **Keys:** a Discord ID that is only unique within a server (a user, a member) needs `guildId` in its primary key or
   unique index. A globally unique ID, such as a channel or message, can be the key alone.
 - **`guild_id` fills itself in:** inside a handler, an insert sets `guild_id` to the handler's server.

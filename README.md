@@ -108,7 +108,7 @@ const greet = defineCommand({
 
 ### Rules of thumb
 
-- Schema files import table helpers from `@bronto/core/tables`, not from `@bronto/core`; drizzle-kit loads them.
+- Schema files should import table helpers from `@bronto/core/tables`: drizzle-kit loads them, and the main entry point pulls in discord.js, pino and the runtime. Importing from `@bronto/core` also works.
 - Never keep a database transaction open across a Discord API call.
 - A task queued with `ctx.queue.run(key, task)` must not wait for another task of the same key: that never finishes.
 - `guildReady` runs again when a module is switched back on or the bot rejoins, so it must be safe to run more than
