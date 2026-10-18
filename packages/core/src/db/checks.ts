@@ -83,6 +83,8 @@ interface RoleState {
   member: boolean;
   /** Whether the app role may SET ROLE to it; only read for module roles. */
   switchable: boolean;
+  /** Whether the app role holds its privileges without SET ROLE; only read for module roles. */
+  inherited: boolean;
 }
 
 /**
@@ -105,6 +107,10 @@ export async function checkRoles(database: Database, modules: string[] = []): Pr
     }
     problems.push(...privilegeProblems('Module role', moduleRole, moduleState));
     if (!moduleState.switchable) problems.push(`App role "${role}" cannot switch to module role "${moduleRole}".`);
+    // An inheriting membership gives the plain app role the module's table privileges.
+    if (moduleState.inherited) {
+      problems.push(`App role "${role}" inherits module role "${moduleRole}"; grant it WITH INHERIT FALSE.`);
+    }
   }
   return problems;
 }
@@ -119,7 +125,9 @@ async function roleState(database: Database, role: string, appRole: string): Pro
                      and pg_has_role(r.oid, (select oid from pg_roles where rolname = current_user), 'MEMBER'),
                      false) as "member",
             coalesce((select pg_has_role(a.oid, r.oid, 'SET') from pg_roles a where a.rolname = $2), false)
-              as "switchable"
+              as "switchable",
+            coalesce((select pg_has_role(a.oid, r.oid, 'USAGE') from pg_roles a where a.rolname = $2), false)
+              as "inherited"
        from (select 1) as one
        left join pg_roles r on r.rolname = $1`,
     [role, appRole],

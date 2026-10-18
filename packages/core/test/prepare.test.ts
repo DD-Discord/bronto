@@ -1,19 +1,14 @@
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { coreMigrationTarget } from '../src/db/migrate.js';
-import { moduleRoleName } from '../src/db/module-roles.js';
 import { prepareDatabase } from '../src/db/prepare.js';
-import { createTestDatabase, errorText, schemaExpectations, widgetsTarget, type TestDatabase } from './test-db.js';
+import { asModuleRole, createTestDatabase, errorText, schemaExpectations, widgetsTarget, type TestDatabase } from './test-db.js';
 
 let t: TestDatabase;
 
 /** Runs `query` as the widgets module role through the app connection, the way a widgets handler would. */
 function asWidgets(query: string) {
-  const role = moduleRoleName(t.database.appRole, 'widgets');
-  return t.database.app.transaction(async (tx) => {
-    await tx.execute(sql`select set_config('role', ${role}, true)`);
-    return tx.execute(sql.raw(query));
-  });
+  return asModuleRole(t.database, 'widgets', (tx) => tx.execute(sql.raw(query)));
 }
 
 async function historyCount(test: TestDatabase, module: string): Promise<number> {
@@ -67,6 +62,23 @@ describe('prepareDatabase', () => {
     } finally {
       await t.database.adminPool.query('drop table widgets.later');
     }
+  });
+
+  it('takes the app role off the schema of a module that is no longer loaded', async () => {
+    expect(await prepareDatabase(t.database, options())).toEqual([]);
+    const app = t.database.appRole;
+    await t.database.adminPool.query(
+      `grant usage on schema widgets to ${app}; grant all on all tables in schema widgets to ${app}`,
+    );
+    const coreOnly = { modules: [], expectations: schemaExpectations().filter(({ schema }) => schema === 'core') };
+    expect(await prepareDatabase(t.database, coreOnly)).toEqual([]);
+    const { rows } = await t.database.adminPool.query<{ usage: boolean; select: boolean }>(
+      `select has_schema_privilege($1, 'widgets', 'USAGE') as "usage",
+              has_table_privilege($1, 'widgets.items', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE') as "select"`,
+      [app],
+    );
+    expect(rows).toEqual([{ usage: false, select: false }]);
+    expect(await prepareDatabase(t.database, options())).toEqual([]);
   });
 
   it('prepares a fresh database once when two processes start together', async () => {

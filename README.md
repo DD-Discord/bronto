@@ -14,8 +14,15 @@ picks the modules it loads in its `config.yaml`.
    `docker compose -f compose.dev.yml up -d` does this. The bot connects with two roles: the admin role for schema
    work and an app role, subject to row-level security, for everything else. Each module with tables runs as its own
    role, `<app role>_<module>`, which the app role switches to. On start the bot creates the app role named in the app
-   URL (or updates its password) and the module roles, if the admin role may create roles (`CREATEROLE`); otherwise
-   create them yourself.
+   URL (or updates its password) and the module roles, if the admin role may create roles (`CREATEROLE`). Otherwise
+   create them yourself; for each module with tables:
+
+   ```sql
+   create role "<app>_<module>" nologin;
+   grant "<app>_<module>" to "<app>" with inherit false, set true;
+   ```
+
+   The app role must not inherit a module role; the bot refuses to start if it does.
 2. Copy `config.example.yaml` to `config.yaml` and `.env.example` to `.env`, then fill in the values. The CLI reads
    `.env` from the current directory; variables already set in the environment win.
 3. Invite the bot with the `bot` and `applications.commands` scopes, then start it:

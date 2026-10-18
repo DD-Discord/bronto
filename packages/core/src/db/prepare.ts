@@ -1,7 +1,7 @@
 import { ensureAppRole } from './app-role.js';
 import { checkSchemasWith, type SchemaExpectation, type SchemaProblem } from './checks.js';
 import type { Database } from './database.js';
-import { grantRoles } from './grants.js';
+import { grantRoles, revokeUnloadedModules } from './grants.js';
 import { withMigrationLock } from './lock.js';
 import { applyMigrations, assertTargetNames, coreMigrationTarget, type MigrationTarget } from './migrate.js';
 import { ensureModuleRoles } from './module-roles.js';
@@ -14,7 +14,8 @@ export interface PrepareOptions {
 
 /**
  * Startup schema work, in this order: creates the app role if needed, migrates core and then each module, creates the
- * module roles, grants core to the app role and each module schema to its module role, and checks guild isolation.
+ * module roles, grants core to the app role and each module schema to its module role, takes the app role off the
+ * schemas of migrated modules that are not loaded, and checks guild isolation.
  * All of it runs on one connection holding the migration lock, so concurrent starts cannot interleave. Returns the
  * problems found; the caller decides whether to refuse to start.
  */
@@ -31,6 +32,7 @@ export async function prepareDatabase(database: Database, options: PrepareOption
     const moduleNames = modules.map((target) => target.name);
     await ensureModuleRoles(client, database.appRole, moduleNames);
     await grantRoles(client, database.appRole, [coreMigrationTarget.name, ...moduleNames]);
+    await revokeUnloadedModules(client, database.appRole, moduleNames);
     return checkSchemasWith(client, expectations);
   });
 }

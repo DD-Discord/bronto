@@ -1,10 +1,9 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { guildModules, guilds } from '../src/db/schema.js';
-import { moduleRoleName } from '../src/db/module-roles.js';
 import { createScopedDb } from '../src/db/scoped.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
-import { createTestDatabase, errorText, setUpSchema, widgetsDb, type TestDatabase } from './test-db.js';
+import { asModuleRole, createTestDatabase, errorText, setUpSchema, widgetsDb, type TestDatabase } from './test-db.js';
 
 let t: TestDatabase;
 
@@ -48,13 +47,8 @@ describe('app role grants', () => {
   });
 
   it('gives a module role use but not alteration of its tables', async () => {
-    const role = moduleRoleName(t.database.appRole, 'widgets');
-    const asWidgets = (statement: string) =>
-      t.database.app.transaction(async (tx) => {
-        await tx.execute(sql`select set_config('role', ${role}, true)`);
-        await tx.execute(sql.raw(statement));
-      });
-    await expect(asWidgets('select count(*) from widgets.items')).resolves.toBeUndefined();
+    const asWidgets = (statement: string) => asModuleRole(t.database, 'widgets', (tx) => tx.execute(sql.raw(statement)));
+    await expect(asWidgets('select count(*) from widgets.items')).resolves.toBeDefined();
     const error = await asWidgets('drop table widgets.items').catch((caught: unknown) => caught);
     expect(errorText(error)).toMatch(/must be owner/);
   });

@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { inject } from 'vitest';
-import { createDatabase, type Database } from '../src/db/database.js';
+import { sql } from 'drizzle-orm';
+import { createDatabase, type Database, type Tx } from '../src/db/database.js';
 import { formatSchemaProblems, type SchemaExpectation } from '../src/db/checks.js';
 import type { MigrationTarget } from '../src/db/migrate.js';
 import { moduleRoleName } from '../src/db/module-roles.js';
@@ -64,6 +65,15 @@ export async function setUpSchema(database: Database): Promise<void> {
 /** Database access as the widgets fixture module, the way its handlers get it. */
 export function widgetsDb(database: Database, guildId: string): ScopedDb {
   return createScopedDb(database.app, guildId, moduleRoleName(database.appRole, 'widgets'));
+}
+
+/** Runs `fn` in one transaction as a module's role, without a guild, the way ScopedDb switches roles. */
+export function asModuleRole<T>(database: Database, module: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  const role = moduleRoleName(database.appRole, module);
+  return database.app.transaction(async (tx) => {
+    await tx.execute(sql`select set_config('role', ${role}, true)`);
+    return fn(tx);
+  });
 }
 
 /** Message of an error and its cause; drizzle wraps driver errors. */

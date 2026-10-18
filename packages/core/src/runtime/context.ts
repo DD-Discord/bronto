@@ -1,5 +1,6 @@
 import type { Client } from 'discord.js';
 import type { Logger } from 'pino';
+import { ConfigError } from '../config/errors.js';
 import { currentGuildId } from '../db/context.js';
 import type { Database } from '../db/database.js';
 import { moduleRoleName } from '../db/module-roles.js';
@@ -25,11 +26,15 @@ export interface ModuleRuntime {
   api: unknown;
 }
 
-/** Builds each module's context, then its API. `modules` must be sorted by dependencies. */
+/**
+ * Builds each module's context, then its API. `modules` must be sorted by dependencies. Throws a ConfigError when a
+ * module's database role name is too long for Postgres.
+ */
 export function createModuleRuntimes(modules: LoadedModule[], services: RuntimeServices): ModuleRuntime[] {
+  const roles = moduleDbRoles(modules, services.database.appRole);
   const byName = new Map<string, ModuleRuntime>();
   const runtimes = modules.map((loaded) => {
-    const runtime = createRuntime(loaded, services, byName);
+    const runtime = createRuntime(loaded, services, byName, roles.get(loaded.definition.name) ?? null);
     byName.set(runtime.name, runtime);
     return runtime;
   });
@@ -46,6 +51,7 @@ function createRuntime(
   loaded: LoadedModule,
   services: RuntimeServices,
   byName: Map<string, ModuleRuntime>,
+  dbRole: string | null,
 ): ModuleRuntime {
   const name = loaded.definition.name;
   const dependencies = new Set((loaded.definition.dependsOn ?? []).map((dependency) => dependency.name));
@@ -67,8 +73,23 @@ function createRuntime(
       },
     },
   };
-  const dbRole = loaded.definition.db === undefined ? null : moduleRoleName(services.database.appRole, name);
   return { name, loaded, context, dbRole, api: undefined };
+}
+
+/** Role names of the modules with a database, collecting every name that is too long. */
+function moduleDbRoles(modules: LoadedModule[], appRole: string): Map<string, string> {
+  const roles = new Map<string, string>();
+  const problems: string[] = [];
+  for (const { definition } of modules) {
+    if (definition.db === undefined) continue;
+    try {
+      roles.set(definition.name, moduleRoleName(appRole, definition.name));
+    } catch (error) {
+      problems.push(`${definition.name}: ${(error as Error).message}`);
+    }
+  }
+  if (problems.length > 0) throw new ConfigError(problems);
+  return roles;
 }
 
 function scopedForCurrentGuild(database: Database, role: string | null): ScopedDb {

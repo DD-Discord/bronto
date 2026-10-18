@@ -69,6 +69,21 @@ describe('module roles', () => {
     }
   });
 
+  it('leaves the connection as the app role after a transaction that rolls back', async () => {
+    const pool = new pg.Pool({ connectionString: t.appUrl, max: 1 });
+    try {
+      const failed = createScopedDb(drizzle({ client: pool }), 'g1', widgetsRole()).run(async (tx) => {
+        await tx.execute(sql`select 1`);
+        throw new Error('boom');
+      });
+      await expect(failed).rejects.toThrow('boom');
+      const { rows } = await pool.query<{ user: string }>('select current_user as "user"');
+      expect(rows[0]!.user).toBe(t.database.appRole);
+    } finally {
+      await pool.end();
+    }
+  });
+
   it('accepts the module roles it created', async () => {
     expect(await checkRoles(t.database, ['widgets'])).toEqual([]);
   });
@@ -107,6 +122,26 @@ describe('module roles', () => {
     try {
       expect(await checkRoles(database, ['widgets'])).toEqual([
         `App role "${appRole}" cannot switch to module role "${role}".`,
+      ]);
+    } finally {
+      await database.end();
+      await t.database.adminPool.query(`drop role "${role}"; drop role "${appRole}"`);
+    }
+  });
+
+  it('flags an app role that inherits a module role', async () => {
+    const appRole = `r_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+    const role = moduleRoleName(appRole, 'widgets');
+    // A plain grant, as an operator might write by hand, inherits by default.
+    await t.database.adminPool.query(
+      `create role "${appRole}" login; create role "${role}" nologin; grant "${role}" to "${appRole}"`,
+    );
+    const appUrl = new URL(t.appUrl);
+    appUrl.username = appRole;
+    const database = createDatabase({ adminUrl: t.adminUrl, appUrl: appUrl.toString() });
+    try {
+      expect(await checkRoles(database, ['widgets'])).toEqual([
+        `App role "${appRole}" inherits module role "${role}"; grant it WITH INHERIT FALSE.`,
       ]);
     } finally {
       await database.end();

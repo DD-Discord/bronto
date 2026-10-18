@@ -325,7 +325,8 @@ async function addPoints(ctx: HandlerContext<KarmaConfig>, userId: string): Prom
 - **Cross-server work** is possible but deliberate: `ctx.db.forGuild(otherGuildId)`.
 - **Only your own tables:** each module's database work runs as its own Postgres role, which can use only the tables
   in the module's schema. Querying another module's or core's tables fails with "permission denied", even if you
-  import their table objects.
+  import their table objects. The roles guard against mistakes, not against deliberately hostile module code, which
+  could switch roles with raw SQL.
 
 ## 5. Slash commands
 
@@ -560,7 +561,8 @@ export const badgesModule = defineModule({
   An API called outside a handler throws.
 - **`dependsOn` matters elsewhere too.** Modules load in dependency order. `/modules enable badges` asks to turn on
   `karma` first, and `/modules disable karma` asks to turn off `badges` first. Cleanup runs dependents first.
-- **Boundaries:** you can't read another module's tables; the database refuses it (section 4). Ask through its API.
+- **Boundaries:** you can't read another module's tables; the database refuses it (section 4), as a guard against
+  mistakes rather than hostile code. Ask through its API.
   An API's `ctx.db()` runs as the module that provides the API, so it reaches that module's tables.
 
 ## 9. Lifecycle hooks
@@ -926,7 +928,10 @@ At startup, `ensureAppRole` checks whether the app URL can log in. If it can't, 
 password, using the admin connection. So a fresh Postgres needs no init script, and changing the password in the
 environment takes effect on the next start. After migrations, `ensureModuleRoles` creates missing module roles and
 their memberships. `checkRoles` then refuses an app role or module role that is a superuser, has `BYPASSRLS`, or is a
-member of the admin role, a module role that is missing, and one the app role can't switch to.
+member of the admin role, a module role that is missing, one the app role can't switch to, and one the app role
+inherits (which would give the plain app role the module's privileges). Module roles are a guard against mistakes:
+`SET ROLE` is checked against the session's login role, so module code running raw `reset role` or `set role` could
+still switch roles.
 
 ### How a server's rows stay apart
 
@@ -950,7 +955,8 @@ flowchart LR
   policy, and a foreign key to `core.guilds` that cascades on delete. Tables declared with `globalTable` are exempt.
   Views aren't allowed, since a view runs with its owner's rights.
 - **Grants are recomputed at every start** (`db/grants.ts`). `core` goes to the app role; each module schema goes to
-  its module role, after revoking everything the app role had there. Tables with row-level security get
+  its module role, after revoking everything the app role had there. The app role also loses access to the schemas of
+  migrated modules that are no longer loaded. Tables with row-level security get
   select/insert/update/delete; tables without it (global ones) get select only.
 - **Deleting a server is one statement.** Every per-server table references `core.guilds` with a cascading foreign
   key, so deleting the server's row deletes all its rows in all modules.

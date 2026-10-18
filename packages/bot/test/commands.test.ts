@@ -109,6 +109,17 @@ describe('runStart', () => {
     expect(poolsEnded()).toEqual([true, true]);
   });
 
+  it('refuses a module role name longer than Postgres allows', async () => {
+    const { deps, client } = commandDeps({ '@test/widgets': widgetsModule() });
+    const appUrl = new URL(t.appUrl);
+    appUrl.username = 'a'.repeat(60);
+    const started = runStart(await writeConfig(['@test/widgets'], appUrl.toString()), deps);
+    await expect(started).rejects.toBeInstanceOf(ConfigError);
+    await expect(started).rejects.toThrow(`Module role "${'a'.repeat(60)}_widgets" is longer than 63 bytes`);
+    expect(poolsEnded()).toEqual([true, true]);
+    expect(client.loggedInWith).toBeNull();
+  });
+
   it('refuses to start when the database is unsafe', async () => {
     const { deps, client } = commandDeps({});
     await expect(runStart(await writeConfig([], t.adminUrl), deps)).rejects.toBeInstanceOf(StartupError);

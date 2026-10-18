@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -7,7 +7,7 @@ import { guilds } from '../src/db/schema.js';
 import { createScopedDb } from '../src/db/scoped.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
 import { moduleRoleName } from '../src/db/module-roles.js';
-import { createTestDatabase, errorText, setUpSchema, widgetsDb, type TestDatabase } from './test-db.js';
+import { asModuleRole, createTestDatabase, errorText, setUpSchema, widgetsDb, type TestDatabase } from './test-db.js';
 
 let t: TestDatabase;
 
@@ -54,14 +54,10 @@ describe('createScopedDb', () => {
   });
 
   it('sees nothing and cannot write without a guild', async () => {
-    const role = moduleRoleName(t.database.appRole, 'widgets');
-    const error = await t.database.app
-      .transaction(async (tx) => {
-        await tx.execute(sql`select set_config('role', ${role}, true)`);
-        expect(await tx.select().from(widgetItems)).toEqual([]);
-        await tx.insert(widgetItems).values({ id: 'x2', guildId: 'g1', label: 'X' });
-      })
-      .catch((caught: unknown) => caught);
+    const error = await asModuleRole(t.database, 'widgets', async (tx) => {
+      expect(await tx.select().from(widgetItems)).toEqual([]);
+      await tx.insert(widgetItems).values({ id: 'x2', guildId: 'g1', label: 'X' });
+    }).catch((caught: unknown) => caught);
     expect(errorText(error)).toMatch(/row-level security/);
   });
 

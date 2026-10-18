@@ -1,3 +1,4 @@
+import { MIGRATIONS_SCHEMA } from './constants.js';
 import type { Database, Queryable } from './database.js';
 import { moduleRoleName } from './module-roles.js';
 import { assertModuleName, quoteIdent } from './names.js';
@@ -23,11 +24,7 @@ export async function grantRoles(admin: Queryable, appRole: string, modules: str
     const statements: string[] = [];
     let grantee = app;
     if (schema !== CORE) {
-      statements.push(
-        `revoke all on all tables in schema ${target} from ${app}`,
-        `revoke all on all sequences in schema ${target} from ${app}`,
-        `revoke usage on schema ${target} from ${app}`,
-      );
+      statements.push(...appRevokes(target, app));
       const role = moduleRoleName(appRole, schema);
       const { rows } = await admin.query('select 1 from pg_roles where rolname = $1', [role]);
       if (rows.length === 0) {
@@ -55,4 +52,31 @@ export async function grantRoles(admin: Queryable, appRole: string, modules: str
     // One simple-protocol query runs as one transaction, so no role sees a table without its grants.
     await admin.query(statements.join(';\n'));
   }
+}
+
+/**
+ * Takes all access from the app role on the schemas of migrated modules not in `loaded`, so a module removed from the
+ * config keeps no app role grants from an earlier start. Same concurrency rule as grantRoles.
+ */
+export async function revokeUnloadedModules(admin: Queryable, appRole: string, loaded: string[]): Promise<void> {
+  const { rows } = await admin.query<{ name: string }>(
+    `select t.table_name as "name"
+       from information_schema.tables t
+       join pg_namespace n on n.nspname = t.table_name
+      where t.table_schema = $1 and t.table_name <> $2 and not (t.table_name = any($3::text[]))
+      order by t.table_name`,
+    [MIGRATIONS_SCHEMA, CORE, loaded],
+  );
+  const app = quoteIdent(appRole);
+  for (const { name } of rows) {
+    await admin.query(appRevokes(quoteIdent(name), app).join(';\n'));
+  }
+}
+
+function appRevokes(schema: string, app: string): string[] {
+  return [
+    `revoke all on all tables in schema ${schema} from ${app}`,
+    `revoke all on all sequences in schema ${schema} from ${app}`,
+    `revoke usage on schema ${schema} from ${app}`,
+  ];
 }
