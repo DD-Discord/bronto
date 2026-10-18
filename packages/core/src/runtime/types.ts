@@ -26,7 +26,10 @@ export interface ModuleContext<TConfig = any> {
   readonly modules: ModuleApis;
 }
 
-/** Context of one handler run for one guild. */
+/**
+ * Context of one handler run for one guild. In the context an API factory receives, `guildId`, `actorId`, `db`, `queue`
+ * and `emit` resolve to the calling handler's run at each access and throw outside a handler.
+ */
 export interface HandlerContext<TConfig = any> extends ModuleContext<TConfig> {
   readonly guildId: string;
   /** User who triggered the work, or null when the bot acts on its own. */
@@ -35,10 +38,4 @@ export interface HandlerContext<TConfig = any> extends ModuleContext<TConfig> {
   /** Sends one of this module's events: after the current `db.run` transaction commits (dropped if it rolls back), or at once outside a transaction. */
   emit<P>(event: EventDefinition<P>, payload: P): void;
   readonly queue: ModuleQueue;
-}
-
-/** Context an API factory receives; API functions run inside the calling handler's guild scope. */
-export interface ApiContext<TConfig = any> extends ModuleContext<TConfig> {
-  /** Database access for the guild of the handler that called the API. */
-  db(): ScopedDb;
 }

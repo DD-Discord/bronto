@@ -23,4 +23,4 @@ export { loadModules, type LoadedModule, type ModuleImporter } from './loader.js
 export { defineModule, type ApiOf, type ModuleDefinition, type ModuleHooks } from './module.js';
 export { KeyedQueue, type QueueErrorHandler } from './queue.js';
 export { migrationTargets, schemaExpectations } from './schema-targets.js';
-export type { ApiContext, HandlerContext, ModuleApis, ModuleContext, ModuleQueue } from './types.js';
+export type { HandlerContext, ModuleApis, ModuleContext, ModuleQueue } from './types.js';

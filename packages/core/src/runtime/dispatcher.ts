@@ -4,6 +4,7 @@ import type { Database } from '../db/database.js';
 import { createScopedDb } from '../db/scoped.js';
 import type { ModuleRuntime } from './context.js';
 import type { ModuleEnablement } from './enablement.js';
+import { outsideHandlerError, runInHandlerScope, type HandlerScope } from './handler-scope.js';
 import { eventLabel, type DiscordEventName, type EventDefinition, type Listener } from './events.js';
 import type { KeyedQueue } from './queue.js';
 import type { HandlerContext } from './types.js';
@@ -111,8 +112,61 @@ export class Dispatcher {
     fn: (ctx: HandlerContext) => unknown,
     options: RunHandlerOptions = {},
   ): Promise<HandlerResult> {
-    let finished = false;
-    const ctx: HandlerContext = {
+    const state = { finished: false };
+    const contexts = new Map<ModuleRuntime, HandlerContext>();
+    const scope: HandlerScope = {
+      contextFor: (target) => {
+        // An API kept past its caller's run must not act for that run's guild and actor.
+        if (state.finished) throw outsideHandlerError();
+        let context = contexts.get(target);
+        if (context === undefined) {
+          context = this.contextFor(target, guildId, actorId, state);
+          contexts.set(target, context);
+        }
+        return context;
+      },
+    };
+    const ctx = this.contextFor(runtime, guildId, actorId, state);
+    contexts.set(runtime, ctx);
+    try {
+      // Awaiting inside the scope keeps guild and actor visible to Drizzle defaults.
+      await runInScope({ guildId, actorId, pendingEvents: null }, () =>
+        runInHandlerScope(scope, async () => {
+          await fn(ctx);
+        }),
+      );
+    } catch (error) {
+      const fields = { err: error, guildId, handler: label };
+      if (options.expectedError?.(error) === true) {
+        runtime.context.log.debug(fields, 'Handler stopped');
+      } else {
+        runtime.context.log.error(fields, 'Handler failed');
+      }
+      return { ok: false, error };
+    } finally {
+      state.finished = true;
+    }
+    return { ok: true };
+  }
+
+  /** Resolves once no handler started through handleDiscord, deliver or a module queue is still running. */
+  async idle(): Promise<void> {
+    while (this.inFlight.size > 0) {
+      await Promise.allSettled([...this.inFlight]);
+    }
+  }
+
+  /**
+   * The context of `runtime` in one handler run. APIs borrow it with the caller's guild, actor and `state`, so their
+   * emits end with the caller's run.
+   */
+  private contextFor(
+    runtime: ModuleRuntime,
+    guildId: string,
+    actorId: string | null,
+    state: { finished: boolean },
+  ): HandlerContext {
+    return {
       ...runtime.context,
       guildId,
       actorId,
@@ -121,7 +175,7 @@ export class Dispatcher {
         if (event.owner !== runtime.name) {
           throw new Error(`Module "${runtime.name}" cannot emit ${eventLabel(event)}; modules emit only their own events.`);
         }
-        if (finished) {
+        if (state.finished) {
           throw new Error(
             `Module "${runtime.name}" emitted ${eventLabel(event)} after its handler finished; emit inside the handler or a queued task.`,
           );
@@ -139,30 +193,6 @@ export class Dispatcher {
           ),
       },
     };
-    try {
-      // Awaiting inside the scope keeps guild and actor visible to Drizzle defaults.
-      await runInScope({ guildId, actorId, pendingEvents: null }, async () => {
-        await fn(ctx);
-      });
-    } catch (error) {
-      const fields = { err: error, guildId, handler: label };
-      if (options.expectedError?.(error) === true) {
-        runtime.context.log.debug(fields, 'Handler stopped');
-      } else {
-        runtime.context.log.error(fields, 'Handler failed');
-      }
-      return { ok: false, error };
-    } finally {
-      finished = true;
-    }
-    return { ok: true };
-  }
-
-  /** Resolves once no handler started through handleDiscord, deliver or a module queue is still running. */
-  async idle(): Promise<void> {
-    while (this.inFlight.size > 0) {
-      await Promise.allSettled([...this.inFlight]);
-    }
   }
 
   private async runDiscord(event: DiscordEventName, args: unknown[], guildId: string): Promise<void> {

@@ -1,13 +1,12 @@
 import type { Client } from 'discord.js';
 import type { Logger } from 'pino';
 import { ConfigError } from '../config/errors.js';
-import { currentGuildId } from '../db/context.js';
 import type { Database } from '../db/database.js';
 import { moduleRoleName } from '../db/module-roles.js';
-import { createScopedDb, type ScopedDb } from '../db/scoped.js';
+import { currentHandlerScope, outsideHandlerError } from './handler-scope.js';
 import type { LoadedModule } from './loader.js';
 import type { ApiOf, ModuleDefinition } from './module.js';
-import type { ModuleContext } from './types.js';
+import type { HandlerContext, ModuleContext } from './types.js';
 
 /** Shared services every module context is built from. */
 export interface RuntimeServices {
@@ -41,7 +40,7 @@ export function createModuleRuntimes(modules: LoadedModule[], services: RuntimeS
   for (const runtime of runtimes) {
     const factory = runtime.loaded.definition.api;
     if (factory !== undefined) {
-      runtime.api = factory({ ...runtime.context, db: () => scopedForCurrentGuild(services.database, runtime.dbRole) });
+      runtime.api = factory(apiContext(runtime));
     }
   }
   return runtimes;
@@ -92,12 +91,23 @@ function moduleDbRoles(modules: LoadedModule[], appRole: string): Map<string, st
   return roles;
 }
 
-function scopedForCurrentGuild(database: Database, role: string | null): ScopedDb {
-  const guildId = currentGuildId();
-  if (guildId === null) {
-    throw new Error('A module API used the database outside a guild handler.');
-  }
-  return createScopedDb(database.app, guildId, role);
+/**
+ * The context an API factory receives. Its handler fields resolve at each access to the calling handler's run, as
+ * this module: its database role and events, the caller's guild and actor.
+ */
+function apiContext(runtime: ModuleRuntime): HandlerContext {
+  const live = (): HandlerContext => {
+    const scope = currentHandlerScope();
+    if (scope === null) throw outsideHandlerError();
+    return scope.contextFor(runtime);
+  };
+  return Object.defineProperties({ ...runtime.context } as HandlerContext, {
+    guildId: { get: () => live().guildId, enumerable: true },
+    actorId: { get: () => live().actorId, enumerable: true },
+    db: { get: () => live().db, enumerable: true },
+    queue: { get: () => live().queue, enumerable: true },
+    emit: { get: () => live().emit, enumerable: true },
+  });
 }
 
 /**

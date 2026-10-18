@@ -5,7 +5,7 @@ import { checkCommand, type CommandDefinition } from '../interactions/commands.j
 import type { ComponentDefinition } from '../interactions/components.js';
 import type { EventDefinition, Listener } from './events.js';
 import type { LegacyImporter } from './legacy.js';
-import type { ApiContext, HandlerContext, ModuleContext } from './types.js';
+import type { HandlerContext, ModuleContext } from './types.js';
 
 export interface ModuleHooks<TConfig = any> {
   /** Runs once after the client is ready. */
@@ -43,7 +43,11 @@ export interface ModuleDefinition<TConfig = any, TApi = unknown> {
   components?: ComponentDefinition[];
   /** Discord permissions the bot needs for this module; missing ones are logged when a guild is set up. */
   botPermissions?: bigint[];
-  api?: (ctx: ApiContext<TConfig>) => TApi;
+  /**
+   * Built once at startup; `guildId`, `actorId`, `db`, `queue` and `emit` resolve to the calling handler's run, with
+   * this module's database role and events.
+   */
+  api?: (ctx: HandlerContext<TConfig>) => TApi;
   hooks?: ModuleHooks<TConfig>;
   /** Imports data of an older bot; run with `bronto import-legacy <module> <path>`. */
   importLegacy?: LegacyImporter<TConfig>;

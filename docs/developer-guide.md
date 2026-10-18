@@ -540,12 +540,15 @@ const karmaModule = defineModule<KarmaConfig, { pointsOf(userId: string): Promis
   name: 'karma',
   // ...
   api: (ctx) => ({
-    async pointsOf(userId: string) {
-      const [row] = await ctx.db().run(async (tx) => tx.select().from(points).where(eq(points.userId, userId)));
-      return row?.points ?? 0;
-    },
+    pointsOf: (userId: string) => pointsOf(ctx, userId),
   }),
 });
+
+// Shared by karma's own commands and its API: both hand over a HandlerContext.
+async function pointsOf(ctx: HandlerContext, userId: string): Promise<number> {
+  const [row] = await ctx.db.run(async (tx) => tx.select().from(points).where(eq(points.userId, userId)));
+  return row?.points ?? 0;
+}
 
 export const badgesModule = defineModule({
   name: 'badges',
@@ -559,13 +562,28 @@ export const badgesModule = defineModule({
 });
 ```
 
-- **`ctx.db()` is a function:** it returns database access for the server of whichever handler is calling the API.
-  An API called outside a handler throws.
+- **The context is a normal `HandlerContext`.** The factory runs once at startup, but `guildId`, `actorId`, `db`,
+  `queue` and `emit` are read when an API function uses them, and resolve to the handler that is calling. Reading them
+  outside a handler, or after the calling handler finished, throws `A module API was used outside a handler.`
+- **Don't destructure them in the factory.** `const { db } = ctx` in the factory body runs at startup and throws. Read
+  `ctx.db` inside the API function.
+- **Shared helpers take `HandlerContext`** (or a `Pick` of it), so a module's commands and its API can call the same
+  code.
+- **Provider or caller:** the fields mix the module providing the API with the handler calling it.
+
+  | Field | Comes from |
+  | --- | --- |
+  | `guildId`, `actorId` | the calling handler's server and actor |
+  | `db` | the provider's database role, in the caller's server; rows are attributed to the caller's actor |
+  | `emit` | the provider's own events, delivered like any emit (after the innermost `db.run` commits) |
+  | `queue` | the provider's queue in the caller's server; tasks run as the provider's handlers |
+  | `module`, `log`, `config`, `client`, `modules` | the provider |
+
 - **`dependsOn` matters elsewhere too.** Modules load in dependency order. `/modules enable badges` asks to turn on
   `karma` first, and `/modules disable karma` asks to turn off `badges` first. Cleanup runs dependents first.
 - **Boundaries:** you can't read another module's tables; the database refuses it (section 4), as a guard against
-  mistakes rather than hostile code. Ask through its API.
-  An API's `ctx.db()` runs as the module that provides the API, so it reaches that module's tables.
+  mistakes rather than hostile code. Ask through its API. An API's `ctx.db` runs as the module that provides the API,
+  so it reaches that module's tables.
 
 ## 9. Lifecycle hooks
 
@@ -838,6 +856,7 @@ packages/
 │   │   ├── loader.ts        imports module packages, validates config, sorts by dependencies
 │   │   ├── context.ts       per-module context and API construction
 │   │   ├── dispatcher.ts    runs handlers: gateway events, module events, hooks, queued tasks
+│   │   ├── handler-scope.ts the current handler run, for API contexts
 │   │   ├── events.ts        on(), defineEvent(), core events
 │   │   ├── queue.ts         KeyedQueue
 │   │   ├── enablement.ts    per-server module switches (cached)
@@ -903,6 +922,9 @@ Details:
   A dependency cycle is also a `ConfigError`.
 - **Building runtimes** (`runtime/context.ts`): each module gets a `ModuleContext` (name, child logger, settings,
   client, `modules.get`). APIs are built in dependency order, so an API factory can capture the APIs it depends on.
+  An API factory gets that context with getters for `guildId`, `actorId`, `db`, `queue` and `emit`. Each read asks
+  the current handler scope (`runtime/handler-scope.ts`, an `AsyncLocalStorage` that `runHandler` installs) for the
+  provider's context in that run, and throws outside a handler.
 - **The guild gate:** gateway events and interactions for a server wait until the start hooks have run and the server
   is set up (`lifecycle.ready`). A module never sees an event before its switches are loaded and its `guildReady` has
   run.
@@ -1004,7 +1026,9 @@ sequenceDiagram
   message costs no database round trip unless the module's handler makes one.
 - **`runHandler`** (`runtime/dispatcher.ts`) is the single place module code runs. It builds the `HandlerContext`, a
   fresh `ScopedDb`, `emit` (which delivers through `afterCommit`) and `queue` (which wraps the core `KeyedQueue` with the key
-  `<module>/<guild>/<key>`). It awaits the handler inside `runInScope` and logs failures. It returns `{ ok, error }`, so callers such as the router or the purge can react.
+  `<module>/<guild>/<key>`). It awaits the handler inside `runInScope` and a handler scope that builds the same kind of
+  context for any module whose API the handler calls: same server, actor and end, so an API's `emit` after the
+  caller's run throws. It logs failures. It returns `{ ok, error }`, so callers such as the router or the purge can react.
 - **`idle()`:** the dispatcher tracks every promise it starts. `bot.idle()` waits for these, the queues and the
   command syncs. Tests use it, and so does shutdown.
 

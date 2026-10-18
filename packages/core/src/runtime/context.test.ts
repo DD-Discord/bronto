@@ -1,11 +1,11 @@
 import type { Client } from 'discord.js';
 import { describe, expect, it } from 'vitest';
 import { captureLog } from '../testing/log.js';
-import { runInScope } from '../db/context.js';
 import type { Database } from '../db/database.js';
 import { createModuleRuntimes, type RuntimeServices } from './context.js';
 import type { LoadedModule } from './loader.js';
 import { defineModule, type ModuleDefinition } from './module.js';
+import type { HandlerContext } from './types.js';
 
 const loaded = (definition: ModuleDefinition, config: unknown = {}): LoadedModule => ({
   packageName: `@test/${definition.name}`,
@@ -70,17 +70,18 @@ describe('createModuleRuntimes', () => {
     expect((runtime?.api as { twice: (n: number) => number }).twice(1)).toBe(3);
   });
 
-  it('gives APIs database access for the calling guild only', () => {
-    let db: (() => { guildId: string }) | undefined;
+  it('throws when an API reads handler fields outside a handler', () => {
+    let ctx: HandlerContext | undefined;
     const reader = defineModule({
       name: 'reader',
-      api: (ctx) => {
-        db = ctx.db;
+      api: (c) => {
+        ctx = c;
         return {};
       },
     });
     createModuleRuntimes([loaded(reader)], services());
-    expect(() => db?.()).toThrow('A module API used the database outside a guild handler.');
-    expect(runInScope({ guildId: 'g1' }, () => db?.().guildId)).toBe('g1');
+    for (const read of [() => ctx!.guildId, () => ctx!.actorId, () => ctx!.db, () => ctx!.queue, () => ctx!.emit]) {
+      expect(read).toThrow('A module API was used outside a handler.');
+    }
   });
 });

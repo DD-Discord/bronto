@@ -421,6 +421,97 @@ describe('Dispatcher', () => {
   });
 });
 
+describe('module APIs', () => {
+  const given = defineEvent<{ to: string }>('given');
+  const queued: Array<{ module: string; guildId: string; actorId: string | null }> = [];
+  // Named widgets so its database role owns the widget items it writes.
+  const provider = defineModule({
+    name: 'widgets',
+    db: { schema: widgetsSchema, migrations: widgetsMigrations },
+    events: { given },
+    api: (ctx) => ({
+      async award(to: string) {
+        await ctx.db.run(async (tx) => {
+          await tx.insert(widgetItems).values({ id: `award-${to}`, label: ctx.actorId ?? 'bot' });
+          ctx.emit(given, { to });
+        });
+        return { guildId: ctx.guildId, actorId: ctx.actorId };
+      },
+      later(key: string) {
+        return ctx.queue.run(key, async (task) => {
+          queued.push({ module: task.module, guildId: task.guildId, actorId: task.actorId });
+        });
+      },
+    }),
+  });
+  const caller = defineModule({ name: 'caller', dependsOn: [provider] });
+  const received: Array<{ guildId: string; actorId: string | null; to: string }> = [];
+  const audience = defineModule({
+    name: 'audience',
+    listeners: [
+      on(given, (ctx, payload) => {
+        received.push({ guildId: ctx.guildId, actorId: ctx.actorId, to: payload.to });
+      }),
+    ],
+  });
+  let apiRuntimes: ModuleRuntime[];
+  let apiDispatcher: Dispatcher;
+  const callerRuntime = () => apiRuntimes.find((candidate) => candidate.name === 'caller')!;
+
+  beforeAll(() => {
+    apiRuntimes = createModuleRuntimes(
+      [provider, caller, audience].map((definition) => ({ packageName: `@test/${definition.name}`, definition, config: {} })),
+      { client: {} as Client, database: t.database, log: captureLog().log },
+    );
+    apiDispatcher = new Dispatcher({
+      runtimes: apiRuntimes,
+      database: t.database,
+      enablement,
+      queue: new KeyedQueue(() => undefined),
+    });
+  });
+
+  beforeEach(() => {
+    received.length = 0;
+    queued.length = 0;
+  });
+
+  it("resolves an API's handler fields to the calling run", async () => {
+    let awarded: unknown;
+    const result = await apiDispatcher.runHandler(callerRuntime(), 'g1', 'u1', 'test', async (ctx) => {
+      awarded = await ctx.modules.get(provider).award('u2');
+    });
+    expect(result).toEqual({ ok: true });
+    expect(awarded).toEqual({ guildId: 'g1', actorId: 'u1' });
+    const [row] = await t.database.admin.select().from(widgetItems).where(eq(widgetItems.id, 'award-u2'));
+    expect(row).toMatchObject({ guildId: 'g1', createdBy: 'u1', label: 'u1' });
+    await apiDispatcher.idle();
+    expect(received).toEqual([{ guildId: 'g1', actorId: 'u1', to: 'u2' }]);
+  });
+
+  it('runs tasks an API queues as the providing module', async () => {
+    await apiDispatcher.runHandler(callerRuntime(), 'g1', 'u1', 'test', async (ctx) => {
+      await ctx.modules.get(provider).later('k');
+    });
+    expect(queued).toEqual([{ module: 'widgets', guildId: 'g1', actorId: 'u1' }]);
+  });
+
+  it("refuses an API call after the caller's handler finished", async () => {
+    let late: Promise<unknown> | undefined;
+    await apiDispatcher.runHandler(callerRuntime(), 'g1', 'u1', 'test', (ctx) => {
+      const api = ctx.modules.get(provider);
+      late = new Promise((resolve) => {
+        setTimeout(() => resolve(api.award('u3')), 10);
+      });
+    });
+    await expect(late).rejects.toThrow('A module API was used outside a handler.');
+    const rows = await t.database.admin.select().from(widgetItems).where(eq(widgetItems.id, 'award-u3'));
+    expect(rows).toEqual([]);
+    await apiDispatcher.idle();
+    expect(received).toEqual([]);
+  });
+});
+
 describe('guildIdOf', () => {
   it.each([
     [{ guildId: 'g1' }, 'g1'],
