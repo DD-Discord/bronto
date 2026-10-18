@@ -116,17 +116,26 @@ points at the `.ts` file. Pin exact versions, the same ones the core uses:
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate"
   },
-  "dependencies": {
+  "peerDependencies": {
     "@bronto/core": "workspace:*",
     "discord.js": "14.27.0",
     "drizzle-orm": "0.45.4",
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "drizzle-kit": "0.31.11"
+    "@bronto/core": "workspace:*",
+    "discord.js": "14.27.0",
+    "drizzle-kit": "0.31.11",
+    "drizzle-orm": "0.45.4",
+    "zod": "4.6.7"
   }
 }
 ```
+
+The framework libraries are peer dependencies: a peer means "use the host's copy", so discord.js and drizzle-orm exist
+once in the running bot and `instanceof` and drizzle's `is()` checks work across the module boundary. pnpm warns when
+the host's version does not match the declared one. The `devDependencies` copies are only for the module's own
+typecheck and tests.
 
 `tsconfig.json`:
 
