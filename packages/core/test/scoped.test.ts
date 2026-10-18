@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterCommit } from '../src/db/context.js';
 import { guilds } from '../src/db/schema.js';
 import { createScopedDb } from '../src/db/scoped.js';
 import { widgetItems } from './fixtures/widgets/schema.js';
@@ -79,5 +80,25 @@ describe('createScopedDb', () => {
     } finally {
       await pool.end();
     }
+  });
+
+  it('clears pending events between transactions', async () => {
+    const delivered: string[] = [];
+    const db = createScopedDb(t.database.app, 'g1');
+    await db.run(async () => afterCommit(() => delivered.push('first')));
+    await db
+      .run(async () => {
+        afterCommit(() => delivered.push('rolled back'));
+        throw new Error('x');
+      })
+      .catch(() => undefined);
+    await db.run(async () => afterCommit(() => delivered.push('third')));
+    expect(delivered).toEqual(['first', 'third']);
+  });
+
+  it('delivers at once outside a transaction', () => {
+    const delivered: string[] = [];
+    afterCommit(() => delivered.push('now'));
+    expect(delivered).toEqual(['now']);
   });
 });

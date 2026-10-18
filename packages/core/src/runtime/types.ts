@@ -32,7 +32,7 @@ export interface HandlerContext<TConfig = any> extends ModuleContext<TConfig> {
   /** User who triggered the work, or null when the bot acts on its own. */
   readonly actorId: string | null;
   readonly db: ScopedDb;
-  /** Queues one of this module's events; it is delivered only if the handler succeeds. */
+  /** Sends one of this module's events: after the current `db.run` transaction commits (dropped if it rolls back), or at once outside a transaction. */
   emit<P>(event: EventDefinition<P>, payload: P): void;
   readonly queue: ModuleQueue;
 }

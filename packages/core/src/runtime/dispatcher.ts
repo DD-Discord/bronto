@@ -1,5 +1,5 @@
 import { Collection, Events, Guild } from 'discord.js';
-import { runInScope } from '../db/context.js';
+import { afterCommit, runInScope } from '../db/context.js';
 import type { Database } from '../db/database.js';
 import { createScopedDb } from '../db/scoped.js';
 import type { ModuleRuntime } from './context.js';
@@ -101,8 +101,7 @@ export class Dispatcher {
   }
 
   /**
-   * Runs `fn` as the module's handler for one guild. Its emitted events are delivered only when it succeeds; a thrown
-   * error is logged and returned.
+   * Runs `fn` as the module's handler for one guild. A thrown error is logged and returned.
    */
   async runHandler(
     runtime: ModuleRuntime,
@@ -112,7 +111,6 @@ export class Dispatcher {
     fn: (ctx: HandlerContext) => unknown,
     options: RunHandlerOptions = {},
   ): Promise<HandlerResult> {
-    const emitted: Array<() => void> = [];
     let finished = false;
     const ctx: HandlerContext = {
       ...runtime.context,
@@ -128,7 +126,7 @@ export class Dispatcher {
             `Module "${runtime.name}" emitted ${eventLabel(event)} after its handler finished; emit inside the handler or a queued task.`,
           );
         }
-        emitted.push(() => this.deliver(event, payload, guildId, actorId));
+        afterCommit(() => this.deliver(event, payload, guildId, actorId));
       },
       queue: {
         run: (key, task) =>
@@ -143,7 +141,7 @@ export class Dispatcher {
     };
     try {
       // Awaiting inside the scope keeps guild and actor visible to Drizzle defaults.
-      await runInScope({ guildId, actorId }, async () => {
+      await runInScope({ guildId, actorId, pendingEvents: null }, async () => {
         await fn(ctx);
       });
     } catch (error) {
@@ -157,7 +155,6 @@ export class Dispatcher {
     } finally {
       finished = true;
     }
-    for (const send of emitted) send();
     return { ok: true };
   }
 

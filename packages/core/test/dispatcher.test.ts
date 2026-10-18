@@ -123,15 +123,58 @@ describe('Dispatcher', () => {
     expect(seen).toEqual([{ module: 'beta', guildId: 'g1', actorId: 'u1', detail: 1 }]);
   });
 
-  it('drops emitted events when the handler fails afterwards', async () => {
-    const error = new Error('late failure');
-    const result = await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', (ctx) => {
-      ctx.emit(counted, { n: 2 });
-      throw error;
+  it('delivers an event emitted in a transaction once it commits', async () => {
+    const order: string[] = [];
+    await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', async (ctx) => {
+      await ctx.db.run(async () => {
+        ctx.emit(counted, { n: 1 });
+        order.push(`in transaction: ${seen.length}`);
+      });
+      order.push(`after commit: ${seen.length}`);
+      throw new Error('later failure');
     });
-    expect(result).toEqual({ ok: false, error });
+    await dispatcher.idle();
+    expect(order).toEqual(['in transaction: 0', 'after commit: 1']);
+    expect(seen.map((entry) => entry.detail)).toEqual([1]);
+  });
+
+  it('drops events of a transaction that rolls back', async () => {
+    await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', async (ctx) => {
+      await ctx
+        .db.run(async () => {
+          ctx.emit(counted, { n: 2 });
+          throw new Error('rollback');
+        })
+        .catch(() => undefined);
+    });
     await dispatcher.idle();
     expect(seen).toEqual([]);
+  });
+
+  it('delivers events of a nested run with the innermost transaction', async () => {
+    await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', async (ctx) => {
+      await ctx
+        .db.run(async () => {
+          await ctx.db.run(async () => {
+            ctx.emit(counted, { n: 5 });
+          });
+          ctx.emit(counted, { n: 6 });
+          throw new Error('outer rollback');
+        })
+        .catch(() => undefined);
+    });
+    await dispatcher.idle();
+    expect(seen.map((entry) => entry.detail)).toEqual([5]);
+  });
+
+  it('delivers an event emitted outside a transaction at once', async () => {
+    let seenDuringHandler = -1;
+    await dispatcher.runHandler(runtime('alpha'), 'g1', null, 'test', async (ctx) => {
+      ctx.emit(counted, { n: 3 });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      seenDuringHandler = seen.length;
+    });
+    expect(seenDuringHandler).toBe(1);
   });
 
   it("refuses to emit another module's event", async () => {

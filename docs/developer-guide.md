@@ -516,8 +516,10 @@ export default defineModule({
 ctx.emit(karmaEvents.given, { from: ctx.actorId!, to: user.id, total });
 ```
 
-- **Delivered only on success:** an emitted event is delivered after the handler succeeds. If the handler throws
-  after `emit`, nothing is delivered. `emit` after the handler returned throws.
+- **Delivered when the data is committed:** an `emit` inside `ctx.db.run(…)` is delivered after that transaction
+  commits and dropped if it rolls back, so listeners can read what the transaction wrote. In nested runs the innermost
+  run counts. An `emit` outside a run is delivered at once. A handler that throws later does not withdraw events
+  already delivered. `emit` after the handler returned throws.
 - **Who receives it:** listeners in other modules subscribe with `on(karmaEvents.given, (ctx, payload) => …)`. Only
   modules enabled in that server receive it. Each listener runs as its own handler, with the same server and actor.
 - **Owned events:** a module can only emit its own events.
@@ -601,7 +603,7 @@ await ctx.queue.run(channelId, async (task) => {
   ("latest wins"), so a burst of 50 requests becomes the running task plus one follow-up. Use it for work where only
   the newest request matters, such as "repost", "re-render" or "re-sync".
 - `run` resolves when this task finishes. If a newer task replaced it, `run` resolves when the newer one finishes.
-- Each task is a handler run: its errors are logged, and its events are delivered when it succeeds.
+- Each task is a handler run: its errors are logged, and its events follow the same rule as in a handler: after the surrounding `db.run` commits, or at once outside one.
 - A task that was queued before the module was switched off in the server doesn't run.
 - **A task must never wait for a task with its own key.** The inner task waits for the outer one, which waits for the
   inner one, so neither finishes.
@@ -963,7 +965,7 @@ sequenceDiagram
     D->>E: isEnabled(guildId, module)? (in-memory)
     D->>H: runHandler: build ctx, runInScope({guildId, actorId}), await handler
     H-->>D: ok / throws (logged with module, guild, handler)
-    D->>D: on success: deliver emitted events (fire and forget)
+    Note over H,D: ctx.emit: after the db.run commit (dropped on rollback), or at once outside a run
 ```
 
 - **Listener table:** `bot.ts` attaches one discord.js listener per gateway event that at least one module listens to.
@@ -975,9 +977,8 @@ sequenceDiagram
 - **Steady state is cheap:** `lifecycle.ready` returns the cached set-up promise and `isEnabled` is a map lookup. A
   message costs no database round trip unless the module's handler makes one.
 - **`runHandler`** (`runtime/dispatcher.ts`) is the single place module code runs. It builds the `HandlerContext`, a
-  fresh `ScopedDb`, `emit` (which collects events) and `queue` (which wraps the core `KeyedQueue` with the key
-  `<module>/<guild>/<key>`). It awaits the handler inside `runInScope` and logs failures. After a success it delivers
-  the collected events. It returns `{ ok, error }`, so callers such as the router or the purge can react.
+  fresh `ScopedDb`, `emit` (which delivers through `afterCommit`) and `queue` (which wraps the core `KeyedQueue` with the key
+  `<module>/<guild>/<key>`). It awaits the handler inside `runInScope` and logs failures. It returns `{ ok, error }`, so callers such as the router or the purge can react.
 - **`idle()`:** the dispatcher tracks every promise it starts. `bot.idle()` waits for these, the queues and the
   command syncs. Tests use it, and so does shutdown.
 
