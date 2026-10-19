@@ -42,6 +42,14 @@ Options:
 - `log-channel` (a text or announcement channel, or a public or announcement thread): where reports go. Rules logging to
   the same channel share one webhook.
 
+## Import from an older bot
+
+`bronto import-legacy @bronto/autodelete <path> [--dry-run]` reads the data folder of an older auto-delete bot
+(`<server>/channels/<channel>.json` and `<server>/channels/<channel>/<member>.json`) into rules, tracked posts and
+cooldowns. A report webhook is reused when it is still valid; otherwise set `log-channel` by hand. Existing rules are
+left as they are, so the import can be run again. Message texts and names in the old files are never read. A dry run
+reports counts without calling Discord.
+
 ## Privacy
 
 The database holds IDs and timestamps only: which message belongs to which member, and when a member last posted. It

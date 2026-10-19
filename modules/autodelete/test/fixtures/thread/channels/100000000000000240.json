@@ -1,0 +1,14 @@
+{
+  "channelId": "100000000000000240",
+  "channelName": "fixture-channel",
+  "enabled": true,
+  "deleteOnSend": true,
+  "deleteOnLeave": false,
+  "cooldown": 0,
+  "reportDeletionViaDm": false,
+  "webhookUrl": "https://discord.com/api/webhooks/100000000000000301/fixture-secret-token_2",
+  "webhookThreadId": "100000000000000013",
+  "createdAt": {
+    "$date": "2024-01-01T00:00:00.000Z"
+  }
+}

@@ -5,6 +5,7 @@ import { autodeleteConfigSchema, type AutodeleteConfig } from './config.js';
 import * as schema from './db/schema.js';
 import { rules } from './db/schema.js';
 import { createRestAutodeleteDiscord, type AutodeleteDiscord } from './discord.js';
+import { importLegacyAutodelete } from './legacy.js';
 import { RuleIndex } from './rule-index.js';
 import { silentNotifier, Tracker, type Notifier } from './tracker.js';
 
@@ -40,6 +41,7 @@ export function createAutodeleteModule(options: AutodeleteModuleOptions = {}): M
       on(Events.GuildMemberRemove, (ctx, member) => tracker.onLeave(ctx, member)),
     ],
     commands: { autodelete: createAutodeleteCommand({ index, discord }) },
+    importLegacy: (ctx, path) => importLegacyAutodelete(ctx, path, discordFor(ctx.client)),
     hooks: {
       guildReady: async (ctx) => {
         const rows = await ctx.db.run(async (tx) => tx.select().from(rules));
