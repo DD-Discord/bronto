@@ -130,6 +130,17 @@ describe('send', () => {
     expect(body.get('files[0]')).not.toBeNull();
   });
 
+  it('keeps the message and sender out of errors', async () => {
+    const failed = setup(() => ({ status: 400, json: { code: 50035, message: 'bad' } }));
+    const failure = await failed.webhooks
+      .send({ ...known, threadId: null }, { content: 'secret text', files: [{ name: 'post.txt', data: Buffer.from('secret file') }] }, { username: 'Secret Name', avatarUrl: 'https://example.com/secret.png' })
+      .catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(Error);
+    const logged = JSON.stringify(failure, Object.getOwnPropertyNames(failure));
+    for (const leak of ['secret text', 'secret file', 'Secret Name', 'secret.png']) expect(logged).not.toContain(leak);
+    expect(Object.keys(failure as object)).not.toContain('requestBody');
+  });
+
   it('redacts the token from errors and maps unknown webhooks', async () => {
     const failed = setup(() => ({ status: 500, json: { message: 'boom' } }));
     const failure = (await failed.webhooks.send({ ...known, threadId: null }, { content: 'x' }).catch((e: unknown) => e)) as Error & {

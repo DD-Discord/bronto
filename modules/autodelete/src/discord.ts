@@ -1,4 +1,4 @@
-import { createWebhooks, type WebhookMessage, type Webhooks } from '@bronto/core';
+import { createWebhooks, stripRequestBody, type WebhookMessage, type Webhooks } from '@bronto/core';
 import { DiscordAPIError, RESTJSONErrorCodes, Routes, type APIMessage, type Client } from 'discord.js';
 
 export interface FetchedPost {
@@ -75,7 +75,7 @@ export function createRestAutodeleteDiscord(client: Pick<Client, 'rest'>): Autod
         return 'sent';
       } catch (error) {
         if (codeOf(error) === RESTJSONErrorCodes.CannotSendMessagesToThisUser) return 'closed';
-        throw error;
+        throw stripRequestBody(error);
       }
     },
   };

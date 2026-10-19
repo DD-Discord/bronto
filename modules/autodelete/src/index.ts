@@ -34,7 +34,7 @@ export function createAutodeleteModule(options: AutodeleteModuleOptions = {}): M
     partials: [Partials.Message, Partials.GuildMember],
     config: autodeleteConfigSchema,
     db: { schema, migrations: new URL('../drizzle/', import.meta.url) },
-    botPermissions: [PermissionFlagsBits.ManageMessages],
+    botPermissions: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages],
     listeners: [
       on(Events.MessageCreate, (ctx, message) => tracker.onMessage(ctx, message)),
       on(Events.MessageDelete, (ctx, message) => tracker.onDelete(ctx, message.channelId, [message.id])),

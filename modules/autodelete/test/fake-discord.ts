@@ -25,6 +25,8 @@ export class FakeAutodeleteDiscord implements AutodeleteDiscord {
   readonly dms: { userId: string; message: WebhookMessage }[] = [];
   readonly deletedPosts: string[] = [];
   missingWebhookPermission = false;
+  /** Makes `fetchPost` throw, as without Read Message History. */
+  fetchFails = false;
   /** Makes `sendDm` report closed DMs. */
   dmsClosed = false;
   /** Channel IDs that are threads, mapped to their parent. */
@@ -81,6 +83,7 @@ export class FakeAutodeleteDiscord implements AutodeleteDiscord {
 
   async fetchPost(_channelId: string, messageId: string): Promise<FetchedPost | null> {
     this.calls.push('fetchPost');
+    if (this.fetchFails) throw new Error('Missing Access');
     return this.posts.get(messageId)?.post ?? null;
   }
 

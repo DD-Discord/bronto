@@ -101,9 +101,16 @@ function isPermissionError(error: unknown): boolean {
   return code === RESTJSONErrorCodes.MissingAccess || code === RESTJSONErrorCodes.MissingPermissions;
 }
 
-/** Removes a webhook token from a REST error's url and message so it never reaches logs. */
+/** Removes the request body (message text, files, sender) from a REST error so it never reaches logs. */
+export function stripRequestBody<T>(error: T): T {
+  if (error instanceof Error && 'requestBody' in error) delete (error as { requestBody?: unknown }).requestBody;
+  return error;
+}
+
+/** Removes a webhook token from a REST error's url and message, and its request body, so none reaches logs. */
 function redactToken(error: unknown, token: string): unknown {
   if (!(error instanceof Error)) return error;
+  stripRequestBody(error);
   const target = error as Error & { url?: unknown };
   if (typeof target.url === 'string') target.url = target.url.replaceAll(token, '…');
   error.message = error.message.replaceAll(token, '…');

@@ -36,7 +36,7 @@ below the new message. The sticky is a copy of a template message (text and embe
 Stickies work in text, announcement and voice channels and in threads. Threads post through a webhook on their parent
 channel; in a private thread the bot must be added to the thread or have Manage Threads. If someone deletes the webhook, the module creates a new one
 on the next repost. Changing the template message later does not change the sticky; run `/sticky edit` with the link
-again.
+again. Mentions in a template render but never ping anyone.
 
 ## Importing from the previous Sticky bot
 

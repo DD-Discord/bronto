@@ -145,6 +145,51 @@ describe('new posts', () => {
     ]);
   });
 
+  it('ignores a message that was already handled', async () => {
+    await start();
+    await insertRule(t, { channelId: CHANNEL, cooldownMs: DAY });
+    await ready(ab!);
+    const message = fakeMessage(CHANNEL, { at: at(0) });
+    await say(message);
+    await say(message);
+    expect(await postRows(t)).toHaveLength(1);
+    expect(discord.deletedPosts).toEqual([]);
+    expect(notifier.calls).toEqual([]);
+  });
+
+  it('still deletes and reports when the post cannot be fetched', async () => {
+    await start();
+    await insertRule(t, { channelId: CHANNEL, cooldownMs: DAY });
+    await ready(ab!);
+    const first = fakeMessage(CHANNEL, { at: at(0) });
+    const second = fakeMessage(CHANNEL, { at: at(HOUR), content: 'Second' });
+    await say(first);
+    discord.fetchFails = true;
+    await say(second);
+    expect(discord.deletedPosts).toEqual([second.id]);
+    expect(notifier.calls).toEqual([
+      expect.objectContaining({
+        kind: 'rejected',
+        rejected: { messageId: second.id, postedAt: at(HOUR), post: null, outcome: 'deleted' },
+        current: { messageId: first.id, post: null },
+      }),
+    ]);
+    expect(JSON.stringify(ab!.lines)).not.toContain('Second');
+  });
+
+  it('still deletes a replaced post when it cannot be fetched', async () => {
+    await start();
+    await insertRule(t, { channelId: CHANNEL, keepLatest: true });
+    await ready(ab!);
+    const first = fakeMessage(CHANNEL, { at: at(0) });
+    const second = fakeMessage(CHANNEL, { at: at(HOUR) });
+    await say(first);
+    discord.fetchFails = true;
+    await say(second);
+    expect(discord.deletedPosts).toEqual([first.id]);
+    expect(notifier.calls).toEqual([expect.objectContaining({ kind: 'replaced', removed: expect.objectContaining({ post: null, outcome: 'deleted' }) })]);
+  });
+
   it('rejects without a current post when the member has none left', async () => {
     await start();
     await insertRule(t, { channelId: CHANNEL, cooldownMs: DAY });

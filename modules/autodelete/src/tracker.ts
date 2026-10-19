@@ -117,7 +117,7 @@ export class Tracker {
       const { rule, current, nextPostAt } = decision;
       await this.guarded(ctx, channelId, message.id, async () => {
         const currentPost =
-          current === null ? null : { messageId: current.messageId, post: await discord.fetchPost(channelId, current.messageId) };
+          current === null ? null : { messageId: current.messageId, post: await this.fetchOrNull(ctx, discord, channelId, current.messageId) };
         const removal = await this.remove(ctx, discord, channelId, message.id, postedAtOf(message.id));
         await this.notifier.rejected(ctx, rule, info, removal, currentPost, nextPostAt);
       });
@@ -131,7 +131,7 @@ export class Tracker {
         const newPost =
           newestId === message.id
             ? { messageId: message.id, content: message.content }
-            : { messageId: newestId, content: (await discord.fetchPost(channelId, newestId))?.content ?? '' };
+            : { messageId: newestId, content: (await this.fetchOrNull(ctx, discord, channelId, newestId))?.content ?? '' };
         const removal = await this.remove(ctx, discord, channelId, post.messageId, post.postedAt);
         await this.notifier.replaced(ctx, rule, info, removal, newPost);
       });
@@ -218,6 +218,9 @@ export class Tracker {
       // The rule may have been deleted or disabled since the index lookup; the share lock keeps it until commit.
       const [rule] = await tx.select().from(rules).where(eq(rules.channelId, channelId)).for('share');
       if (rule === undefined || !rule.enabled) return null;
+      // A replayed event: the message was handled already, and judging it again would act on its own accepted post.
+      const [known] = await tx.select({ messageId: posts.messageId }).from(posts).where(eq(posts.messageId, messageId));
+      if (known !== undefined) return null;
       const member = and(eq(cooldowns.channelId, channelId), eq(cooldowns.userId, userId));
 
       const inserted = await tx
@@ -263,6 +266,16 @@ export class Tracker {
     });
   }
 
+  /** A post's content for a report; null when it cannot be fetched, so the post is still removed. Logs ids only. */
+  private async fetchOrNull(ctx: AutodeleteContext, discord: AutodeleteDiscord, channelId: string, messageId: string): Promise<FetchedPost | null> {
+    try {
+      return await discord.fetchPost(channelId, messageId);
+    } catch (error) {
+      ctx.log.warn({ channelId, messageId, code: (error as { code?: unknown }).code }, 'Fetching a post failed; reporting it without text');
+      return null;
+    }
+  }
+
   /** Fetches a post for the report, then deletes it. */
   private async remove(
     ctx: AutodeleteContext,
@@ -271,7 +284,7 @@ export class Tracker {
     messageId: string,
     postedAt: Date,
   ): Promise<Removal> {
-    const post = await discord.fetchPost(channelId, messageId);
+    const post = await this.fetchOrNull(ctx, discord, channelId, messageId);
     const outcome = await discord.deletePost(channelId, messageId);
     if (outcome === 'forbidden') ctx.log.warn({ channelId, messageId }, 'Missing permission to delete a post');
     return { messageId, postedAt, post, outcome };

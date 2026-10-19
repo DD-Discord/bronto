@@ -42,4 +42,12 @@ describe('createRestAutodeleteDiscord', () => {
     const closed = fakeDiscord((_method, path) => (path === '/users/@me/channels' ? { status: 200, json: { id: '77' } } : error(50007, 403)));
     expect(await closed.discord.sendDm('9', { content: 'Hello' })).toBe('closed');
   });
+
+  it('keeps the message out of a failed DM', async () => {
+    const failing = fakeDiscord((_method, path) => (path === '/users/@me/channels' ? { status: 200, json: { id: '77' } } : error(50035, 400)));
+    const failure = await failing.discord.sendDm('9', { content: 'secret text', files: [{ name: 'post.txt', data: Buffer.from('secret file') }] }).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(Error);
+    expect(JSON.stringify(failure, Object.getOwnPropertyNames(failure))).not.toContain('secret');
+    expect(Object.keys(failure as object)).not.toContain('requestBody');
+  });
 });
