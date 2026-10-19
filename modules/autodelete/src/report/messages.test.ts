@@ -106,6 +106,11 @@ describe('reportMessage', () => {
     expect(diff.match(/```/g)).toHaveLength(2);
   });
 
+  it('escapes longer runs of backticks', () => {
+    const message = reportMessage('left', { ...base, removedText: `x ${'`'.repeat(5)} y ${'`'.repeat(8)} z` });
+    expect(texts(message).find((text) => text.includes('Removed post'))!.match(/```/g)).toHaveLength(2);
+  });
+
   it('mentions never ping', () => {
     const message = reportMessage('left', { ...base, removedText: '@everyone <@&123> <@456>' });
     expect(message.allowedMentions).toEqual({ parse: [] });

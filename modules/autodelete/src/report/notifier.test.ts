@@ -1,5 +1,6 @@
 import { captureLog } from '@bronto/core/testing';
 import { UnknownWebhookError } from '@bronto/core';
+import { DiscordAPIError } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../../packages/core/test/test-db.js';
 import { autodeleteConfigSchema } from '../config.js';
@@ -150,5 +151,34 @@ describe('createNotifier', () => {
     await notifier().replaced(ctx, rule, member, removal(), newPost);
     expect(discord.reports).toHaveLength(0);
     expect(lines.some((line) => line.level === 40)).toBe(true);
+  });
+
+  it('resends once without the username when Discord rejects it', async () => {
+    const rule = await ruleWithLog();
+    const sent: unknown[] = [];
+    discord.send = async (_target, _message, options) => {
+      sent.push(options);
+      if (options?.username !== undefined) throw new DiscordAPIError({ message: 'Invalid Form Body', code: 50035 }, 50035, 400, 'POST', 'url', {});
+      return '1';
+    };
+    await notifier().replaced(ctx, rule, { ...member, displayName: 'Discord fan' }, removal(), newPost);
+    expect(sent).toEqual([{ username: 'Discord fan', avatarUrl: member.avatarUrl }, { avatarUrl: member.avatarUrl }]);
+  });
+
+  it('does not split a character when cutting a long name', async () => {
+    const rule = await ruleWithLog();
+    await notifier().replaced(ctx, rule, { ...member, displayName: '\u{1F600}'.repeat(90) }, removal(), newPost);
+    expect(Array.from(discord.reports[0]!.options!.username!)).toHaveLength(80);
+  });
+
+  it('warns and skips the report when the log channel is gone on the first send', async () => {
+    const rule = await ruleWithLog();
+    discord.send = async () => {
+      throw new DiscordAPIError({ message: 'Unknown Channel', code: 10003 }, 10003, 404, 'POST', 'url', {});
+    };
+    await notifier().replaced(ctx, rule, member, removal(), newPost);
+    expect(lines.filter((line) => line.level === 40)).toEqual([expect.objectContaining({ channelId: LOG_CHANNEL })]);
+    expect(JSON.stringify(lines)).not.toContain(rule.logWebhookToken!);
+    expect(discord.calls).not.toContain('ensureWebhook');
   });
 });

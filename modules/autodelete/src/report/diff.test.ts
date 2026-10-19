@@ -46,4 +46,9 @@ describe('fenced', () => {
     expect(block.match(/```/g)).toHaveLength(2);
     expect(block).toContain('`​`​`');
   });
+
+  it.each([5, 8, 3, 4])('leaves no fence in a run of %d backticks', (count) => {
+    const block = fenced(`a${'`'.repeat(count)}b`, 'diff');
+    expect(block.match(/```/g)).toHaveLength(2);
+  });
 });

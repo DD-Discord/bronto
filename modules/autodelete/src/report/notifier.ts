@@ -1,4 +1,4 @@
-import { MissingWebhookPermissionError, UnknownWebhookError, type WebhookMessage } from '@bronto/core';
+import { MissingWebhookPermissionError, UnknownWebhookError, type WebhookMessage, type WebhookSendOptions, type WebhookTarget } from '@bronto/core';
 import { DiscordAPIError, RESTJSONErrorCodes } from 'discord.js';
 import { eq } from 'drizzle-orm';
 import { rules, type Rule } from '../db/schema.js';
@@ -8,6 +8,19 @@ import { dmMessage, reportMessage, type ReportKind, type ReportNote } from './me
 
 /** Discord's limit for a webhook's username. */
 const MAX_USERNAME = 80;
+
+/** Discord refuses some webhook usernames (such as ones containing "discord") with Invalid Form Body. */
+const isRejectedUsername = (error: unknown): boolean => error instanceof DiscordAPIError && error.code === 50035;
+
+/** Sends once; a rejected username is sent again without it, so the report arrives under the webhook's own name. */
+async function sendReport(discord: AutodeleteDiscord, target: WebhookTarget, message: WebhookMessage, options: WebhookSendOptions) {
+  try {
+    await discord.send(target, message, options);
+  } catch (error) {
+    if (!isRejectedUsername(error)) throw error;
+    await discord.send(target, message, { avatarUrl: options.avatarUrl });
+  }
+}
 
 /** The log channel is gone or the bot cannot see it. */
 const isChannelLost = (error: unknown): boolean =>
@@ -41,15 +54,19 @@ export function createNotifier(discordFor: (ctx: AutodeleteContext) => Autodelet
     }
   }
 
+  const dropped = (ctx: AutodeleteContext, rule: Rule) =>
+    ctx.log.warn({ channelId: rule.logChannelId }, 'Dropped a report: the log channel or webhook is not usable');
+
   /** Posts the report as the member; a deleted webhook is replaced once. A report that cannot be sent is dropped. */
   async function report(ctx: AutodeleteContext, discord: AutodeleteDiscord, rule: Rule, member: MemberInfo, message: WebhookMessage) {
     if (rule.logChannelId === null || rule.logWebhookId === null || rule.logWebhookToken === null) return;
-    const options = { username: member.displayName.slice(0, MAX_USERNAME), avatarUrl: member.avatarUrl };
+    const options = { username: Array.from(member.displayName).slice(0, MAX_USERNAME).join(''), avatarUrl: member.avatarUrl };
     const stored = { id: rule.logWebhookId, token: rule.logWebhookToken };
     try {
-      await discord.send({ ...stored, threadId: rule.logThreadId }, message, options);
+      await sendReport(discord, { ...stored, threadId: rule.logThreadId }, message, options);
       return;
     } catch (error) {
+      if (isChannelLost(error)) return dropped(ctx, rule);
       if (!(error instanceof UnknownWebhookError)) throw error;
     }
     try {
@@ -60,11 +77,10 @@ export function createNotifier(discordFor: (ctx: AutodeleteContext) => Autodelet
           .set({ logWebhookId: webhook.id, logWebhookToken: webhook.token, logThreadId: webhook.threadId })
           .where(eq(rules.channelId, rule.channelId)),
       );
-      await discord.send(webhook, message, options);
+      await sendReport(discord, webhook, message, options);
     } catch (error) {
       if (error instanceof UnknownWebhookError || error instanceof MissingWebhookPermissionError || isChannelLost(error)) {
-        ctx.log.warn({ channelId: rule.logChannelId }, 'Dropped a report: the log webhook could not be replaced');
-        return;
+        return dropped(ctx, rule);
       }
       throw error;
     }
