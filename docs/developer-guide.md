@@ -549,6 +549,29 @@ export default defineModule({
   and runs `guildReady` (section 9).
 - **Isolated errors:** each module's handler runs on its own. One failing handler doesn't affect the others.
 
+### Webhooks
+
+`createWebhooks(client)` wraps the REST calls for posting through webhooks. Webhook calls authenticate with the
+webhook token, not the bot, so they work in channels the bot cannot read and are rate-limited per webhook.
+
+```ts
+const webhooks = createWebhooks(ctx.client);
+const target = await webhooks.ensureWebhook(channelId, storedCredentials, 'My bot');
+const messageId = await webhooks.send(target, { content: 'Hello' }, { username: 'My bot', silent: true });
+```
+
+- **`ensureWebhook(channelId, known, defaultName)`** takes a channel or a thread and returns a `WebhookTarget`
+  (credentials plus `threadId`). Webhooks belong to channels, so for a thread it works with the parent and sets
+  `threadId`. It reuses `known` only if the webhook still exists and belongs to that channel; otherwise it creates a
+  new one. Modules reuse only webhooks whose IDs they store, and never pick one out of a channel's webhook list.
+- **`send`** posts with `wait=true`, so it returns the message ID. It suppresses pings unless `allowedMentions` says
+  otherwise, sets `with_components=true` when `components` is given, and uploads `files` as multipart.
+- **Errors:** `UnknownWebhookError` means the webhook is deleted or its token is revoked; `MissingWebhookPermissionError`
+  means the bot lacks Manage Webhooks; `UnknownMessageError` means the message is already gone. Errors that pass
+  through have the webhook token removed, so they are safe to log.
+- **One replacement per send:** when `send` throws `UnknownWebhookError`, call `ensureWebhook` once, store the new
+  credentials and send again. Never retry in a loop.
+
 ## 8. Events and APIs between modules
 
 Modules talk to each other in two ways: **events** for notifications ("this happened") and **APIs** for questions or
@@ -938,7 +961,8 @@ packages/
 │   │   └── bot.ts           createBot: wires everything together
 │   ├── src/interactions/    commands, options, components, router, responder, command sync, /modules
 │   ├── src/crud/            defineEntity, crudSubcommands
-│   ├── src/testing/         FakeClient, fake interactions, captureLog
+│   ├── src/webhooks/        createWebhooks: ensure, send and delete through webhooks
+│   ├── src/testing/         FakeClient, fake interactions, fakeRest, captureLog
 │   └── drizzle/             core's own migrations (core.guilds, core.guild_modules)
 └── bot/                     @bronto/bot: the `bronto` CLI
     ├── src/cli.ts           argument parsing, .env loading, signal handling
@@ -1241,12 +1265,12 @@ again through a webhook. It shows most patterns from Part 1 under real load.
 | Every message in every channel arrives; most channels have no sticky | In-memory `StickyIndex` of sticky channels, so other messages never reach the database. Rebuilt in `guildReady`, dropped in `guildStopped`. | `sticky-index.ts`, `index.ts` |
 | A burst of 20 messages must not produce 20 reposts, and reposts must not overlap | `ctx.queue.run(channelId, …)`: one repost runs, one waits, newer requests replace the waiting one. | `repost.ts` `queueRepost` |
 | Optional debounce that survives restarts | Due time persisted in `sticky_state.repost_due_at`; `resume()` re-arms timers in `guildReady`. | `repost.ts` `onMessage`, `resume`, `arm` |
-| Someone deletes the webhook | `UnknownWebhookError` triggers a replacement webhook. The bot deletes the old post with its own permissions, then posts again. | `repost.ts` `repost`, `replaceWebhook` |
+| Someone deletes the webhook | `UnknownWebhookError` triggers one `ensureWebhook` call for a replacement. The bot deletes the old post with its own permissions, then posts again. | `repost.ts` `repost`, `replaceWebhook` |
 | `/sticky delete` while a repost is running | `beforeDelete` removes the index entry first, then cleans up inside the channel's queue and re-reads the row (a running repost may have replaced the webhook). | `commands.ts` |
-| Creating a sticky needs a webhook | CRUD `prepare` creates it and returns its ID and token as extra columns; `afterWrite` updates the index and queues the first post. | `commands.ts` |
+| Creating a sticky needs a webhook | CRUD `prepare` calls core's `ensureWebhook` (section 7), reusing the webhook of another sticky in the same channel, and returns its ID and token as extra columns; `afterWrite` updates the index and queues the first post. | `commands.ts` |
 | Testing without Discord | All Discord access goes through the `StickyDiscord` interface; tests pass a fake through `createStickyModule({ discord })`. | `discord.ts`, `test/fake-discord.ts` |
 | Server data is deleted | `deleteGuildData` removes posts and webhooks, treating Discord's 4xx refusals as done. | `repost.ts` `removeGuildPosts` |
-| Tokens in logs | Webhook tokens are removed from re-thrown Discord errors before they reach logs. | `discord.ts` |
+| Tokens in logs | Core's webhook helper removes webhook tokens from re-thrown Discord errors before they reach logs. | `packages/core/src/webhooks` |
 | Moving from an older bot | `importLegacy` reads the old files, reuses or replaces webhooks, and reports one line per record. | `legacy.ts` |
 
 ## 25. Where to look

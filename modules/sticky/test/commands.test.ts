@@ -50,6 +50,7 @@ beforeEach(async () => {
   t = await createTestDatabase();
   discord = new FakeStickyDiscord();
   discord.addTemplate(GUILD, TEMPLATE_CHANNEL, TEMPLATE_MESSAGE, { content: 'Read the rules.', embeds: [{ title: 'Rules' }] });
+  discord.addChannel(THREAD, { guildId: GUILD, isThread: true, parentId: CHANNEL });
   sb = await prepareStickyBot(t, discord);
   await ready(sb);
 });

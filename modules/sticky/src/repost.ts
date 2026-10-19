@@ -184,7 +184,11 @@ export class Reposter {
   }
 
   private async replaceWebhook(ctx: StickyContext, discord: StickyDiscord, sticky: Sticky): Promise<WebhookCredentials> {
-    const webhook = await discord.ensureWebhook(sticky.parentChannelId ?? sticky.channelId, ctx.config.webhookName);
+    const webhook = await discord.ensureWebhook(
+      sticky.channelId,
+      { id: sticky.webhookId, token: sticky.webhookToken },
+      ctx.config.webhookName,
+    );
     await ctx.db.run(async (tx) => {
       await tx
         .update(stickies)

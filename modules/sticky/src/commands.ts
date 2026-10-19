@@ -1,6 +1,6 @@
 import { crudSubcommands, defineCommand, opt, UserError, type CommandDefinition } from '@bronto/core';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import { stickies, stickyState } from './db/schema.js';
 import { MissingWebhookPermissionError, TemplateUnavailableError, type StickyDiscord } from './discord.js';
 import { stickyEntity } from './entity.js';
@@ -87,9 +87,17 @@ export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition 
             const target = values.channel!;
             const webhookChannelId = target.isThread() ? target.parentId : target.id;
             if (webhookChannelId === null) throw new UserError('That thread has no parent channel I can post through.');
+            // Only a webhook of another sticky is reused: its ID is stored here, so it is known to be ours.
+            const [sibling] = await ctx.db.run(async (tx) =>
+              tx
+                .select({ id: stickies.webhookId, token: stickies.webhookToken })
+                .from(stickies)
+                .where(sql`coalesce(${stickies.parentChannelId}, ${stickies.channelId}) = ${webhookChannelId}`)
+                .limit(1),
+            );
             let webhook;
             try {
-              webhook = await discord.ensureWebhook(webhookChannelId, ctx.config.webhookName);
+              webhook = await discord.ensureWebhook(target.id, sibling ?? null, ctx.config.webhookName);
             } catch (error) {
               if (error instanceof MissingWebhookPermissionError) {
                 throw new UserError(`I need the Manage Webhooks permission in <#${webhookChannelId}>.`);

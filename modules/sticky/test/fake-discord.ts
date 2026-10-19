@@ -99,13 +99,15 @@ export class FakeStickyDiscord implements StickyDiscord {
     return template.message;
   }
 
-  async ensureWebhook(channelId: string, name: string): Promise<WebhookCredentials> {
+  async ensureWebhook(channelId: string, known: WebhookCredentials | null, name: string): Promise<PostTarget> {
     this.calls.push('ensureWebhook');
     if (this.missingWebhookPermission) throw new MissingWebhookPermissionError(channelId);
-    for (const [id, webhook] of this.webhooks) {
-      if (webhook.channelId === channelId && webhook.owned) return { id, token: webhook.token };
-    }
-    return this.createWebhook(channelId, name);
+    const info = this.channels.get(channelId);
+    const threadId = info !== undefined && info !== 'forbidden' && info.isThread ? channelId : null;
+    const webhookChannelId = threadId === null ? channelId : (info as ChannelInfo).parentId!;
+    const stored = known === null ? undefined : this.webhooks.get(known.id);
+    if (known !== null && stored?.token === known.token && stored.channelId === webhookChannelId) return { ...known, threadId };
+    return { ...(await this.createWebhook(webhookChannelId, name)), threadId };
   }
 
   async createWebhook(channelId: string, _name: string): Promise<WebhookCredentials> {
