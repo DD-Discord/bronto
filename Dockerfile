@@ -8,6 +8,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/core/package.json packages/core/package.json
 COPY packages/bot/package.json packages/bot/package.json
+COPY modules/autodelete/package.json modules/autodelete/package.json
 COPY modules/sticky/package.json modules/sticky/package.json
 COPY examples/notes/package.json examples/notes/package.json
 RUN pnpm install --frozen-lockfile --prod

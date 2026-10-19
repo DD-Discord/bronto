@@ -14,4 +14,5 @@ database:
 # One key per module package to load; an empty value loads the module with its defaults.
 modules:
   "@bronto/example-notes": {}
+  # "@bronto/autodelete": {}   # needs the Message Content and Server Members intents; see modules/autodelete/README.md
   # "@bronto/sticky": {}   # needs the Message Content intent; see modules/sticky/README.md

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@bronto/core": "workspace:*",
+    "@bronto/autodelete": "workspace:*",
     "@bronto/example-notes": "workspace:*",
     "@bronto/sticky": "workspace:*",
     "discord.js": "14.27.0",
