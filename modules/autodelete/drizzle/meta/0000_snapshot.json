@@ -1,5 +1,5 @@
 {
-  "id": "8ff12012-e122-45e5-b341-97a377d69307",
+  "id": "d790a4d0-1f3e-4409-8287-8dfccdd64a8f",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -24,13 +24,13 @@
           "name": "message_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "posted_at": {
           "name": "posted_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "guild_id": {
           "name": "guild_id",

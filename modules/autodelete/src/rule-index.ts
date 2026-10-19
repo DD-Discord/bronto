@@ -26,6 +26,10 @@ export class RuleIndex {
     this.rules.delete(RuleIndex.keyOf(guildId, channelId));
   }
 
+  rulesOf(guildId: string): Rule[] {
+    return [...this.rules.values()].filter((rule) => rule.guildId === guildId);
+  }
+
   get(guildId: string, channelId: string): Rule | undefined {
     return this.rules.get(RuleIndex.keyOf(guildId, channelId));
   }

@@ -48,9 +48,10 @@ export const cooldowns = guildTable(
       .notNull()
       .references(() => rules.channelId, { onDelete: 'cascade' }),
     userId: text('user_id').notNull(),
-    /** The post the cooldown counts from; null on a row that was only created to be locked. */
-    messageId: text('message_id'),
-    postedAt: timestamp('posted_at', { withTimezone: true }),
+    /** The post the cooldown counts from. */
+    messageId: text('message_id').notNull(),
+    /** The cooldown runs from here; from the message's snowflake. */
+    postedAt: timestamp('posted_at', { withTimezone: true }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.guildId, t.channelId, t.userId] })],
 );

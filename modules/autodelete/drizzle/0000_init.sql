@@ -3,8 +3,8 @@ CREATE SCHEMA "autodelete";
 CREATE TABLE "autodelete"."cooldowns" (
 	"channel_id" text NOT NULL,
 	"user_id" text NOT NULL,
-	"message_id" text,
-	"posted_at" timestamp with time zone,
+	"message_id" text NOT NULL,
+	"posted_at" timestamp with time zone NOT NULL,
 	"guild_id" text NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
