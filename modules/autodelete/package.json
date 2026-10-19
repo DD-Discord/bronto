@@ -22,5 +22,8 @@
     "drizzle-kit": "0.31.11",
     "drizzle-orm": "0.45.4",
     "zod": "4.6.7"
+  },
+  "dependencies": {
+    "diff": "9.0.0"
   }
 }

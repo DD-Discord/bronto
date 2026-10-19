@@ -19,7 +19,7 @@ import type { RuleIndex } from './rule-index.js';
 export type AutodeleteContext = CommandContext<AutodeleteConfig>;
 
 const RULE_CHANNEL_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
-const LOG_CHANNEL_TYPES = [...RULE_CHANNEL_TYPES, ChannelType.PublicThread, ChannelType.AnnouncementThread];
+const LOG_CHANNEL_TYPES = [...RULE_CHANNEL_TYPES, ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread];
 
 export interface AutodeleteCommandDeps {
   index: RuleIndex;

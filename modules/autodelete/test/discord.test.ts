@@ -34,6 +34,11 @@ describe('createRestAutodeleteDiscord', () => {
     expect(await sent.discord.sendDm('9', { content: 'Hello' })).toBe('sent');
     expect(sent.requests.map((request) => `${request.method} ${request.path}`)).toEqual(['POST /users/@me/channels', 'POST /channels/77/messages']);
     expect(sent.requests[0]!.body).toEqual({ recipient_id: '9' });
+    const attached = fakeDiscord((_method, path) => (path === '/users/@me/channels' ? { status: 200, json: { id: '77' } } : { status: 200, json: { id: '5' } }));
+    await attached.discord.sendDm('9', { content: 'Hello', files: [{ name: 'post.txt', data: Buffer.from('text') }] });
+    const form = attached.requests[1]!.body as FormData;
+    expect((form.get('files[0]') as File).name).toBe('post.txt');
+    expect(JSON.parse(form.get('payload_json') as string)).toMatchObject({ content: 'Hello' });
     const closed = fakeDiscord((_method, path) => (path === '/users/@me/channels' ? { status: 200, json: { id: '77' } } : error(50007, 403)));
     expect(await closed.discord.sendDm('9', { content: 'Hello' })).toBe('closed');
   });

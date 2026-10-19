@@ -102,6 +102,12 @@ describe('/autodelete create and show', () => {
 });
 
 describe('log channels', () => {
+  it('offers text, announcement and all thread types for log-channel', () => {
+    const commands = ab.client.registered.get(GUILD) as { name: string; options: { name: string; options?: { name: string; channel_types?: number[] }[] }[] }[];
+    const create = commands.find((command) => command.name === 'autodelete')!.options.find((option) => option.name === 'create')!;
+    expect(create.options!.find((option) => option.name === 'log-channel')!.channel_types!.sort((a, b) => a - b)).toEqual([0, 5, 10, 11, 12]);
+  });
+
   it('creates a webhook and reuses it for a second rule logging to the same channel', async () => {
     await say('create', { channel: channel(CHANNEL), 'log-channel': channel(LOG_CHANNEL) });
     await say('create', { channel: channel(OTHER_CHANNEL), 'log-channel': channel(LOG_CHANNEL) });

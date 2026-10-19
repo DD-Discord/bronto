@@ -7,7 +7,8 @@ import { rules } from './db/schema.js';
 import { createRestAutodeleteDiscord, type AutodeleteDiscord } from './discord.js';
 import { importLegacyAutodelete } from './legacy.js';
 import { RuleIndex } from './rule-index.js';
-import { silentNotifier, Tracker, type Notifier } from './tracker.js';
+import { createNotifier } from './report/notifier.js';
+import { Tracker, type Notifier } from './tracker.js';
 
 export interface AutodeleteModuleOptions {
   /** Builds the Discord access from the client; tests pass a fake. */
@@ -25,7 +26,7 @@ export function createAutodeleteModule(options: AutodeleteModuleOptions = {}): M
   const discordFor = options.discord ?? createRestAutodeleteDiscord;
   const discord = (ctx: { client: Client }) => discordFor(ctx.client);
   const index = options.index ?? new RuleIndex();
-  const tracker = new Tracker({ index, discord, notifier: options.notifier ?? silentNotifier, now: options.now });
+  const tracker = new Tracker({ index, discord, notifier: options.notifier ?? createNotifier(discord), now: options.now });
   return defineModule<AutodeleteConfig>({
     name: 'autodelete',
     // Server Members is a privileged intent.

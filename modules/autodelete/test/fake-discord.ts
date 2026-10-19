@@ -1,4 +1,4 @@
-import { MissingWebhookPermissionError, UnknownWebhookError, type WebhookMessage } from '@bronto/core';
+import { MissingWebhookPermissionError, UnknownWebhookError, type WebhookMessage, type WebhookSendOptions } from '@bronto/core';
 import type { AutodeleteDiscord, DeleteOutcome, FetchedPost } from '../src/discord.js';
 
 interface Credentials {
@@ -21,10 +21,12 @@ export class FakeAutodeleteDiscord implements AutodeleteDiscord {
   /** Every call, by method name, in order. */
   readonly calls: string[] = [];
   readonly deletedWebhooks: string[] = [];
-  readonly reports: { target: Target; message: WebhookMessage }[] = [];
+  readonly reports: { target: Target; message: WebhookMessage; options: WebhookSendOptions | undefined }[] = [];
   readonly dms: { userId: string; message: WebhookMessage }[] = [];
   readonly deletedPosts: string[] = [];
   missingWebhookPermission = false;
+  /** Makes `sendDm` report closed DMs. */
+  dmsClosed = false;
   /** Channel IDs that are threads, mapped to their parent. */
   readonly threads = new Map<string, string>();
   private readonly posts = new Map<string, { channelId: string; post: FetchedPost }>();
@@ -70,10 +72,10 @@ export class FakeAutodeleteDiscord implements AutodeleteDiscord {
     this.deletedWebhooks.push(webhook.id);
   }
 
-  async send(target: Target, message: WebhookMessage): Promise<string> {
+  async send(target: Target, message: WebhookMessage, options?: WebhookSendOptions): Promise<string> {
     this.calls.push('send');
     if (this.webhooks.get(target.id)?.token !== target.token) throw new UnknownWebhookError();
-    this.reports.push({ target, message });
+    this.reports.push({ target, message, options });
     return this.newId();
   }
 
@@ -92,6 +94,7 @@ export class FakeAutodeleteDiscord implements AutodeleteDiscord {
 
   async sendDm(userId: string, message: WebhookMessage): Promise<'sent' | 'closed'> {
     this.calls.push('sendDm');
+    if (this.dmsClosed) return 'closed';
     this.dms.push({ userId, message });
     return 'sent';
   }

@@ -226,6 +226,10 @@ importers:
         version: 0.45.4(@types/pg@8.23.1)(pg@8.23.1)
 
   modules/autodelete:
+    dependencies:
+      diff:
+        specifier: 9.0.0
+        version: 9.0.0
     devDependencies:
       '@bronto/core':
         specifier: workspace:*
@@ -1332,6 +1336,10 @@ packages:
   detect-libc@2.1.2:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
+
+  diff@9.0.0:
+    resolution: {integrity: sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw==}
+    engines: {node: '>=0.3.1'}
 
   discord-api-types@0.38.56:
     resolution: {integrity: sha512-Hti4RZsGvF5C7SM8rF2MDHtIm0Hyfrlk84GpEA29nj91tvVVMvX+oQSCodu10t2ZcjFGofq8TX0YyC04B2E69Q==}
@@ -2883,6 +2891,8 @@ snapshots:
       ms: 2.1.3
 
   detect-libc@2.1.2: {}
+
+  diff@9.0.0: {}
 
   discord-api-types@0.38.56: {}
 

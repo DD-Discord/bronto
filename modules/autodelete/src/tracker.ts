@@ -288,10 +288,3 @@ export class Tracker {
 }
 
 const postedAtOf = (messageId: string): Date => new Date(SnowflakeUtil.timestampFrom(messageId));
-
-/** Reports nothing. */
-export const silentNotifier: Notifier = {
-  replaced: async () => undefined,
-  rejected: async () => undefined,
-  left: async () => undefined,
-};

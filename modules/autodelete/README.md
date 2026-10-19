@@ -39,8 +39,26 @@ Options:
 - `cooldown` (a duration like `14d` or `1h 30m`, default `0s`, off): time before a member may post again.
 - `grace` (a duration, default `0s`, off): deleting a post within this time after posting resets the cooldown.
 - `notify-dm` (default no): the member gets a copy of a removed post by direct message.
-- `log-channel` (a text or announcement channel, or a public or announcement thread): where reports go. Rules logging to
+- `log-channel` (a text or announcement channel, or a public, private or announcement thread): where reports go. Rules logging to
   the same channel share one webhook.
+
+## Reports and DMs
+
+Reports are Components V2 messages sent through the rule's log webhook, as the member (their display name and avatar):
+
+- **Replaced an older post** (amber): what changed from the old post to the new one, and when the old one was posted.
+- **Held back a new post** (red): the cooldown ran until the shown time and the new post was removed; the diff compares
+  it to the member's current post, with a button to that post.
+- **Removed the post of a member who left** (gray): the removed text, and when the member joined and posted.
+
+Reports also say when a post was already gone, when the bot could not delete it (it needs Manage Messages) and when
+the member's DMs are closed. Times are Discord timestamps, shown in each reader's own time zone. Nothing in a report
+pings anyone. With `notify-dm`, a member whose post was held back or replaced gets a copy of it by direct message.
+
+Diffs and copies show changed lines with one line of context. Texts too long for one message (Discord allows 4000
+characters of text) go into attachments, `changes.diff` and `post.txt`. A post with only attachments is reported as
+the number of attachments. If the log webhook was deleted, the bot creates a new one once and resends the report; if
+that fails, the report is dropped with a warning in the log.
 
 ## Import from an older bot
 
