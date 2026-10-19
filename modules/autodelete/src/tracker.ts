@@ -143,6 +143,12 @@ export class Tracker {
     if (messageIds.length === 0 || this.index.get(ctx.guildId, channelId) === undefined) return;
     const now = this.now();
     await ctx.db.run(async (tx) => {
+      // Lock order: cooldowns before posts, as in accepting a post, so the two never deadlock.
+      await tx
+        .select({ userId: cooldowns.userId })
+        .from(cooldowns)
+        .where(and(eq(cooldowns.channelId, channelId), inArray(cooldowns.messageId, messageIds)))
+        .for('update');
       // Posts the bot deleted have lost their rows already, so their events change nothing.
       const deleted = await tx
         .delete(posts)
@@ -201,7 +207,8 @@ export class Tracker {
 
   /**
    * Accepts or rejects a message in one transaction. Concurrent messages of one member serialize on their cooldown
-   * row: the insert of the second waits on the primary key until the first commits.
+   * row: the insert of the second waits on the primary key until the first commits. Lock order: the cooldown row
+   * before any `posts` rows.
    */
   private decide(ctx: AutodeleteContext, message: IncomingMessage): Promise<Decision | null> {
     const { channelId, id: messageId } = message;

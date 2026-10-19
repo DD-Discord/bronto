@@ -1,10 +1,11 @@
 import { Events } from 'discord.js';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
-import { rules } from '../src/db/schema.js';
+import { cooldowns, posts, rules } from '../src/db/schema.js';
 import { FakeAutodeleteDiscord } from './fake-discord.js';
 import {
+  autodeleteDb,
   bulkDeleted,
   CHANNEL,
   cooldownRows,
@@ -404,6 +405,46 @@ describe('deleted posts', () => {
     clock = at(60 * 1000).getTime();
     await deleteEvent(CHANNEL, message.id);
     expect(await cooldownRows(t)).toEqual([expect.objectContaining({ messageId: message.id })]);
+  });
+
+  it('a delete event during the next post of its member does not deadlock', async () => {
+    await start();
+    await insertRule(t, { channelId: CHANNEL, cooldownMs: DAY, graceMs: HOUR });
+    await ready(ab!);
+    const message = fakeMessage(CHANNEL, { at: at(0) });
+    await say(message);
+    clock = at(60 * 1000).getTime();
+
+    // Holds the member's cooldown row, then deletes their posts, the lock order of accepting a post.
+    let locked!: () => void;
+    let release!: () => void;
+    const isLocked = new Promise<void>((resolve) => (locked = resolve));
+    const released = new Promise<void>((resolve) => (release = resolve));
+    const member = and(eq(cooldowns.channelId, CHANNEL), eq(cooldowns.userId, MEMBER));
+    const accepting = autodeleteDb(t).run(async (tx) => {
+      await tx.select().from(cooldowns).where(member).for('update');
+      locked();
+      await released;
+      await tx.delete(posts).where(eq(posts.messageId, message.id));
+    });
+    await isLocked;
+    ab!.client.emit(Events.MessageDelete, deletedMessage(CHANNEL, message.id));
+    try {
+      // Wait until the delete handler blocks on a lock held by the transaction above.
+      for (let tries = 0; ; tries += 1) {
+        const { rows } = await t.database.admin.execute(
+          sql`select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`,
+        );
+        if (rows.length > 0) break;
+        if (tries > 2000) throw new Error('The delete handler never waited for the lock');
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    } finally {
+      release();
+    }
+    await expect(accepting).resolves.toBeUndefined();
+    await ab!.bot.idle();
+    expect(errors()).toEqual([]);
   });
 
   it('bulk delete removes rows', async () => {
