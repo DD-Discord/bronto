@@ -132,6 +132,7 @@ const greet = defineCommand({
 ## Modules
 
 - [`@bronto/sticky`](modules/sticky/README.md): keeps a message at the bottom of a channel or thread.
+- [`@bronto/autodelete`](modules/autodelete/README.md): keeps one post per member in a channel, enforces a posting cooldown and removes the posts of members who leave.
 - [`examples/notes`](examples/notes): a small example module showing commands, CRUD, buttons and modals.
 
 ## Development

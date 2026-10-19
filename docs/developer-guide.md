@@ -973,6 +973,7 @@ packages/
     ├── src/client.ts        discord.js client with the union of the modules' intents
     └── src/importer.ts      resolves module packages from the working directory
 modules/sticky/              a production module (section 24)
+modules/autodelete/          a production module: per-channel post rules, cooldowns, leave cleanup
 examples/notes/              a small example module: CRUD, a button, a modal
 ```
 
@@ -1288,4 +1289,4 @@ again through a webhook. It shows most patterns from Part 1 under real load.
 | Why is my command missing? | `interactions/sync.ts`, `/modules list`, the router's startup validation |
 | Why won't the bot start? | `db/checks.ts`, `runtime/loader.ts`, `config/load.ts`: the error lists every problem |
 | A complete small module | `examples/notes` |
-| A complete production module | `modules/sticky` |
+| A complete production module | `modules/sticky`, `modules/autodelete` |
