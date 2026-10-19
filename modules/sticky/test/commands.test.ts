@@ -245,11 +245,11 @@ describe('/sticky delete', () => {
   });
 
   it('posts nothing after a delete, even with a debounce pending', async () => {
-    await say('create', { channel: channel(CHANNEL), template: link(), debounce: 80 });
+    await say('create', { channel: channel(CHANNEL), template: link(), debounce: '1s' });
     sb.client.emit(Events.MessageCreate, message(CHANNEL));
     await sb.bot.idle();
     await say('delete', { channel: channel(CHANNEL) });
-    await sleep(150);
+    await sleep(1100);
     await sb.bot.idle();
     expect(discord.sent).toHaveLength(1);
     expect(discord.liveMessages()).toEqual([]);

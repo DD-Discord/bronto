@@ -1,5 +1,6 @@
 import { ApplicationCommandOptionType, ChannelType } from 'discord.js';
 import { describe, expect, expectTypeOf, it } from 'vitest';
+import { UserError } from './errors.js';
 import { assertDescription, assertName, opt, optionToJson, readOptions } from './options.js';
 
 const source = (values: Record<string, unknown>) => ({
@@ -88,5 +89,28 @@ describe('names and descriptions', () => {
   it('requires 1 to 100 characters of description', () => {
     expect(() => assertDescription('Option', 'x', '')).toThrow('Option "x" needs a description of 1 to 100 characters');
     expect(() => assertDescription('Option', 'x', 'a'.repeat(101))).toThrow();
+  });
+});
+
+describe('opt.duration', () => {
+  const option = opt.duration({ description: 'd', max: 86_400_000 });
+
+  it('reads text as milliseconds within the bounds', () => {
+    expect(readOptions({ d: option }, source({ d: '2h' })).d).toBe(7_200_000);
+    expect(readOptions({ d: option }, source({})).d).toBeNull();
+    expect(() => readOptions({ d: option }, source({ d: '2d' }))).toThrow(UserError);
+    expect(() => readOptions({ d: option }, source({ d: '2d' }))).toThrow('Enter a duration between `0s` and `1d`.');
+  });
+
+  it('applies the minimum', () => {
+    const min = opt.duration({ description: 'd', min: 60_000 });
+    expect(() => readOptions({ d: min }, source({ d: '30s' }))).toThrow('Enter a duration of at least `1m`.');
+  });
+
+  it('is a bounded string for Discord', () => {
+    const json = optionToJson('d', option);
+    expect(json).toMatchObject({ type: ApplicationCommandOptionType.String, max_length: 32 });
+    expect(json).not.toHaveProperty('min_value');
+    expect(json).not.toHaveProperty('max_value');
   });
 });

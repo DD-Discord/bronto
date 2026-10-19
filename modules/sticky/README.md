@@ -31,7 +31,7 @@ below the new message. The sticky is a copy of a template message (text and embe
 
 - `ignore-bots` (default yes): messages from bots and system messages (joins, pins, boosts) don't move the sticky.
 - `silent` (default yes): reposts don't notify.
-- `debounce` (milliseconds, default 0): wait until the channel has been quiet this long before reposting.
+- `debounce` (a duration like `30s` or `1h 30m`, at most `1d`, default `0s`): wait until the channel has been quiet this long before reposting.
 
 Stickies work in text, announcement and voice channels and in threads. Threads post through a webhook on their parent
 channel; in a private thread the bot must be added to the thread or have Manage Threads. If someone deletes the webhook, the module creates a new one

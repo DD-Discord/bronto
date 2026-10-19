@@ -30,6 +30,7 @@ export {
   type InteractionContext,
   type ModalContext,
 } from './context.js';
+export { formatDuration, parseDuration } from './duration.js';
 export { isUserError, UserError } from './errors.js';
 export { batchLines, plainText, truncate } from './format.js';
 export { createModulesCommand, type ModulesCommandOptions } from './modules-command.js';

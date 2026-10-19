@@ -29,7 +29,7 @@ describe('stickyEntity', () => {
       { name: 'Template', value: 'https://discord.com/channels/100000000000000001/100000000000000020/100000000000000021' },
       { name: 'Ignore bots', value: 'Yes', inline: true },
       { name: 'Silent', value: 'No', inline: true },
-      { name: 'Debounce', value: '5000 ms', inline: true },
+      { name: 'Debounce', value: '5s', inline: true },
       { name: 'Text', value: 'Please read the rules.' },
     ]);
     expect(JSON.stringify(json)).not.toContain('fake-token');

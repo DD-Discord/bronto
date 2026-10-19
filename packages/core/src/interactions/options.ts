@@ -8,6 +8,8 @@ import {
   type Role,
   type User,
 } from 'discord.js';
+import { formatDuration, parseDuration } from './duration.js';
+import { UserError } from './errors.js';
 import type { HandlerContext } from '../runtime/types.js';
 
 export type OptionKind = 'string' | 'integer' | 'number' | 'boolean' | 'user' | 'channel' | 'role' | 'mentionable' | 'attachment';
@@ -31,6 +33,8 @@ export interface OptionDefinition<TValue, TRequired extends boolean = boolean> {
   readonly maxLength?: number;
   readonly channelTypes?: readonly ChannelType[];
   readonly autocomplete?: Autocomplete;
+  /** Turns the raw Discord value into the option's value; may throw a `UserError`. */
+  readonly parse?: (raw: unknown) => TValue;
   /** Never set; carries the value type. */
   readonly __value?: TValue;
 }
@@ -60,6 +64,12 @@ interface NumberInput<R extends boolean> extends BaseInput<R> {
   autocomplete?: Autocomplete;
 }
 
+interface DurationInput<R extends boolean> extends BaseInput<R> {
+  /** Bounds in milliseconds, checked after parsing and never sent to Discord. */
+  min?: number;
+  max?: number;
+}
+
 interface ChannelInput<R extends boolean> extends BaseInput<R> {
   channelTypes?: readonly ChannelType[];
 }
@@ -76,6 +86,8 @@ export const opt = {
   string: <const R extends boolean = false>(input: TextInput<R>) => build<string, R>('string', input),
   integer: <const R extends boolean = false>(input: NumberInput<R>) => build<number, R>('integer', input),
   number: <const R extends boolean = false>(input: NumberInput<R>) => build<number, R>('number', input),
+  /** Text like `1h 30m`, read as milliseconds. */
+  duration: <const R extends boolean = false>(input: DurationInput<R>) => durationOption(input),
   boolean: <const R extends boolean = false>(input: BaseInput<R>) => build<boolean, R>('boolean', input),
   user: <const R extends boolean = false>(input: BaseInput<R>) => build<User, R>('user', input),
   channel: <const R extends boolean = false>(input: ChannelInput<R>) => build<GuildBasedChannel, R>('channel', input),
@@ -84,6 +96,25 @@ export const opt = {
     build<GuildMember | User | Role, R>('mentionable', input),
   attachment: <const R extends boolean = false>(input: BaseInput<R>) => build<Attachment, R>('attachment', input),
 };
+
+function durationOption<R extends boolean>({ min, max, ...input }: DurationInput<R>): OptionDefinition<number, R> {
+  const lower = min ?? 0;
+  return build<number, R>('string', {
+    ...input,
+    maxLength: 32,
+    parse: (raw) => {
+      const ms = parseDuration(String(raw));
+      if (ms < lower || (max !== undefined && ms > max)) {
+        throw new UserError(
+          max === undefined
+            ? `Enter a duration of at least \`${formatDuration(lower)}\`.`
+            : `Enter a duration between \`${formatDuration(lower)}\` and \`${formatDuration(max)}\`.`,
+        );
+      }
+      return ms;
+    },
+  });
+}
 
 const API_TYPES: Record<OptionKind, ApplicationCommandOptionType> = {
   string: ApplicationCommandOptionType.String,
@@ -173,7 +204,7 @@ export function readOptions<O extends OptionMap>(options: O, source: OptionSourc
     const raw = source.get(name) as RawOption | null;
     const value = raw === null ? null : (valueOf(option.kind, raw) ?? null);
     if (value === null && option.required) throw new Error(`Required option "${name}" is missing.`);
-    values[name] = value;
+    values[name] = value === null || option.parse === undefined ? value : option.parse(value);
   }
   return values as OptionValues<O>;
 }

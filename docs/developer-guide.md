@@ -390,12 +390,15 @@ export default defineModule<KarmaConfig>({
 ### Options
 
 `opt.string`, `opt.integer`, `opt.number`, `opt.boolean`, `opt.user`, `opt.channel`, `opt.role`, `opt.mentionable`
-and `opt.attachment`. The key in `options` is the option's name. Values are typed:
+and `opt.attachment`, plus `opt.duration` (see below). The key in `options` is the option's name. Values are typed:
 
 - `opt.user({ required: true })` gives a `User`; without `required`, a `User | null`.
 - A channel option is a `GuildBasedChannel`; restrict it with `channelTypes`.
 - String and number options take `choices`, or `autocomplete`, but not both.
 - Strings take `minLength` and `maxLength`; numbers take `min` and `max`.
+- `opt.duration` takes text like `90s`, `1h 30m` or `2w` (units `w d h m s`, largest first) and gives milliseconds as a
+  `number`. Its `min` and `max` are in milliseconds and checked in the bot, so out-of-range input gets a private
+  explanation. `parseDuration` and `formatDuration` (exported from core) convert in both directions.
 
 Autocomplete runs as a handler of your module, with a `ctx` for the server:
 

@@ -68,7 +68,7 @@ export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition 
         'ignore-bots': { option: opt.boolean({ description: 'Ignore messages from bots (default: yes)' }), column: 'ignoreBots', default: true },
         silent: { option: opt.boolean({ description: 'Post without notifications (default: yes)' }), column: 'silent', default: true },
         debounce: {
-          option: opt.integer({ description: 'Milliseconds of quiet before reposting (default: 0)', min: 0, max: MAX_DEBOUNCE_MS }),
+          option: opt.duration({ description: 'Quiet time before reposting, e.g. 30s (default: 0s)', max: MAX_DEBOUNCE_MS }),
           column: 'debounceMs',
           default: 0,
         },
