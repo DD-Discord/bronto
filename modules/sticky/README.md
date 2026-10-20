@@ -38,14 +38,8 @@ channel; in a private thread the bot must be added to the thread or have Manage 
 on the next repost. Changing the template message later does not change the sticky; run `/sticky edit` with the link
 again. Mentions in a template render but never ping anyone.
 
-## Importing from the previous Sticky bot
 
-`bronto import-legacy sticky <path to data/channels>` imports its JSON records (`--dry-run` only checks them). The
-report has one line per file and a summary line at the end.
+## Server data retention
 
-When a record has no webhook token, the importer first asks Discord for the webhook's token. Only when Discord does not
-reveal it does the importer delete the old sticky post and webhook and create a new webhook; the next message in that
-channel then posts a fresh sticky.
-
-A channel or thread the bot cannot see is reported as skipped with a note saying so: give the bot access there and run
-the import again. Stickies already imported are left untouched, so the import can be run again at any time.
+When the bot leaves a server, its database data is retained for 30 days, then deleted. Existing Discord messages and
+webhooks are left in place. `bronto delete-guild` deletes stored server data immediately without removing Discord resources.

@@ -1,5 +1,5 @@
 import { defineModule, on } from '@bronto/core';
-import { DiscordAPIError, Events } from 'discord.js';
+import { Events } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { stickyEvents } from '../src/events.js';
@@ -299,67 +299,37 @@ describe('debounce and index changes', () => {
 });
 
 describe('guild deletion', () => {
-  it('removes posts and webhooks from Discord before the rows go', async () => {
+  it('deletes stored guild data without deleting Discord posts or webhooks', async () => {
     const sb = await start();
     const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
-    await insertSticky(t, discord, {
-      channelId: THREAD,
-      parentChannelId: CHANNEL,
-      webhookId: sticky.webhookId,
-      webhookToken: sticky.webhookToken,
-    });
+    await insertSticky(t, discord, { channelId: THREAD, parentChannelId: CHANNEL, webhookId: sticky.webhookId, webhookToken: sticky.webhookToken });
     await ready(sb);
     await say(sb, message(CHANNEL), message(THREAD));
-    expect(discord.liveMessages()).toHaveLength(2);
-    await sb.bot.lifecycle.deleteGuild(GUILD);
-    expect(discord.liveMessages()).toEqual([]);
-    expect(discord.deletedWebhooks).toEqual([sticky.webhookId]);
-    expect(await stickyRows(t)).toEqual([]);
-  });
-
-  it("removes the last post with the bot's own permissions when the webhook is gone", async () => {
-    const sb = await start();
-    const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
-    await ready(sb);
-    await say(sb, message(CHANNEL));
-    const [post] = discord.liveMessages();
-    discord.removeWebhook(sticky.webhookId);
-    await sb.bot.lifecycle.deleteGuild(GUILD);
-    expect(discord.liveMessages()).toEqual([]);
-    expect(discord.botDeleted).toContain(post!);
-  });
-
-  const apiError = (status: number, code: number) => new DiscordAPIError({ message: 'refused', code }, code, status, 'DELETE', '/x', {});
-
-  it('still deletes the guild data when Discord refuses the removal because the bot left', async () => {
-    const sb = await start();
-    const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
-    await ready(sb);
-    await say(sb, message(CHANNEL));
-    discord.removeWebhook(sticky.webhookId);
-    discord.deleteChannelMessageError = apiError(403, 50001);
+    const messages = discord.liveMessages();
+    const webhooks = [...discord.webhooks.keys()];
+    const calls = [...discord.calls];
+    expect(messages).toHaveLength(2);
     await sb.bot.lifecycle.deleteGuild(GUILD);
     expect(await stickyRows(t)).toEqual([]);
-    expect(sb.lines).toContainEqual(expect.objectContaining({ level: 40, msg: 'Could not remove a sticky post or webhook from Discord' }));
+    expect(discord.liveMessages()).toEqual(messages);
+    expect([...discord.webhooks.keys()]).toEqual(webhooks);
+    expect(discord.calls).toEqual(calls);
   });
 
-  it('continues with the other webhooks when Discord refuses to delete one', async () => {
+  it('retains data before 30 days and purges it afterwards without Discord cleanup', async () => {
     const sb = await start();
     await insertSticky(t, discord, { channelId: CHANNEL });
     await ready(sb);
-    discord.deleteWebhookError = apiError(403, 50013);
-    await sb.bot.lifecycle.deleteGuild(GUILD);
-    expect(await stickyRows(t)).toEqual([]);
-  });
-
-  it('keeps the guild data when Discord fails with a server error', async () => {
-    const sb = await start();
-    const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
-    await ready(sb);
     await say(sb, message(CHANNEL));
-    discord.removeWebhook(sticky.webhookId);
-    discord.deleteChannelMessageError = apiError(500, 0);
-    await expect(sb.bot.lifecycle.deleteGuild(GUILD)).rejects.toThrow();
+    const messages = discord.liveMessages();
+    const calls = [...discord.calls];
+    const leftAt = new Date('2026-01-01T00:00:00Z');
+    await sb.bot.lifecycle.leave(GUILD, leftAt);
+    expect(await sb.bot.lifecycle.purgeDueGuilds(new Date('2026-01-30T00:00:00Z'))).toEqual([]);
     expect(await stickyRows(t)).toHaveLength(1);
+    expect(await sb.bot.lifecycle.purgeDueGuilds(new Date('2026-01-31T00:00:00Z'))).toEqual([GUILD]);
+    expect(await stickyRows(t)).toEqual([]);
+    expect(discord.liveMessages()).toEqual(messages);
+    expect(discord.calls).toEqual(calls);
   });
 });

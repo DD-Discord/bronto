@@ -60,16 +60,14 @@ characters of text) go into attachments, `changes.diff` and `post.txt`. A post w
 the number of attachments. If the log webhook was deleted, the bot creates a new one once and resends the report; if
 that fails, the report is dropped with a warning in the log.
 
-## Import from an older bot
-
-`bronto import-legacy @bronto/autodelete <path> [--dry-run]` reads the data folder of an older auto-delete bot
-(`<server>/channels/<channel>.json` and `<server>/channels/<channel>/<member>.json`) into rules, tracked posts and
-cooldowns. A report webhook is reused when it is still valid; otherwise set `log-channel` by hand. Existing rules are
-left as they are, so the import can be run again. Message texts and names in the old files are never read. A dry run
-reports counts without calling Discord.
 
 ## Privacy
 
 The database holds IDs and timestamps only: which message belongs to which member, and when a member last posted. It
 never stores message text or usernames; the text of a post is fetched from Discord right before it is removed.
 Webhook tokens are never shown or logged.
+
+## Server data retention
+
+When the bot leaves a server, its database data is retained for 30 days, then deleted. Existing Discord messages and
+webhooks are left in place. `bronto delete-guild` deletes stored server data immediately without removing Discord resources.

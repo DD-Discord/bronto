@@ -1279,9 +1279,8 @@ again through a webhook. It shows most patterns from Part 1 under real load.
 | `/sticky delete` while a repost is running | `beforeDelete` removes the index entry first, then cleans up inside the channel's queue and re-reads the row (a running repost may have replaced the webhook). | `commands.ts` |
 | Creating a sticky needs a webhook | CRUD `prepare` calls core's `ensureWebhook` (section 7), reusing the webhook of another sticky in the same channel, and returns its ID and token as extra columns; `afterWrite` updates the index and queues the first post. | `commands.ts` |
 | Testing without Discord | All Discord access goes through the `StickyDiscord` interface; tests pass a fake through `createStickyModule({ discord })`. | `discord.ts`, `test/fake-discord.ts` |
-| Server data is deleted | `deleteGuildData` removes posts and webhooks, treating Discord's 4xx refusals as done. | `repost.ts` `removeGuildPosts` |
+| Server data is deleted | Core cascades database deletion; existing Discord posts and webhooks are left in place. | `packages/core/src/db/guilds.ts` |
 | Tokens in logs | Core's webhook helper removes webhook tokens from re-thrown Discord errors before they reach logs. | `packages/core/src/webhooks` |
-| Moving from an older bot | `importLegacy` reads the old files, reuses or replaces webhooks, and reports one line per record. | `legacy.ts` |
 
 ## 25. Where to look
 

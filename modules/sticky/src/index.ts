@@ -6,8 +6,7 @@ import * as schema from './db/schema.js';
 import { stickies } from './db/schema.js';
 import { createRestStickyDiscord, type StickyDiscord } from './discord.js';
 import { stickyEvents } from './events.js';
-import { importLegacyStickies } from './legacy.js';
-import { removeGuildPosts, Reposter } from './repost.js';
+import { Reposter } from './repost.js';
 import { entryOf, StickyIndex } from './sticky-index.js';
 
 export interface StickyModuleOptions {
@@ -37,7 +36,6 @@ export function createStickyModule(options: StickyModuleOptions = {}): ModuleDef
     ],
     listeners: [on(Events.MessageCreate, (ctx, message) => reposter.onMessage(ctx, message))],
     commands: { sticky: createStickyCommand({ index, reposter, discord }) },
-    importLegacy: (ctx, path) => importLegacyStickies(ctx, path, discordFor(ctx.client)),
     hooks: {
       guildReady: async (ctx) => {
         const rows = await ctx.db.run(async (tx) => tx.select().from(stickies));
@@ -47,7 +45,6 @@ export function createStickyModule(options: StickyModuleOptions = {}): ModuleDef
       guildStopped: (ctx) => {
         for (const removed of index.dropGuild(ctx.guildId)) reposter.cancel(removed.channelId);
       },
-      deleteGuildData: (ctx) => removeGuildPosts(ctx, discord(ctx)),
     },
   });
 }

@@ -1,5 +1,4 @@
 import type { HandlerContext } from '@bronto/core';
-import { DiscordAPIError } from 'discord.js';
 import { eq, isNotNull } from 'drizzle-orm';
 import type { StickyConfig } from './config.js';
 import { stickies, stickyState, type Sticky } from './db/schema.js';
@@ -209,31 +208,5 @@ export class Reposter {
     }, delayMs);
     timer.unref();
     this.timers.set(channelId, timer);
-  }
-}
-
-/** Removes a guild's sticky posts and webhooks from Discord before its rows are deleted. */
-export async function removeGuildPosts(ctx: StickyContext, discord: StickyDiscord): Promise<void> {
-  const rows = await ctx.db.run(async (tx) =>
-    tx
-      .select({ sticky: stickies, lastMessageId: stickyState.lastMessageId })
-      .from(stickies)
-      .leftJoin(stickyState, eq(stickyState.channelId, stickies.channelId)),
-  );
-  const webhooks = new Map<string, WebhookCredentials>();
-  for (const { sticky, lastMessageId } of rows) {
-    if (lastMessageId !== null) await tolerateRefusal(ctx, sticky.channelId, removePost(discord, sticky, lastMessageId));
-    webhooks.set(sticky.webhookId, { id: sticky.webhookId, token: sticky.webhookToken });
-  }
-  for (const webhook of webhooks.values()) await tolerateRefusal(ctx, null, discord.deleteWebhook(webhook));
-}
-
-/** Discord refusing a removal (e.g. the bot already left the server) cannot be fixed by retrying; other errors fail the cleanup. */
-async function tolerateRefusal(ctx: StickyContext, channelId: string | null, work: Promise<void>): Promise<void> {
-  try {
-    await work;
-  } catch (error) {
-    if (!(error instanceof DiscordAPIError) || error.status < 400 || error.status >= 500) throw error;
-    ctx.log.warn({ err: error, channelId }, 'Could not remove a sticky post or webhook from Discord');
   }
 }

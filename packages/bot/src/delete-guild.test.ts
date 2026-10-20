@@ -1,0 +1,49 @@
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { createBot, upsertGuild, createScopedDb, moduleRoleName } from '@bronto/core';
+import { FakeClient, captureLog } from '@bronto/core/testing';
+import { createTestDatabase, type TestDatabase } from '../../core/test/test-db.js';
+import { createStickyModule } from '../../../modules/sticky/src/index.js';
+import { createAutodeleteModule } from '../../../modules/autodelete/src/index.js';
+import { stickies } from '../../../modules/sticky/src/db/schema.js';
+import { rules } from '../../../modules/autodelete/src/db/schema.js';
+import { runDeleteGuild, runImportLegacy, type CommandDeps } from './commands.js';
+
+const GUILD = '100000000000000001';
+let t: TestDatabase;
+let dir: string;
+let path: string;
+let deps: CommandDeps;
+let client: FakeClient;
+beforeEach(async () => {
+  t = await createTestDatabase();
+  dir = await mkdtemp(join(tmpdir(), 'bronto-cli-'));
+  path = join(dir, 'config.yaml');
+  await writeFile(path, JSON.stringify({ discord: { token: 'synthetic-token' }, database: { appUrl: t.appUrl, adminUrl: t.adminUrl }, modules: { '@bronto/sticky': {}, '@bronto/autodelete': {} } }));
+  client = new FakeClient();
+  const definitions = { '@bronto/sticky': createStickyModule(), '@bronto/autodelete': createAutodeleteModule() };
+  deps = { importer: async (name) => ({ default: definitions[name as keyof typeof definitions] }), env: {}, log: captureLog().log, createClient: () => client.asClient() };
+  const bot = createBot({ config: { discord: { token: 'synthetic-token' }, database: { appUrl: t.appUrl, adminUrl: t.adminUrl }, modules: {}, interactions: {} }, modules: Object.entries(definitions).map(([packageName, definition]) => ({ packageName, definition, config: {} })), database: t.database, client: client.asClient(), log: deps.log });
+  await bot.prepare();
+  await upsertGuild(t.database.admin, GUILD);
+  await createScopedDb(t.database.app, GUILD, moduleRoleName(t.database.appRole, 'sticky')).run(tx => tx.insert(stickies).values({ channelId: '100000000000000010', templateChannelId: '100000000000000020', templateMessageId: '100000000000000021', content: 'Synthetic', webhookId: '100000000000000040', webhookToken: 'synthetic-webhook-token' }));
+  await createScopedDb(t.database.app, GUILD, moduleRoleName(t.database.appRole, 'autodelete')).run(tx => tx.insert(rules).values({ channelId: '100000000000000010' }));
+  await bot.stop();
+});
+afterEach(async () => { await t.drop(); await rm(dir, { recursive: true, force: true }); });
+it('deletes module rows without Discord requests or gateway login', async () => {
+  const get = vi.spyOn(client.rest, 'get').mockRejectedValue(new Error('Unexpected Discord request'));
+  const put = vi.spyOn(client.rest, 'put').mockRejectedValue(new Error('Unexpected Discord request'));
+  await runDeleteGuild(path, GUILD, deps);
+  expect(await t.database.admin.select().from(stickies)).toEqual([]);
+  expect(await t.database.admin.select().from(rules)).toEqual([]);
+  expect(get).not.toHaveBeenCalled();
+  expect(put).not.toHaveBeenCalled();
+  expect(client.loggedInWith).toBeNull();
+});
+it.each(['sticky', 'autodelete'])('rejects retired %s imports before reading files or logging in', async name => {
+  await expect(runImportLegacy(path, name, '/synthetic/not-read', true, deps)).rejects.toThrow('has no legacy importer');
+  expect(client.loggedInWith).toBeNull();
+});
