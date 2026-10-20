@@ -103,10 +103,19 @@ describe('Responder', () => {
       { kind: 'reply', payload: { content: 'nope', allowedMentions: NO_PINGS, flags: MessageFlags.Ephemeral } },
     ]);
 
-    const deferred = responder();
-    await deferred.responder.defer();
-    await deferred.responder.fail('nope');
-    expect(kinds(deferred.fake)).toEqual(['deferReply', 'editReply']);
+    const deferredPrivately = responder(true);
+    await deferredPrivately.responder.defer();
+    await deferredPrivately.responder.fail('nope');
+    expect(kinds(deferredPrivately.fake)).toEqual(['deferReply', 'editReply']);
+
+    // Discord keeps the defer's visibility on its edit and on the first follow-up, so the public placeholder goes.
+    const deferredPublicly = responder();
+    await deferredPublicly.responder.defer();
+    await deferredPublicly.responder.fail('nope');
+    expect(deferredPublicly.fake.responses.slice(1)).toEqual([
+      { kind: 'deleteReply', payload: undefined },
+      { kind: 'followUp', payload: { content: 'nope', allowedMentions: NO_PINGS, flags: MessageFlags.Ephemeral } },
+    ]);
 
     const answered = responder();
     await answered.responder.send('partial');
@@ -125,10 +134,15 @@ describe('Responder', () => {
       payload: { content: DONE, allowedMentions: NO_PINGS, flags: MessageFlags.Ephemeral },
     });
 
-    const deferred = responder();
-    await deferred.responder.defer();
-    await deferred.responder.finish();
-    expect(kinds(deferred.fake)).toEqual(['deferReply', 'editReply']);
+    const deferredPrivately = responder(true);
+    await deferredPrivately.responder.defer();
+    await deferredPrivately.responder.finish();
+    expect(kinds(deferredPrivately.fake)).toEqual(['deferReply', 'editReply']);
+
+    const deferredPublicly = responder();
+    await deferredPublicly.responder.defer();
+    await deferredPublicly.responder.finish();
+    expect(kinds(deferredPublicly.fake)).toEqual(['deferReply', 'deleteReply', 'followUp']);
 
     const answered = responder();
     await answered.responder.send('x');

@@ -1172,8 +1172,11 @@ calls in order:
 | State | `send` | `defer` | `showModal` | `fail` |
 | --- | --- | --- | --- | --- |
 | open | `reply` | `deferReply` | `showModal` | private `reply` |
-| deferred | `editReply` | no-op | error | `editReply` |
+| deferred | `editReply` | no-op | error | `editReply`; after a public defer, `deleteReply` + private `followUp` |
 | answered | `followUp` | no-op | error | private `followUp` |
+
+`finish` answers like `fail`. Discord keeps a defer's visibility on its edit and on the first follow-up, so a public
+placeholder is deleted before a private answer.
 
 This is why handlers must not answer through `ctx.interaction`: the Responder would no longer know the state.
 

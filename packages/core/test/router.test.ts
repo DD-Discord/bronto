@@ -253,10 +253,10 @@ describe('InteractionRouter commands', () => {
     ]);
   });
 
-  it('reports a UserError thrown after the defer', async () => {
+  it('reports a UserError thrown after a public defer privately', async () => {
     const fake = await run(makeRouter(), fakeCommand({ command: 'demo', subcommand: 'slow-refuse' }));
-    expect(fake.responses.map((response) => response.kind)).toEqual(['deferReply', 'editReply']);
-    expect(fake.responses[1]!.payload).toMatchObject({ content: 'Refused late.' });
+    expect(fake.responses.map((response) => response.kind)).toEqual(['deferReply', 'deleteReply', 'followUp']);
+    expect(fake.responses[2]!.payload).toEqual(privately('Refused late.'));
   });
 
   it('shows a UserError privately and logs it at debug level only', async () => {
@@ -312,8 +312,8 @@ describe('InteractionRouter commands', () => {
     gateDelayMs = 120;
     gateOpen = false;
     const fake = await run(makeRouter(), fakeCommand({ command: 'demo', subcommand: 'echo', options: { text: 'hi' } }));
-    expect(fake.responses.map((response) => response.kind)).toEqual(['deferReply', 'editReply']);
-    expect(fake.responses[1]!.payload).toMatchObject({ content: NOT_READY });
+    expect(fake.responses.map((response) => response.kind)).toEqual(['deferReply', 'deleteReply', 'followUp']);
+    expect(fake.responses[2]!.payload).toEqual(privately(NOT_READY));
   });
 
   it('logs answers Discord rejects instead of throwing', async () => {

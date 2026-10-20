@@ -38,6 +38,7 @@ export interface ResponseTarget {
   deferReply(options: InteractionDeferReplyOptions): Promise<unknown>;
   editReply(options: InteractionEditReplyOptions): Promise<unknown>;
   followUp(options: InteractionReplyOptions): Promise<unknown>;
+  deleteReply(): Promise<unknown>;
   showModal?(modal: ModalPayload): Promise<unknown>;
 }
 
@@ -90,6 +91,7 @@ export class Responder {
   private readonly target: ResponseTarget;
   private readonly ephemeral: boolean;
   private state: State = 'open';
+  private deferredPrivately = false;
   private chain: Promise<unknown> = Promise.resolve();
 
   /** `ephemeral` is the default visibility of replies and defers. */
@@ -118,6 +120,7 @@ export class Responder {
       if (this.state !== 'open') return;
       await this.target.deferReply(ephemeral ? { flags: MessageFlags.Ephemeral } : {});
       this.state = 'deferred';
+      this.deferredPrivately = ephemeral;
     });
   }
 
@@ -147,9 +150,11 @@ export class Responder {
     const message: ReplyMessage = { content, ephemeral: true };
     if (this.state === 'open') {
       await this.target.reply(withVisibility(message, true));
-    } else if (this.state === 'deferred') {
+    } else if (this.state === 'deferred' && this.deferredPrivately) {
       await this.target.editReply(editBody(message));
     } else {
+      // A public placeholder would turn the edit and the first follow-up public, so it is deleted first.
+      if (this.state === 'deferred') await this.target.deleteReply();
       await this.target.followUp(withVisibility(message, true));
     }
     this.state = 'answered';
