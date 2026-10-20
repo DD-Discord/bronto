@@ -401,6 +401,25 @@ describe('createBot', () => {
     expect(calls).toEqual(['ready:g1', 'ready:g1']);
   });
 
+  it('logs failed queries without their values', async () => {
+    const insertTwice = on(Events.MessageCreate, async (ctx, message) => {
+      await ctx.db.run(async (tx) => {
+        await tx.insert(widgetItems).values({ id: message.id, label: 'SECRET_LABEL' });
+        await tx.insert(widgetItems).values({ id: message.id, label: 'SECRET_LABEL' });
+      });
+    });
+    const { bot, client, lines } = makeBot([widgetsModule({ listeners: [insertTwice] })]);
+    await bot.start();
+    await ready(bot, client);
+    client.emit(Events.GuildAvailable, { id: 'g1' });
+    client.emit(Events.MessageCreate, { id: 'SECRET_ID', guildId: 'g1' });
+    await bot.idle();
+    const failure = JSON.stringify(lines.find((line) => line.msg === 'Handler failed'));
+    expect(failure).toMatch(/Failed query: insert into /);
+    expect(failure).toMatch(/duplicate key value/);
+    expect(failure).not.toMatch(/SECRET_/);
+  });
+
   it('refuses two modules defining the same command', () => {
     const clash = defineCommand({ description: 'Clash', execute: () => undefined });
     const other = widgetsModule({ name: 'gadgets', db: undefined, commands: { widgets: clash } });

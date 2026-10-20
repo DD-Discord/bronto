@@ -14,6 +14,7 @@ import { CommandSync, restCommandRegistry } from '../interactions/sync.js';
 import { createCoreRuntime, createModuleRuntimes, type ModuleRuntime } from './context.js';
 import { Dispatcher } from './dispatcher.js';
 import { ModuleEnablement } from './enablement.js';
+import { serializeError } from './error-log.js';
 import { GuildLifecycle } from './lifecycle.js';
 import type { LoadedModule } from './loader.js';
 import { KeyedQueue } from './queue.js';
@@ -65,7 +66,8 @@ export interface Bot {
 }
 
 export function createBot(options: BotOptions): Bot {
-  const { config, modules, database, client, log } = options;
+  const { config, modules, database, client } = options;
+  const log = options.log.child({}, { serializers: { err: serializeError } });
   const secret = config.interactions.secret;
   if (secret === undefined && modules.some((module) => (module.definition.components ?? []).length > 0)) {
     throw new ConfigError(['interactions.secret: required because a module defines buttons or modals']);
