@@ -934,7 +934,8 @@ describe('karma', () => {
   ```
 
   Pass `test.client` into `createBot`. `bot.start()` uses a local login; call `test.ready()` and await `bot.idle()` to
-  simulate readiness. Unknown HTTP requests fail locally. Use `http.override(method, path, answer)` for errors or an
+  simulate readiness. Unknown HTTP requests fail locally, and URL attachment downloads are blocked while any native
+  test client is alive. Destroying the last client restores the previous download dispatcher. Use `http.override(method, path, answer)` for errors or an
   asynchronous response gate, and `http.clearOverride(method, path)` to resume ordinary fixture behavior. Synthetic
   interaction/event fixtures can still be emitted locally; managers and fetched resources are actual Discord.js objects.
 - **Fresh module state:** `createStickyModule()` and `createAutodeleteModule()` return independent definitions with

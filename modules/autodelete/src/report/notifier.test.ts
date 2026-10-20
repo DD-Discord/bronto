@@ -221,5 +221,6 @@ it('retries a rejected username without losing files, components or routing', as
   expect(attempts[1]!.get('files[0]')).not.toBeNull();
   const request = ab.requests.findLast(r => r.method === 'POST' && r.path === path)!;
   expect(new URLSearchParams(request.query).get('thread_id')).toBe(LOG_THREAD);
+  expect(new URLSearchParams(request.query).get('with_components')).toBe('true');
   expect(discord.reports).toHaveLength(1);
 });

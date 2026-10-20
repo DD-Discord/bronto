@@ -61,6 +61,10 @@ describe('reposting', () => {
       message: { content: 'Read the rules.', embeds: [] },
       options: { silent: true, username: 'Sticky' },
     });
+    expect(sb.requests.find(request => request.method === 'POST' && request.path.startsWith('/webhooks/'))).toMatchObject({
+      authorized: false,
+      body: { allowed_mentions: { parse: [] }, flags: 4096, username: 'Sticky' },
+    });
     expect((await stateOf(t, CHANNEL))?.lastMessageId).toBe(discord.sent[0]!.id);
     await say(sb, message(CHANNEL));
     expect(discord.deleted).toEqual([discord.sent[0]!.id]);

@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ChannelType, Guild, Message, MessageFlags } from 'discord.js';
 import { createNativeTestClient, type NativeTestClient } from './native-client.js';
@@ -59,4 +60,37 @@ it('rejects unexpected requests locally and records native command registration'
   await client.rest.put(route, { body: [{ name: 'synthetic' }] });
   expect(await client.rest.get(route)).toEqual([{ name: 'synthetic' }]);
   expect(requests.at(-1)!.path).toBe(route);
+});
+
+it('blocks native URL downloads and restores the previous dispatcher after the last client', async () => {
+  const undici = createRequire(import.meta.resolve('discord.js'))('undici');
+  const previous = undici.getGlobalDispatcher();
+  let externalCalls = 0;
+  const sentinel = {
+    dispatch(_options: unknown, handler: { onError(error: Error): void }) {
+      externalCalls += 1;
+      handler.onError(new Error('Synthetic external dispatcher must not be reached'));
+      return false;
+    },
+  };
+  undici.setGlobalDispatcher(sentinel);
+  let first: Awaited<ReturnType<typeof setup>> | undefined;
+  let second: Awaited<ReturnType<typeof setup>> | undefined;
+  try {
+    first = await setup(); second = await setup();
+    const credentials = first.http.addWebhook(CHANNEL);
+    const webhook = await first.client.fetchWebhook(credentials.id, credentials.token);
+    const before = first.requests.length;
+    const error = await webhook.send({ files: ['https://cdn.discordapp.com/synthetic-test-file.txt'] }).catch(error => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(externalCalls).toBe(0);
+    expect(first.requests).toHaveLength(before);
+    await first.client.destroy();
+    expect(undici.getGlobalDispatcher()).not.toBe(sentinel);
+    await second.client.destroy();
+    expect(undici.getGlobalDispatcher()).toBe(sentinel);
+  } finally {
+    await first?.client.destroy(); await second?.client.destroy();
+    undici.setGlobalDispatcher(previous);
+  }
 });
