@@ -19,3 +19,22 @@ it('keeps fixture authorization and resource errors realistic', async () => {
   http.override('GET', `/channels/${CHANNEL}`, () => ({ status: 403, json: { code: 50001, message: 'Missing Access' } }));
   expect(await request('GET', `/channels/${CHANNEL}`)).toMatchObject({ status: 403, json: { code: 50001 } });
 });
+
+// Accepting an unimplemented subresource can hide an unexpected SDK request.
+it.each([
+  ['GET', `/channels/${CHANNEL}/messages/${MESSAGE}/unexpected`],
+  ['GET', `/channels/${CHANNEL}/`],
+  ['GET', `/channels//${CHANNEL}`],
+  ['POST', `/channels/${CHANNEL}/webhooks/unexpected`],
+  ['PUT', '/applications/100000000000000091/guilds/100000000000000001/commands/unexpected'],
+])('rejects unsupported routes: %s %s', async (method, path) => {
+  const http = new FakeDiscordHttp();
+  http.addGuild(GUILD);
+  http.addChannel(CHANNEL, { guildId: GUILD, type: ChannelType.GuildText });
+  http.addMessage(CHANNEL, MESSAGE);
+
+  await expect(http.answer({ method, path, query: '', body: [], authorized: true }))
+    .rejects.toThrow(`Unexpected Discord request: ${method} ${path}`);
+  expect(http.webhooks.size).toBe(0);
+  expect(http.messages.has(MESSAGE)).toBe(true);
+});

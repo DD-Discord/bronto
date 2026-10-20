@@ -938,6 +938,22 @@ describe('karma', () => {
   test client is alive. Destroying the last client restores the previous download dispatcher. Use `http.override(method, path, answer)` for errors or an
   asynchronous response gate, and `http.clearOverride(method, path)` to resume ordinary fixture behavior. Synthetic
   interaction/event fixtures can still be emitted locally; managers and fetched resources are actual Discord.js objects.
+- **Extending the HTTP fixture:** resource handlers live in `packages/core/src/testing/discord-http/` and share
+  one `DiscordState` per fake. Add endpoints to the relevant resource's route list; add a new resource list to
+  `FakeDiscordHttp` when needed. Route declarations use named parameters:
+
+  ```ts
+  route('GET', '/channels/:channelId/messages/:messageId', (_request, { channelId, messageId }) => {
+    if (!state.channels.has(channelId)) return error(10003);
+    const message = state.messages.get(messageId);
+    return message?.channel_id === channelId ? ok(message) : error(10008);
+  })
+  ```
+
+  The matcher supports exact methods and paths with nonempty named segments. Captured parameters are URL-decoded;
+  query parameters remain in `request.query`. The first matching declaration wins. Extra path segments, repeated
+  slashes and trailing slashes do not match these routes. Keep unusual failures in per-test overrides; implement
+  shared resource behavior only as tests need it.
 - **Fresh module state:** `createStickyModule()` and `createAutodeleteModule()` return independent definitions with
   their own indexes and timers. Their default exports are deployment instances. Factories take no test options; create
   a fresh definition for each test bot and control dates/timers through Vitest.
