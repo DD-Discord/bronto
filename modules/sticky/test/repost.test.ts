@@ -1,11 +1,11 @@
 import { defineModule, on } from '@bronto/core';
-import { DiscordAPIError, Events } from 'discord.js';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ChannelType, Events } from 'discord.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { stickyEvents } from '../src/events.js';
 import { Reposter, type StickyContext } from '../src/repost.js';
 import { StickyIndex } from '../src/sticky-index.js';
-import { FakeStickyDiscord } from './fake-discord.js';
+import { FakeDiscordHttp } from '@bronto/core/testing';
 import {
   CHANNEL,
   GUILD,
@@ -23,16 +23,17 @@ import {
 } from './harness.js';
 
 let t: TestDatabase;
-let discord: FakeStickyDiscord;
+let discord: FakeDiscordHttp;
 const bots: StickyBot[] = [];
 
 beforeEach(async () => {
   t = await createTestDatabase();
-  discord = new FakeStickyDiscord();
+  discord = new FakeDiscordHttp();
 });
 
 afterEach(async () => {
   for (const { bot } of bots.splice(0)) await bot.stop();
+  vi.useRealTimers();
   await t.drop();
 });
 
@@ -59,6 +60,10 @@ describe('reposting', () => {
       threadId: null,
       message: { content: 'Read the rules.', embeds: [] },
       options: { silent: true, username: 'Sticky' },
+    });
+    expect(sb.requests.find(request => request.method === 'POST' && request.path.startsWith('/webhooks/'))).toMatchObject({
+      authorized: false,
+      body: { allowed_mentions: { parse: [] }, flags: 4096, username: 'Sticky' },
     });
     expect((await stateOf(t, CHANNEL))?.lastMessageId).toBe(discord.sent[0]!.id);
     await say(sb, message(CHANNEL));
@@ -99,17 +104,20 @@ describe('reposting', () => {
   });
 
   it('ends a burst with the sticky below the newest message and every earlier post deleted', async () => {
-    discord.sendDelayMs = 25;
     const sb = await start();
-    await insertSticky(t, discord, { channelId: CHANNEL });
+    const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
     await ready(sb);
+    const gate = Promise.withResolvers<void>();
+    const reached = Promise.withResolvers<void>();
+    const path = `/webhooks/${sticky.webhookId}/${sticky.webhookToken}`;
+    discord.override('POST', path, async request => {
+      reached.resolve(); await gate.promise; discord.clearOverride('POST', path); return discord.answer(request);
+    });
     sb.client.emit(Events.MessageCreate, message(CHANNEL));
-    for (let waited = 0; !discord.calls.includes('send'); waited += 1) {
-      if (waited > 2000) throw new Error('The first repost never started sending');
-      await sleep(1);
-    }
+    await reached.promise;
     for (let i = 0; i < 9; i++) sb.client.emit(Events.MessageCreate, message(CHANNEL));
     const lastMessageAt = performance.now();
+    gate.resolve();
     await sb.bot.idle();
     const live = discord.liveMessages(CHANNEL);
     expect(live).toHaveLength(1);
@@ -155,7 +163,7 @@ describe('reposting', () => {
     await ready(sb);
     await say(sb, message(CHANNEL));
     discord.removeWebhook(sticky.webhookId);
-    discord.failDeleteChannelMessage = true;
+    discord.override('DELETE', `/channels/${CHANNEL}/messages/${discord.sent[0]!.id}`, () => { throw new Error('boom'); });
     await say(sb, message(CHANNEL));
     expect(discord.sent).toHaveLength(2);
     expect((await stateOf(t, CHANNEL))?.lastMessageId).toBe(discord.sent[1]!.id);
@@ -165,12 +173,13 @@ describe('reposting', () => {
   });
 
   it('logs the new post when recording it fails', async () => {
-    await start();
+    const sb = await start();
     const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
     const errors: unknown[][] = [];
     let runs = 0;
     const ctx = {
       guildId: GUILD,
+      client: sb.client,
       config: { webhookName: 'Sticky' },
       log: { warn: () => undefined, info: () => undefined, error: (...args: unknown[]) => void errors.push(args) },
       emit: () => undefined,
@@ -182,7 +191,7 @@ describe('reposting', () => {
         },
       },
     } as unknown as StickyContext;
-    const reposter = new Reposter({ index: new StickyIndex(), discord: () => discord });
+    const reposter = new Reposter({ index: new StickyIndex() });
     await expect(reposter.repost(ctx, CHANNEL)).rejects.toThrow('database down');
     expect(errors).toEqual([
       [
@@ -214,14 +223,15 @@ describe('debounce', () => {
   it('waits for quiet before reposting', async () => {
     const sb = await start();
     await insertSticky(t, discord, { channelId: CHANNEL, debounceMs: 80 });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     await ready(sb);
     for (let i = 0; i < 3; i++) {
       await say(sb, message(CHANNEL));
-      await sleep(10);
+      await vi.advanceTimersByTimeAsync(10);
     }
     expect(discord.sent).toEqual([]);
     expect((await stateOf(t, CHANNEL))?.repostDueAt).not.toBeNull();
-    await sleep(150);
+    await vi.advanceTimersByTimeAsync(150);
     await sb.bot.idle();
     expect(discord.sent).toHaveLength(1);
     expect((await stateOf(t, CHANNEL))?.repostDueAt).toBeNull();
@@ -231,11 +241,12 @@ describe('debounce', () => {
     const sb = await start();
     await insertSticky(t, discord, { channelId: CHANNEL, debounceMs: 60_000 });
     await setState(t, CHANNEL, { repostDueAt: new Date(Date.now() - 1000) });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     await ready(sb);
-    await sleep(30);
+    await vi.advanceTimersByTimeAsync(30);
     await sb.bot.idle();
     expect(discord.sent).toHaveLength(1);
-    await sleep(30);
+    await vi.advanceTimersByTimeAsync(30);
     expect(discord.sent).toHaveLength(1);
   });
 
@@ -243,10 +254,11 @@ describe('debounce', () => {
     const sb = await start();
     await insertSticky(t, discord, { channelId: CHANNEL, debounceMs: 60_000 });
     await setState(t, CHANNEL, { repostDueAt: new Date(Date.now() + 120) });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     await ready(sb);
-    await sleep(40);
+    await vi.advanceTimersByTimeAsync(40);
     expect(discord.sent).toEqual([]);
-    await sleep(160);
+    await vi.advanceTimersByTimeAsync(160);
     await sb.bot.idle();
     expect(discord.sent).toHaveLength(1);
   });
@@ -254,16 +266,17 @@ describe('debounce', () => {
   it('stops a pending repost when the module is switched off, and honours it when switched back on', async () => {
     const sb = await start();
     await insertSticky(t, discord, { channelId: CHANNEL, debounceMs: 80 });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     await ready(sb);
     await say(sb, message(CHANNEL));
     await sb.bot.lifecycle.setModuleEnabled(GUILD, 'sticky', false, null);
-    await sleep(150);
+    await vi.advanceTimersByTimeAsync(150);
     await sb.bot.idle();
     expect(discord.sent).toEqual([]);
     await say(sb, message(CHANNEL));
     expect(discord.sent).toEqual([]);
     await sb.bot.lifecycle.setModuleEnabled(GUILD, 'sticky', true, null);
-    await sleep(30);
+    await vi.advanceTimersByTimeAsync(30);
     await sb.bot.idle();
     expect(discord.sent).toHaveLength(1);
   });
@@ -274,9 +287,10 @@ describe('debounce and index changes', () => {
 
   /** Runs onMessage with `change` applied to the index while the due time is written. */
   async function armedRuns(change: (index: StickyIndex) => void): Promise<string[]> {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     const index = new StickyIndex();
     index.set(entry);
-    const reposter = new Reposter({ index, discord: () => discord });
+    const reposter = new Reposter({ index });
     const runs: string[] = [];
     const ctx = {
       guildId: GUILD,
@@ -284,7 +298,7 @@ describe('debounce and index changes', () => {
       queue: { run: async (key: string) => void runs.push(key) },
     } as unknown as StickyContext;
     await reposter.onMessage(ctx, message(CHANNEL));
-    await sleep(40);
+    await vi.advanceTimersByTimeAsync(40);
     reposter.cancel(CHANNEL);
     return runs;
   }
@@ -299,67 +313,78 @@ describe('debounce and index changes', () => {
 });
 
 describe('guild deletion', () => {
-  it('removes posts and webhooks from Discord before the rows go', async () => {
+  it('deletes stored guild data without deleting Discord posts or webhooks', async () => {
     const sb = await start();
     const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
-    await insertSticky(t, discord, {
-      channelId: THREAD,
-      parentChannelId: CHANNEL,
-      webhookId: sticky.webhookId,
-      webhookToken: sticky.webhookToken,
-    });
+    await insertSticky(t, discord, { channelId: THREAD, parentChannelId: CHANNEL, webhookId: sticky.webhookId, webhookToken: sticky.webhookToken });
     await ready(sb);
     await say(sb, message(CHANNEL), message(THREAD));
-    expect(discord.liveMessages()).toHaveLength(2);
-    await sb.bot.lifecycle.deleteGuild(GUILD);
-    expect(discord.liveMessages()).toEqual([]);
-    expect(discord.deletedWebhooks).toEqual([sticky.webhookId]);
-    expect(await stickyRows(t)).toEqual([]);
-  });
-
-  it("removes the last post with the bot's own permissions when the webhook is gone", async () => {
-    const sb = await start();
-    const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
-    await ready(sb);
-    await say(sb, message(CHANNEL));
-    const [post] = discord.liveMessages();
-    discord.removeWebhook(sticky.webhookId);
-    await sb.bot.lifecycle.deleteGuild(GUILD);
-    expect(discord.liveMessages()).toEqual([]);
-    expect(discord.botDeleted).toContain(post!);
-  });
-
-  const apiError = (status: number, code: number) => new DiscordAPIError({ message: 'refused', code }, code, status, 'DELETE', '/x', {});
-
-  it('still deletes the guild data when Discord refuses the removal because the bot left', async () => {
-    const sb = await start();
-    const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
-    await ready(sb);
-    await say(sb, message(CHANNEL));
-    discord.removeWebhook(sticky.webhookId);
-    discord.deleteChannelMessageError = apiError(403, 50001);
+    const messages = discord.liveMessages();
+    const webhooks = [...discord.webhooks.keys()];
+    const calls = [...sb.requests];
+    expect(messages).toHaveLength(2);
     await sb.bot.lifecycle.deleteGuild(GUILD);
     expect(await stickyRows(t)).toEqual([]);
-    expect(sb.lines).toContainEqual(expect.objectContaining({ level: 40, msg: 'Could not remove a sticky post or webhook from Discord' }));
+    expect(discord.liveMessages()).toEqual(messages);
+    expect([...discord.webhooks.keys()]).toEqual(webhooks);
+    expect(sb.requests).toEqual(calls);
   });
 
-  it('continues with the other webhooks when Discord refuses to delete one', async () => {
+  it('retains data before 30 days and purges it afterwards without Discord cleanup', async () => {
     const sb = await start();
     await insertSticky(t, discord, { channelId: CHANNEL });
     await ready(sb);
-    discord.deleteWebhookError = apiError(403, 50013);
-    await sb.bot.lifecycle.deleteGuild(GUILD);
-    expect(await stickyRows(t)).toEqual([]);
-  });
-
-  it('keeps the guild data when Discord fails with a server error', async () => {
-    const sb = await start();
-    const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
-    await ready(sb);
     await say(sb, message(CHANNEL));
-    discord.removeWebhook(sticky.webhookId);
-    discord.deleteChannelMessageError = apiError(500, 0);
-    await expect(sb.bot.lifecycle.deleteGuild(GUILD)).rejects.toThrow();
+    const messages = discord.liveMessages();
+    const calls = [...sb.requests];
+    const leftAt = new Date('2026-01-01T00:00:00Z');
+    await sb.bot.lifecycle.leave(GUILD, leftAt);
+    expect(await sb.bot.lifecycle.purgeDueGuilds(new Date('2026-01-30T00:00:00Z'))).toEqual([]);
     expect(await stickyRows(t)).toHaveLength(1);
+    expect(await sb.bot.lifecycle.purgeDueGuilds(new Date('2026-01-31T00:00:00Z'))).toEqual([GUILD]);
+    expect(await stickyRows(t)).toEqual([]);
+    expect(discord.liveMessages()).toEqual(messages);
+    expect(sb.requests).toEqual(calls);
   });
+});
+
+it.each([10015, 50027])('recovers webhook error %i between resolution and send', async code => {
+  const sb = await start();
+  const sticky = await insertSticky(t, discord, { channelId: CHANNEL });
+  await ready(sb);
+  const path = `/webhooks/${sticky.webhookId}/${sticky.webhookToken}`;
+  discord.override('POST', path, () => {
+    discord.removeWebhook(sticky.webhookId);
+    return { status: code === 50027 ? 401 : 404, json: { code, message: 'Unusable webhook' } };
+  });
+  await say(sb, message(CHANNEL));
+  expect(discord.sent).toHaveLength(1);
+  expect((await stickyRows(t))[0]!.webhookId).not.toBe(sticky.webhookId);
+});
+
+it('isolates native clients and stops pending reposts after guild departure', async () => {
+  const sb = await start();
+  await insertSticky(t, discord, { channelId: CHANNEL, debounceMs: 80 });
+  await ready(sb);
+  const otherDb = await createTestDatabase();
+  const otherHttp = new FakeDiscordHttp();
+  const other = await prepareStickyBot(otherDb, otherHttp);
+  try {
+    await insertSticky(otherDb, otherHttp, { channelId: CHANNEL });
+    await ready(other);
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await say(sb, message(CHANNEL));
+    await sb.bot.lifecycle.leave(GUILD);
+    const requests = sb.requests.length;
+    await vi.advanceTimersByTimeAsync(150);
+    await sb.bot.idle();
+    expect(discord.sent).toEqual([]);
+    expect(sb.requests).toHaveLength(requests);
+    await say(other, message(CHANNEL));
+    expect(otherHttp.sent).toHaveLength(1);
+  } finally {
+    await other.bot.stop();
+    vi.useRealTimers();
+    await otherDb.drop();
+  }
 });

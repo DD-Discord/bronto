@@ -1,53 +1,51 @@
-import { fakeRest } from '@bronto/core/testing';
-import type { Client } from 'discord.js';
-import { describe, expect, it } from 'vitest';
-import { createRestAutodeleteDiscord } from '../src/discord.js';
-
-function fakeDiscord(answer: Parameters<typeof fakeRest>[0]) {
-  const { rest, requests } = fakeRest(answer);
-  return { discord: createRestAutodeleteDiscord({ rest } as unknown as Client), requests };
+import { FakeDiscordHttp, createNativeTestClient } from '@bronto/core/testing';
+import { ChannelType, type Client } from 'discord.js';
+import { afterEach, expect, it } from 'vitest';
+import { fetchPost, deletePost, sendDm } from '../src/discord.js';
+const GUILD = '100000000000000001', CHANNEL = '100000000000000010', MESSAGE = '100000000000000050', USER = '100000000000000099';
+const clients: Client[] = [];
+afterEach(async () => { for (const client of clients.splice(0)) await client.destroy(); });
+async function setup() {
+  const http = new FakeDiscordHttp(); http.addGuild(GUILD); http.addUser(USER);
+  http.addChannel(CHANNEL, { guildId: GUILD, type: ChannelType.GuildText });
+  http.addMessage(CHANNEL, MESSAGE, { content: 'Old', attachmentCount: 1 });
+  const c = await createNativeTestClient(http); clients.push(c.client); return { http, ...c };
 }
-
-const error = (code: number, status = 404) => ({ status, json: { code, message: `error ${code}` } });
-
-describe('createRestAutodeleteDiscord', () => {
-  it('fetches the text and attachment count of a post', async () => {
-    const { discord } = fakeDiscord(() => ({ status: 200, json: { content: 'Hi', attachments: [{}, {}] } }));
-    expect(await discord.fetchPost('1', '2')).toEqual({ content: 'Hi', attachmentCount: 2 });
-  });
-
-  it('returns null for a post or channel that is gone', async () => {
-    expect(await fakeDiscord(() => error(10008)).discord.fetchPost('1', '2')).toBeNull();
-    expect(await fakeDiscord(() => error(10003)).discord.fetchPost('1', '2')).toBeNull();
-  });
-
-  it('maps delete outcomes', async () => {
-    expect(await fakeDiscord(() => ({ status: 204, json: null })).discord.deletePost('1', '2')).toBe('deleted');
-    expect(await fakeDiscord(() => error(10008)).discord.deletePost('1', '2')).toBe('gone');
-    expect(await fakeDiscord(() => error(50013, 403)).discord.deletePost('1', '2')).toBe('forbidden');
-    expect(await fakeDiscord(() => error(50001, 403)).discord.deletePost('1', '2')).toBe('forbidden');
-    await expect(fakeDiscord(() => error(50035, 400)).discord.deletePost('1', '2')).rejects.toThrow();
-  });
-
-  it('sends a DM through a new DM channel and reports closed DMs', async () => {
-    const sent = fakeDiscord((method, path) => (path === '/users/@me/channels' ? { status: 200, json: { id: '77' } } : { status: 200, json: { id: '5' } }));
-    expect(await sent.discord.sendDm('9', { content: 'Hello' })).toBe('sent');
-    expect(sent.requests.map((request) => `${request.method} ${request.path}`)).toEqual(['POST /users/@me/channels', 'POST /channels/77/messages']);
-    expect(sent.requests[0]!.body).toEqual({ recipient_id: '9' });
-    const attached = fakeDiscord((_method, path) => (path === '/users/@me/channels' ? { status: 200, json: { id: '77' } } : { status: 200, json: { id: '5' } }));
-    await attached.discord.sendDm('9', { content: 'Hello', files: [{ name: 'post.txt', data: Buffer.from('text') }] });
-    const form = attached.requests[1]!.body as FormData;
-    expect((form.get('files[0]') as File).name).toBe('post.txt');
-    expect(JSON.parse(form.get('payload_json') as string)).toMatchObject({ content: 'Hello' });
-    const closed = fakeDiscord((_method, path) => (path === '/users/@me/channels' ? { status: 200, json: { id: '77' } } : error(50007, 403)));
-    expect(await closed.discord.sendDm('9', { content: 'Hello' })).toBe('closed');
-  });
-
-  it('keeps the message out of a failed DM', async () => {
-    const failing = fakeDiscord((_method, path) => (path === '/users/@me/channels' ? { status: 200, json: { id: '77' } } : error(50035, 400)));
-    const failure = await failing.discord.sendDm('9', { content: 'secret text', files: [{ name: 'post.txt', data: Buffer.from('secret file') }] }).catch((e: unknown) => e);
-    expect(failure).toBeInstanceOf(Error);
-    expect(JSON.stringify(failure, Object.getOwnPropertyNames(failure))).not.toContain('secret');
-    expect(Object.keys(failure as object)).not.toContain('requestBody');
-  });
+it('fetches fresh post text and attachment counts instead of a cached message', async () => {
+  const { http, client } = await setup();
+  const channel = await client.channels.fetch(CHANNEL);
+  if (!channel?.isTextBased()) throw new Error('Missing fixture channel');
+  await channel.messages.fetch(MESSAGE);
+  http.addMessage(CHANNEL, MESSAGE, { content: 'Updated', attachmentCount: 2 });
+  expect(await fetchPost(client, CHANNEL, MESSAGE)).toEqual({ content: 'Updated', attachmentCount: 2 });
+});
+it.each([10008, 10003])('returns null and gone for missing resource %i', async code => {
+  const { http, client } = await setup();
+  http.override('GET', `/channels/${CHANNEL}/messages/${MESSAGE}`, () => ({ status: 404, json: { code, message: 'Gone' } }));
+  http.override('DELETE', `/channels/${CHANNEL}/messages/${MESSAGE}`, () => ({ status: 404, json: { code, message: 'Gone' } }));
+  expect(await fetchPost(client, CHANNEL, MESSAGE)).toBeNull();
+  expect(await deletePost(client, CHANNEL, MESSAGE)).toBe('gone');
+});
+it.each([50001, 50013])('maps permission refusal %i without swallowing other failures', async code => {
+  const { http, client } = await setup();
+  http.override('DELETE', `/channels/${CHANNEL}/messages/${MESSAGE}`, () => ({ status: 403, json: { code, message: 'Forbidden' } }));
+  expect(await deletePost(client, CHANNEL, MESSAGE)).toBe('forbidden');
+  http.override('DELETE', `/channels/${CHANNEL}/messages/${MESSAGE}`, () => ({ status: 400, json: { code: 50035, message: 'Unexpected' } }));
+  await expect(deletePost(client, CHANNEL, MESSAGE)).rejects.toThrow();
+});
+it('deletes a post with native methods', async () => {
+  const { http, client } = await setup();
+  expect(await deletePost(client, CHANNEL, MESSAGE)).toBe('deleted'); expect(http.messages.has(MESSAGE)).toBe(false);
+});
+it('sends native DMs with files, handles closed DMs and strips failed bodies', async () => {
+  const { http, client, requests } = await setup();
+  expect(await sendDm(client, USER, { content: 'Hello', files: [{ name: 'post.txt', data: Buffer.from('synthetic file') }] })).toBe('sent');
+  const form = requests.at(-1)!.body as FormData;
+  expect((form.get('files[0]') as File).name).toBe('post.txt');
+  http.override('POST', '/users/@me/channels', () => ({ status: 403, json: { code: 50007, message: 'Closed' } }));
+  client.channels.cache.clear();
+  expect(await sendDm(client, USER, { content: 'Hello' })).toBe('closed');
+  http.override('POST', '/users/@me/channels', () => ({ status: 400, json: { code: 50035, message: 'Invalid' } }));
+  const error = await sendDm(client, USER, { content: 'synthetic private text' }).catch(e => e);
+  expect(error).toBeInstanceOf(Error); expect(error).not.toHaveProperty('requestBody');
 });

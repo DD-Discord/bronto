@@ -554,26 +554,37 @@ export default defineModule({
 
 ### Webhooks
 
-`createWebhooks(client)` wraps the REST calls for posting through webhooks. Webhook calls authenticate with the
-webhook token, not the bot, so they work in channels the bot cannot read and are rate-limited per webhook.
+Use native Discord.js webhook objects. Core provides helpers for selecting a thread's parent, reusing stored credentials
+and handling errors; it does not wrap every Discord operation.
 
 ```ts
-const webhooks = createWebhooks(ctx.client);
-const target = await webhooks.ensureWebhook(channelId, storedCredentials, 'My bot');
-const messageId = await webhooks.send(target, { content: 'Hello' }, { username: 'My bot', silent: true });
+import { ensureWebhook, withWebhookErrors } from '@bronto/core';
+import { MessageFlags } from 'discord.js';
+
+const { webhook, threadId } = await ensureWebhook(ctx.client, channelId, storedCredentials, 'My bot');
+const message = await withWebhookErrors(webhook.token, () => webhook.send({
+  content: 'Hello',
+  username: 'My bot',
+  flags: MessageFlags.SuppressNotifications,
+  allowedMentions: { parse: [] },
+  threadId: threadId ?? undefined,
+}));
 ```
 
-- **`ensureWebhook(channelId, known, defaultName)`** takes a channel or a thread and returns a `WebhookTarget`
-  (credentials plus `threadId`). Webhooks belong to channels, so for a thread it works with the parent and sets
-  `threadId`. It reuses `known` only if the webhook still exists and belongs to that channel; otherwise it creates a
-  new one. Modules reuse only webhooks whose IDs they store, and never pick one out of a channel's webhook list.
-- **`send`** posts with `wait=true`, so it returns the message ID. It suppresses pings unless `allowedMentions` says
-  otherwise, sets `with_components=true` when `components` is given, and uploads `files` as multipart.
-- **Errors:** `UnknownWebhookError` means the webhook is deleted or its token is revoked; `MissingWebhookPermissionError`
-  means the bot lacks Manage Webhooks; `UnknownMessageError` means the message is already gone. Errors that pass
-  through have the webhook token removed, so they are safe to log.
-- **One replacement per send:** when `send` throws `UnknownWebhookError`, call `ensureWebhook` once, store the new
-  credentials and send again. Never retry in a loop.
+- **`ensureWebhook(client, channelId, known, name)`** returns a native incoming `webhook` and nullable `threadId`.
+  It reuses a known webhook only on the correct parent channel, and otherwise creates one. Store its `id` and `token`.
+- **`resolveWebhook(client, credentials)`** fetches a native webhook using stored credentials. Its methods share the bot
+  client's REST manager. Resolve once per operation and reuse the object for deleting and sending; resolving adds an
+  HTTP lookup compared with calling a token endpoint directly. Neither module keeps a separate webhook cache.
+- **Native payloads:** use `avatarURL`, `files: [{ attachment: buffer, name }]`, and `withComponents: true` for webhook
+  component messages. Set `allowedMentions: { parse: [] }` explicitly when content must not ping. The returned native
+  message provides its `id`.
+- **Errors:** wrap native webhook operations in `withWebhookErrors(token, action)` before logging failures. It maps
+  missing messages to `UnknownMessageError`, deleted/revoked webhooks to `UnknownWebhookError`, and removes credentials
+  and request bodies from other errors. `ensureWebhook` maps creation permission failures to
+  `MissingWebhookPermissionError`.
+- **Recovery:** catch an unusable webhook during resolution as well as during send/delete. Replace once with
+  `ensureWebhook`, store the new credentials and retry; do not loop indefinitely.
 
 ## 8. Events and APIs between modules
 
@@ -686,8 +697,8 @@ hooks: {
   in-memory state for that server. Queued tasks of a switched-off module are skipped, and so are all queued tasks
   and module events once the bot stops.
 - **`deleteGuildData`** runs when a server's data is deleted: 30 days after the bot left, or through
-  `bronto delete-guild`. Clean up anything outside the database, such as webhooks or posted messages; the rows
-  themselves are deleted by the foreign-key cascade. Throwing keeps the server's data, and the next daily purge tries
+  `bronto delete-guild`. The rows themselves are deleted by the foreign-key cascade. This hook is optional; sticky and
+  autodelete omit it, leaving Discord messages and webhooks untouched when their stored guild data is deleted. Throwing keeps the server's data, and the next daily purge tries
   again. Treat permanent refusals, such as Discord saying the bot has no access anymore, as done, or the purge retries
   forever.
 
@@ -897,9 +908,55 @@ describe('karma', () => {
 - **Logs:** `captureLog()` returns `{ log, lines }`, so tests can assert on log lines.
 - **Command registration:** `client.registered` holds each server's registered commands, and `client.commandWrites`
   every write.
-- **Module code that calls Discord** (REST calls, webhooks) should take that access as a dependency, so tests can pass
-  a fake. The sticky module exports `createStickyModule({ discord })` for this, and its default export uses the real
-  REST client.
+- **Module code that calls Discord** uses native methods through `ctx.client`; tests replace HTTP beneath those methods.
+  Do not add a production Discord interface or options to inject fakes. For example:
+
+  ```ts
+  import { FakeDiscordHttp, createNativeTestClient } from '@bronto/core/testing';
+  import { ChannelType } from 'discord.js';
+
+  const http = new FakeDiscordHttp();
+  const guildId = '100000000000000001';
+  const channelId = '100000000000000010';
+  http.addGuild(guildId);
+  http.addChannel(channelId, { guildId, type: ChannelType.GuildText });
+  http.addMessage(channelId, '100000000000000050', { content: 'Synthetic template' });
+  const test = await createNativeTestClient(http);
+  try {
+    const channel = await test.client.channels.fetch(channelId);
+    if (!channel?.isTextBased()) throw new Error('Missing test channel');
+    const message = await channel.messages.fetch('100000000000000050');
+    expect(message.content).toBe('Synthetic template');
+    expect(test.requests.at(-1)?.method).toBe('GET');
+  } finally {
+    await test.client.destroy();
+  }
+  ```
+
+  Pass `test.client` into `createBot`. `bot.start()` uses a local login; call `test.ready()` and await `bot.idle()` to
+  simulate readiness. Unknown HTTP requests fail locally, and URL attachment downloads are blocked while any native
+  test client is alive. Destroying the last client restores the previous download dispatcher. Use `http.override(method, path, answer)` for errors or an
+  asynchronous response gate, and `http.clearOverride(method, path)` to resume ordinary fixture behavior. Synthetic
+  interaction/event fixtures can still be emitted locally; managers and fetched resources are actual Discord.js objects.
+- **Extending the HTTP fixture:** resource handlers live in `packages/core/src/testing/discord-http/` and share
+  one `DiscordState` per fake. Add endpoints to the relevant resource's route list; add a new resource list to
+  `FakeDiscordHttp` when needed. Route declarations use named parameters:
+
+  ```ts
+  route('GET', '/channels/:channelId/messages/:messageId', (_request, { channelId, messageId }) => {
+    if (!state.channels.has(channelId)) return error(10003);
+    const message = state.messages.get(messageId);
+    return message?.channel_id === channelId ? ok(message) : error(10008);
+  })
+  ```
+
+  The matcher supports exact methods and paths with nonempty named segments. Captured parameters are URL-decoded;
+  query parameters remain in `request.query`. The first matching declaration wins. Extra path segments, repeated
+  slashes and trailing slashes do not match these routes. Keep unusual failures in per-test overrides; implement
+  shared resource behavior only as tests need it.
+- **Fresh module state:** `createStickyModule()` and `createAutodeleteModule()` return independent definitions with
+  their own indexes and timers. Their default exports are deployment instances. Factories take no test options; create
+  a fresh definition for each test bot and control dates/timers through Vitest.
 
 Run one module's tests with `pnpm vitest run modules/karma`. `pnpm test` runs everything; it needs Docker.
 
@@ -965,8 +1022,8 @@ packages/
 │   │   └── bot.ts           createBot: wires everything together
 │   ├── src/interactions/    commands, options, components, router, responder, command sync, /modules
 │   ├── src/crud/            defineEntity, crudSubcommands
-│   ├── src/webhooks/        createWebhooks: ensure, send and delete through webhooks
-│   ├── src/testing/         FakeClient, fake interactions, fakeRest, captureLog
+│   ├── src/webhooks/        native webhook selection, recovery and safe error helpers
+│   ├── src/testing/         native HTTP-backed clients, FakeClient, fake interactions, captureLog
 │   └── drizzle/             core's own migrations (core.guilds, core.guild_modules)
 └── bot/                     @bronto/bot: the `bronto` CLI
     ├── src/cli.ts           argument parsing, .env loading, signal handling
@@ -1254,7 +1311,7 @@ changes them within seconds; global commands could take up to an hour.
 | --- | --- |
 | `bronto start` | Runs the bot. SIGINT/SIGTERM stop it cleanly: timers stop, running work finishes, then it disconnects. |
 | `bronto purge <module>` | Drops the schema and history of a module that is no longer in `config.yaml`. |
-| `bronto delete-guild <id>` | Runs the modules' cleanup, then deletes the server's data. Uses REST only, no gateway. |
+| `bronto delete-guild <id>` | Runs optional cleanup hooks, then deletes stored server data. Sticky and autodelete make no Discord calls here. No gateway connection. |
 | `bronto import-legacy <module> <path> [--dry-run]` | Runs a module's legacy importer. |
 
 - **Environment:** the CLI loads `.env` from the working directory. Variables already set in the environment win.
@@ -1278,10 +1335,9 @@ again through a webhook. It shows most patterns from Part 1 under real load.
 | Someone deletes the webhook | `UnknownWebhookError` triggers one `ensureWebhook` call for a replacement. The bot deletes the old post with its own permissions, then posts again. | `repost.ts` `repost`, `replaceWebhook` |
 | `/sticky delete` while a repost is running | `beforeDelete` removes the index entry first, then cleans up inside the channel's queue and re-reads the row (a running repost may have replaced the webhook). | `commands.ts` |
 | Creating a sticky needs a webhook | CRUD `prepare` calls core's `ensureWebhook` (section 7), reusing the webhook of another sticky in the same channel, and returns its ID and token as extra columns; `afterWrite` updates the index and queues the first post. | `commands.ts` |
-| Testing without Discord | All Discord access goes through the `StickyDiscord` interface; tests pass a fake through `createStickyModule({ discord })`. | `discord.ts`, `test/fake-discord.ts` |
-| Server data is deleted | `deleteGuildData` removes posts and webhooks, treating Discord's 4xx refusals as done. | `repost.ts` `removeGuildPosts` |
+| Testing without Discord | Native Discord.js methods run against synthetic HTTP resources; test controls stay in the harness. | `test/harness.ts`, `packages/core/src/testing` |
+| Server data is deleted | Core cascades database deletion; existing Discord posts and webhooks are left in place. | `packages/core/src/db/guilds.ts` |
 | Tokens in logs | Core's webhook helper removes webhook tokens from re-thrown Discord errors before they reach logs. | `packages/core/src/webhooks` |
-| Moving from an older bot | `importLegacy` reads the old files, reuses or replaces webhooks, and reports one line per record. | `legacy.ts` |
 
 ## 25. Where to look
 

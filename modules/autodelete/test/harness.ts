@@ -1,13 +1,11 @@
 import { createBot, createScopedDb, moduleRoleName, upsertGuild, type Bot, type LoadedModule, type ScopedDb } from '@bronto/core';
-import { captureLog, FakeClient, type LogLine } from '@bronto/core/testing';
-import { Collection, Events, SnowflakeUtil } from 'discord.js';
+import { captureLog, createNativeTestClient, type NativeTestClient, type RecordedRequest, type LogLine } from '@bronto/core/testing';
+import { Collection, ChannelType, Events, SnowflakeUtil } from 'discord.js';
 import type { TestDatabase } from '../../../packages/core/test/test-db.js';
 import { autodeleteConfigSchema, type AutodeleteConfig } from '../src/config.js';
 import { cooldowns, posts, rules, type Rule } from '../src/db/schema.js';
-import { createAutodeleteModule, type AutodeleteModuleOptions } from '../src/index.js';
-import type { RuleIndex } from '../src/rule-index.js';
-import type { MemberInfo, Notifier, Removal } from '../src/tracker.js';
-import type { FakeAutodeleteDiscord } from './fake-discord.js';
+import { createAutodeleteModule } from '../src/index.js';
+import type { FakeDiscordHttp } from '@bronto/core/testing';
 
 // Made-up IDs; tests never use real server data.
 export const GUILD = '100000000000000001';
@@ -19,22 +17,16 @@ export const LOG_THREAD = '100000000000000013';
 export const USER = '100000000000000099';
 export const MEMBER = '100000000000000098';
 
-export function autodeleteModule(
-  discord?: FakeAutodeleteDiscord,
-  config: Partial<AutodeleteConfig> = {},
-  index?: RuleIndex,
-  options: Pick<AutodeleteModuleOptions, 'notifier' | 'now'> = {},
-): LoadedModule {
-  return {
-    packageName: '@bronto/autodelete',
-    definition: createAutodeleteModule({ ...(discord === undefined ? {} : { discord: () => discord }), index, ...options }),
-    config: autodeleteConfigSchema.parse(config),
-  };
+export function autodeleteModule(config: Partial<AutodeleteConfig> = {}): LoadedModule {
+  return { packageName: '@bronto/autodelete', definition: createAutodeleteModule(), config: autodeleteConfigSchema.parse(config) };
 }
 
 export interface AutodeleteBot {
   bot: Bot;
-  client: FakeClient;
+  client: NativeTestClient['client'];
+  requests: RecordedRequest[];
+  http: FakeDiscordHttp;
+  native: NativeTestClient;
   lines: LogLine[];
 }
 
@@ -46,28 +38,33 @@ export function autodeleteDb(t: TestDatabase, guildId = GUILD): ScopedDb {
 /** A bot with the autodelete module: database migrated and GUILD registered, not yet ready. */
 export async function prepareAutodeleteBot(
   t: TestDatabase,
-  discord: FakeAutodeleteDiscord,
-  options: { config?: Partial<AutodeleteConfig>; index?: RuleIndex } & Pick<AutodeleteModuleOptions, 'notifier' | 'now'> = {},
+  discord: FakeDiscordHttp,
+  options: { config?: Partial<AutodeleteConfig> } = {},
 ): Promise<AutodeleteBot> {
-  const client = new FakeClient();
-  client.guilds.cache.set(GUILD, { id: GUILD, available: true });
+  discord.addGuild(GUILD);
+  for (const id of [CHANNEL, OTHER_CHANNEL, LOG_CHANNEL]) {
+    if (!discord.channels.has(id)) discord.addChannel(id, { guildId: GUILD, type: ChannelType.GuildText });
+  }
+  if (!discord.channels.has(LOG_THREAD)) discord.addChannel(LOG_THREAD, { guildId: GUILD, type: ChannelType.PublicThread, parentId: LOG_CHANNEL });
+  const native = await createNativeTestClient(discord);
+  const { client, requests } = native;
   const { log, lines } = captureLog();
   const bot = createBot({
     config: { discord: { token: 'token' }, database: { appUrl: t.appUrl, adminUrl: t.adminUrl }, modules: {}, interactions: {} },
-    modules: [autodeleteModule(discord, options.config, options.index, { notifier: options.notifier, now: options.now })],
+    modules: [autodeleteModule(options.config)],
     database: t.database,
-    client: client.asClient(),
+    client,
     log,
   });
   await bot.prepare();
   await upsertGuild(t.database.admin, GUILD);
-  return { bot, client, lines };
+  return { bot, client, lines, requests, native, http: discord };
 }
 
 /** Logs in and runs the start-up work, as discord.js does after connecting. */
-export async function ready({ bot, client }: AutodeleteBot): Promise<void> {
+export async function ready({ bot, native }: AutodeleteBot): Promise<void> {
   await bot.start();
-  client.emit(Events.ClientReady, client);
+  native.ready();
   await bot.idle();
 }
 
@@ -101,35 +98,6 @@ export async function insertPost(
 export const ruleRows = (t: TestDatabase): Promise<Rule[]> => t.database.admin.select().from(rules).orderBy(rules.channelId);
 export const cooldownRows = (t: TestDatabase) => t.database.admin.select().from(cooldowns).orderBy(cooldowns.channelId, cooldowns.userId);
 export const postRows = (t: TestDatabase) => t.database.admin.select().from(posts).orderBy(posts.messageId);
-
-/** Every notifier call, in order, with the context left out. */
-export type NotifierCall =
-  | { kind: 'replaced'; channelId: string; member: MemberInfo; removed: Removal; newPost: { messageId: string; content: string } }
-  | {
-      kind: 'rejected';
-      channelId: string;
-      member: MemberInfo;
-      rejected: Removal;
-      current: { messageId: string; post: { content: string; attachmentCount: number } | null } | null;
-      nextPostAt: Date;
-    }
-  | { kind: 'left'; channelId: string; member: MemberInfo; removed: Removal };
-
-export class RecordingNotifier implements Notifier {
-  readonly calls: NotifierCall[] = [];
-
-  async replaced(...[, rule, member, removed, newPost]: Parameters<Notifier['replaced']>): Promise<void> {
-    this.calls.push({ kind: 'replaced', channelId: rule.channelId, member, removed, newPost });
-  }
-
-  async rejected(...[, rule, member, rejected, current, nextPostAt]: Parameters<Notifier['rejected']>): Promise<void> {
-    this.calls.push({ kind: 'rejected', channelId: rule.channelId, member, rejected, current, nextPostAt });
-  }
-
-  async left(...[, rule, member, removed]: Parameters<Notifier['left']>): Promise<void> {
-    this.calls.push({ kind: 'left', channelId: rule.channelId, member, removed });
-  }
-}
 
 /** A message ID whose snowflake carries `at`; `increment` tells apart messages of the same millisecond. */
 export function snowflakeAt(at: Date, increment = 0): string {
