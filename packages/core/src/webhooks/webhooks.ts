@@ -1,3 +1,5 @@
+import { UnknownMessageError, UnknownWebhookError, MissingWebhookPermissionError, stripRequestBody } from './errors.js';
+export { UnknownMessageError, UnknownWebhookError, MissingWebhookPermissionError, stripRequestBody } from './errors.js';
 import {
   ChannelType,
   DiscordAPIError,
@@ -60,30 +62,6 @@ export interface Webhooks {
   deleteMessage(target: WebhookTarget, messageId: string): Promise<void>;
 }
 
-export class UnknownMessageError extends Error {
-  constructor() {
-    super('Unknown message');
-    this.name = 'UnknownMessageError';
-  }
-}
-
-export class UnknownWebhookError extends Error {
-  constructor() {
-    super('Unknown webhook');
-    this.name = 'UnknownWebhookError';
-  }
-}
-
-export class MissingWebhookPermissionError extends Error {
-  readonly channelId: string;
-
-  constructor(channelId: string) {
-    super(`Missing Manage Webhooks in channel ${channelId}`);
-    this.name = 'MissingWebhookPermissionError';
-    this.channelId = channelId;
-  }
-}
-
 const THREAD_TYPES = new Set<ChannelType>([ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread]);
 
 function codeOf(error: unknown): number | null {
@@ -99,12 +77,6 @@ function isWebhookGone(error: unknown): boolean {
 function isPermissionError(error: unknown): boolean {
   const code = codeOf(error);
   return code === RESTJSONErrorCodes.MissingAccess || code === RESTJSONErrorCodes.MissingPermissions;
-}
-
-/** Removes the request body (message text, files, sender) from a REST error so it never reaches logs. */
-export function stripRequestBody<T>(error: T): T {
-  if (error instanceof Error && 'requestBody' in error) delete (error as { requestBody?: unknown }).requestBody;
-  return error;
 }
 
 /** Removes a webhook token from a REST error's url and message, and its request body, so none reaches logs. */
