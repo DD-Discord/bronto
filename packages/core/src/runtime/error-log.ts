@@ -29,8 +29,9 @@ function withoutQueryValues(error: unknown, seen = new Set<unknown>()): unknown 
   }
   let message = error.message;
   if (isQueryError) message = `Failed query: ${fields.query as string}`;
-  // SQLSTATE class 22 messages quote the rejected input, e.g. `invalid input syntax for type uuid: "…"`.
-  if (isDataException) message = message.replace(/"[^"]*"/g, '"…"').replace(/: [^"].*$/s, ': …');
+  // SQLSTATE class 22 messages quote one rejected input verbatim, quotes inside it unescaped, so everything from the
+  // first to the last quote is masked, e.g. `invalid input syntax for type uuid: "…"`.
+  if (isDataException) message = message.replace(/"[\s\S]*"/, '"…"').replace(/: [^"].*$/s, ': …');
   Object.defineProperty(copy, 'message', { value: message, writable: true, configurable: true });
   Object.defineProperty(copy, 'stack', { value: error.stack?.replace(error.message, message), writable: true, configurable: true });
   Object.defineProperty(copy, 'cause', { value: cause, writable: true, configurable: true });

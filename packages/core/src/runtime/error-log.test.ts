@@ -21,6 +21,21 @@ describe('serializeError', () => {
     expect(JSON.stringify(serialized)).not.toContain('SECRET');
   });
 
+  it.each([
+    ['22P02', 'invalid input syntax for type uuid: "SECRET"', 'invalid input syntax for type uuid: "…"'],
+    ['22P02', 'invalid input syntax for type uuid: "a"b SECRET"', 'invalid input syntax for type uuid: "…"'],
+    ['22P02', 'invalid input syntax for type uuid: "a\\"SECRET\\""', 'invalid input syntax for type uuid: "…"'],
+    ['22P02', 'invalid input syntax for type uuid: "line1\nSECRET"', 'invalid input syntax for type uuid: "…"'],
+    ['22P02', 'invalid input value for enum mood: "SECRET"', 'invalid input value for enum mood: "…"'],
+    ['22003', 'value "99999999999" is out of range for type integer', 'value "…" is out of range for type integer'],
+    ['22008', 'date/time field value out of range: "2026-13-45"', 'date/time field value out of range: "…"'],
+    ['22001', 'value too long for type character varying(5)', 'value too long for type character varying(5)'],
+    ['22012', 'division by zero', 'division by zero'],
+  ])('masks the quoted input of a %s message: %s', (code, raw, masked) => {
+    const rejected = Object.assign(new Error(raw), { code, severity: 'ERROR' });
+    expect((serializeError(rejected) as { message: string }).message).toBe(masked);
+  });
+
   it('masks unquoted values after the colon of a data exception message', () => {
     const rejected = Object.assign(new Error('invalid byte sequence for encoding "UTF8": 0x00'), { code: '22021', severity: 'ERROR' });
     expect((serializeError(rejected) as { message: string }).message).toBe('invalid byte sequence for encoding "…": …');
