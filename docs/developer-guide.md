@@ -1024,7 +1024,7 @@ Details:
   A dependency cycle is also a `ConfigError`.
 - **Building runtimes** (`runtime/context.ts`): each module gets a `ModuleContext` (name, child logger, settings,
   client, `modules.get`). The bot's logger serializes `err` without the values of failed queries (Drizzle's params,
-  Postgres' `detail`), so row contents and tokens stay out of the log. APIs are built in dependency order, so an API factory can capture the APIs it depends on.
+  Postgres' `detail`, the input quoted in data exception messages), so row contents and tokens stay out of the log. APIs are built in dependency order, so an API factory can capture the APIs it depends on.
   An API factory gets that context with getters for `guildId`, `actorId`, `db`, `queue`, `emit` and `customId`. Each read asks
   the current handler scope (`runtime/handler-scope.ts`, an `AsyncLocalStorage` that `runHandler` installs) for the
   provider's context in that run, and throws outside a handler.

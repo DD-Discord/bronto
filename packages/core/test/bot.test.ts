@@ -1,5 +1,5 @@
 import { Events } from 'discord.js';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConfigError } from '../src/config/errors.js';
 import { defineCommand } from '../src/interactions/commands.js';
@@ -446,6 +446,23 @@ describe('createBot', () => {
     const failure = JSON.stringify(lines.find((line) => line.msg === 'Handler failed'));
     expect(failure).toMatch(/Failed query: insert into /);
     expect(failure).toMatch(/duplicate key value/);
+    expect(failure).not.toMatch(/SECRET_/);
+  });
+
+  it('logs rejected input without the value', async () => {
+    const castUuid = on(Events.MessageCreate, async (ctx) => {
+      await ctx.db.run(async (tx) => {
+        await tx.execute(sql`select ${'SECRET_VALUE'}::uuid`);
+      });
+    });
+    const { bot, client, lines } = makeBot([widgetsModule({ listeners: [castUuid] })]);
+    await bot.start();
+    await ready(bot, client);
+    client.emit(Events.GuildAvailable, { id: 'g1' });
+    client.emit(Events.MessageCreate, { id: 'm1', guildId: 'g1' });
+    await bot.idle();
+    const failure = JSON.stringify(lines.find((line) => line.msg === 'Handler failed'));
+    expect(failure).toMatch(/invalid input syntax for type uuid/);
     expect(failure).not.toMatch(/SECRET_/);
   });
 

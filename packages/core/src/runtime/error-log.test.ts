@@ -13,6 +13,27 @@ describe('serializeError', () => {
     expect(error.detail).toBe('Key (id)=(SECRET) already exists.');
   });
 
+  it('masks the values Postgres quotes in data exception messages, also in the stack and in causes', () => {
+    const rejected = Object.assign(new Error('invalid input syntax for type uuid: "SECRET"'), { code: '22P02', severity: 'ERROR' });
+    const serialized = serializeError(new Error('Handler failed', { cause: rejected })) as { message: string; stack: string };
+    expect(serialized.message).toContain('invalid input syntax for type uuid: "…"');
+    expect(serialized.stack).toContain('invalid input syntax for type uuid: "…"');
+    expect(JSON.stringify(serialized)).not.toContain('SECRET');
+  });
+
+  it('masks unquoted values after the colon of a data exception message', () => {
+    const rejected = Object.assign(new Error('invalid byte sequence for encoding "UTF8": 0x00'), { code: '22021', severity: 'ERROR' });
+    expect((serializeError(rejected) as { message: string }).message).toBe('invalid byte sequence for encoding "…": …');
+  });
+
+  it('keeps the names Postgres quotes in other errors', () => {
+    const violation = Object.assign(new Error('duplicate key value violates unique constraint "items_pkey"'), {
+      code: '23505',
+      severity: 'ERROR',
+    });
+    expect((serializeError(violation) as { message: string }).message).toBe(violation.message);
+  });
+
   it('leaves errors without query values unchanged', () => {
     const error = new Error('plain');
     expect((serializeError(error) as { raw: unknown }).raw).toBe(error);
