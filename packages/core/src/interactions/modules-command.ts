@@ -10,7 +10,14 @@ import { opt } from './options.js';
 export interface ModulesCommandOptions {
   runtimes: ModuleRuntime[];
   enablement: ModuleEnablement;
-  setModuleEnabled: (guildId: string, module: string, enabled: boolean, actorId: string | null) => Promise<boolean>;
+  /** Switches a module; `check` runs right before the switch, after earlier switches of the guild finished. */
+  setModuleEnabled: (
+    guildId: string,
+    module: string,
+    enabled: boolean,
+    actorId: string | null,
+    check: () => void,
+  ) => Promise<boolean>;
 }
 
 const bold = (names: string[]) => names.map((name) => `**${name}**`).join(', ');
@@ -35,23 +42,25 @@ export function createModulesCommand(options: ModulesCommandOptions): CommandDef
 
   async function enable(ctx: CommandContext, name: string): Promise<void> {
     const runtime = find(name);
-    const off = dependenciesOf(runtime).filter((dependency) => !enablement.isEnabled(ctx.guildId, dependency));
-    if (off.length > 0) {
-      throw new UserError(`Turn on ${bold(off)} first; **${name}** depends on ${off.length === 1 ? 'it' : 'them'}.`);
-    }
-    const changed = await options.setModuleEnabled(ctx.guildId, name, true, ctx.actorId);
+    const changed = await options.setModuleEnabled(ctx.guildId, name, true, ctx.actorId, () => {
+      const off = dependenciesOf(runtime).filter((dependency) => !enablement.isEnabled(ctx.guildId, dependency));
+      if (off.length > 0) {
+        throw new UserError(`Turn on ${bold(off)} first; **${name}** depends on ${off.length === 1 ? 'it' : 'them'}.`);
+      }
+    });
     await ctx.reply(changed ? `Turned on **${name}**.` : `**${name}** is already on.`);
   }
 
   async function disable(ctx: CommandContext, name: string): Promise<void> {
     find(name);
-    const dependents = runtimes
-      .filter((runtime) => dependenciesOf(runtime).includes(name) && enablement.isEnabled(ctx.guildId, runtime.name))
-      .map((runtime) => runtime.name);
-    if (dependents.length > 0) {
-      throw new UserError(`Turn off ${bold(dependents)} first; ${dependents.length === 1 ? 'it depends' : 'they depend'} on **${name}**.`);
-    }
-    const changed = await options.setModuleEnabled(ctx.guildId, name, false, ctx.actorId);
+    const changed = await options.setModuleEnabled(ctx.guildId, name, false, ctx.actorId, () => {
+      const dependents = runtimes
+        .filter((runtime) => dependenciesOf(runtime).includes(name) && enablement.isEnabled(ctx.guildId, runtime.name))
+        .map((runtime) => runtime.name);
+      if (dependents.length > 0) {
+        throw new UserError(`Turn off ${bold(dependents)} first; ${dependents.length === 1 ? 'it depends' : 'they depend'} on **${name}**.`);
+      }
+    });
     await ctx.reply(changed ? `Turned off **${name}**.` : `**${name}** is already off.`);
   }
 

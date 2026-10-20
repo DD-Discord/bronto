@@ -1181,7 +1181,8 @@ placeholder is deleted before a private answer.
 This is why handlers must not answer through `ctx.interaction`: the Responder would no longer know the state.
 
 The **`/modules`** command (`interactions/modules-command.ts`) is core's own command, run under a pseudo-runtime named
-`core`. `enable` and `disable` check dependencies, then call `lifecycle.setModuleEnabled`.
+`core`. `enable` and `disable` call `lifecycle.setModuleEnabled` with their dependency check, which runs inside the
+guild's serialized switch, so concurrent switches cannot leave a module on without its dependency.
 
 ## 20. KeyedQueue
 

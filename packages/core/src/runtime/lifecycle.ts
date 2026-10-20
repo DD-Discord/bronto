@@ -88,11 +88,18 @@ export class GuildLifecycle {
   /**
    * Switches a module on or off in a guild. Returns false when it already had that state. Switching off runs the
    * module's guildStopped first; switching on warns about missing bot permissions and runs its guildReady after its
-   * commands are registered. Switches of one guild run one after another.
+   * commands are registered. Switches of one guild run one after another; `check` runs in that order right before the
+   * switch and stops it by throwing.
    */
-  setModuleEnabled(guildId: string, module: string, enabled: boolean, actorId: string | null): Promise<boolean> {
+  setModuleEnabled(
+    guildId: string,
+    module: string,
+    enabled: boolean,
+    actorId: string | null,
+    check?: () => void,
+  ): Promise<boolean> {
     const previous = this.switching.get(guildId) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(() => this.switchModule(guildId, module, enabled, actorId));
+    const next = previous.catch(() => undefined).then(() => this.switchModule(guildId, module, enabled, actorId, check));
     this.switching.set(guildId, next);
     next
       .finally(() => {
@@ -102,11 +109,18 @@ export class GuildLifecycle {
     return next;
   }
 
-  private async switchModule(guildId: string, module: string, enabled: boolean, actorId: string | null): Promise<boolean> {
+  private async switchModule(
+    guildId: string,
+    module: string,
+    enabled: boolean,
+    actorId: string | null,
+    check?: () => void,
+  ): Promise<boolean> {
     const { runtimes, enablement, dispatcher, commands } = this.options;
     const runtime = runtimes.find((candidate) => candidate.name === module);
     if (runtime === undefined) throw new Error(`Module "${module}" is not loaded.`);
     await this.ready(guildId);
+    check?.();
     if (enablement.isEnabled(guildId, module) === enabled) return false;
     if (!enabled) await this.stopModule(runtime, guildId);
     await enablement.set(guildId, module, enabled);

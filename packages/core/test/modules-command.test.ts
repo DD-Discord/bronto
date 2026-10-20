@@ -39,7 +39,8 @@ function build() {
   const command = createModulesCommand({
     runtimes,
     enablement,
-    setModuleEnabled: (guildId, module, enabled, actorId) => lifecycle.setModuleEnabled(guildId, module, enabled, actorId),
+    setModuleEnabled: (guildId, module, enabled, actorId, check) =>
+      lifecycle.setModuleEnabled(guildId, module, enabled, actorId, check),
   });
   const router = new InteractionRouter({
     sources: [{ runtime: createCoreRuntime(services), commands: { modules: command }, components: [], alwaysEnabled: true }],
@@ -91,6 +92,15 @@ describe('/modules', () => {
     await say('disable', { module: 'beta' });
     expect(await say('disable', { module: 'alpha' })).toBe('Turned off **alpha**.');
     expect(await say('enable', { module: 'beta' })).toBe('Turn on **alpha** first; **beta** depends on it.');
+  });
+
+  it('checks dependencies against switches that ran before', async () => {
+    const { say, enablement } = build();
+    await say('disable', { module: 'beta' });
+    const [disabled, enabled] = await Promise.all([say('disable', { module: 'alpha' }), say('enable', { module: 'beta' })]);
+    expect(disabled).toBe('Turned off **alpha**.');
+    expect(enabled).toBe('Turn on **alpha** first; **beta** depends on it.');
+    expect(enablement.isEnabled('g1', 'beta')).toBe(false);
   });
 
   it('names unknown modules', async () => {

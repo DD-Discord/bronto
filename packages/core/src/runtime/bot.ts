@@ -97,7 +97,8 @@ export function createBot(options: BotOptions): Bot {
   const modulesCommand = createModulesCommand({
     runtimes,
     enablement,
-    setModuleEnabled: (guildId, module, enabled, actorId) => lifecycle.setModuleEnabled(guildId, module, enabled, actorId),
+    setModuleEnabled: (guildId, module, enabled, actorId, check) =>
+      lifecycle.setModuleEnabled(guildId, module, enabled, actorId, check),
   });
   const router = new InteractionRouter({
     sources: [
