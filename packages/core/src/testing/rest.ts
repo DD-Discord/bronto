@@ -14,35 +14,37 @@ export interface FakeRestAnswer {
   json: unknown;
 }
 
-/** A REST client whose requests go to `answer` instead of Discord; every request is recorded. */
-export function fakeRest(answer: (method: string, path: string) => FakeRestAnswer): { rest: REST; requests: RecordedRequest[] } {
+export type FakeHttpAnswer = (request: RecordedRequest) => FakeRestAnswer | Promise<FakeRestAnswer>;
+
+/** Intercepts every HTTP request, including native Discord.js manager calls. */
+export function fakeTransport(answer: FakeHttpAnswer): {
+  options: Pick<import('discord.js').RESTOptions, 'makeRequest' | 'retries'>;
+  requests: RecordedRequest[];
+} {
   const requests: RecordedRequest[] = [];
-  const rest = new REST({
-    retries: 0,
-    makeRequest: async (url, init) => {
-      const parsed = new URL(url);
-      const path = parsed.pathname.replace('/api/v10', '');
-      requests.push({
-        method: init.method ?? 'GET',
-        path,
-        query: parsed.search,
-        body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body instanceof FormData ? init.body : undefined,
-        authorized: new Headers(init.headers as ConstructorParameters<typeof Headers>[0]).has('authorization'),
-      });
-      const { status, json } = answer(init.method ?? 'GET', path);
-      const text = status === 204 ? '' : JSON.stringify(json);
-      return {
-        body: null,
-        bodyUsed: false,
-        ok: status < 300,
-        status,
-        statusText: String(status),
-        headers: new Headers(status === 204 ? {} : { 'content-type': 'application/json' }),
-        text: async () => text,
-        json: async () => (text === '' ? null : JSON.parse(text)),
-        arrayBuffer: async () => new TextEncoder().encode(text).buffer,
-      } as never;
+  return {
+    requests,
+    options: {
+      retries: 0,
+      makeRequest: async (url, init) => {
+        const parsed = new URL(url);
+        const request: RecordedRequest = {
+          method: init.method ?? 'GET', path: parsed.pathname.replace('/api/v10', ''), query: parsed.search,
+          body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body instanceof FormData ? init.body : undefined,
+          authorized: new Headers(init.headers as ConstructorParameters<typeof Headers>[0]).has('authorization'),
+        };
+        requests.push(request);
+        const { status, json } = await answer(request);
+        return new Response(status === 204 ? null : JSON.stringify(json), {
+          status, headers: status === 204 ? {} : { 'content-type': 'application/json' },
+        });
+      },
     },
-  }).setToken('bot-token');
-  return { rest, requests };
+  };
+}
+
+/** A standalone REST client for tests that do not need native managers. */
+export function fakeRest(answer: (method: string, path: string) => FakeRestAnswer): { rest: REST; requests: RecordedRequest[] } {
+  const { options, requests } = fakeTransport(request => answer(request.method, request.path));
+  return { rest: new REST(options).setToken('bot-token'), requests };
 }
