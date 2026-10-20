@@ -1,3 +1,3 @@
-export * from './webhooks.js';
+export * from './types.js';
 export * from './native.js';
-export { withWebhookErrors } from './errors.js';
+export * from './errors.js';

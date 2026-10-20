@@ -1,6 +1,6 @@
 import { DiscordAPIError, RESTJSONErrorCodes, type Client, type Webhook, type WebhookType } from 'discord.js';
 import { MissingWebhookPermissionError, UnknownWebhookError, withWebhookErrors } from './errors.js';
-import type { WebhookCredentials } from './webhooks.js';
+import type { WebhookCredentials } from './types.js';
 
 export type IncomingWebhook = Webhook<WebhookType.Incoming>;
 export interface ResolvedWebhook { webhook: IncomingWebhook; threadId: string | null; }

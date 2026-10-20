@@ -1,5 +1,5 @@
 import { ChannelType, MessageFlags, type APIChannel, type APIEmbed, type APIGuild, type APIMessage, type APIUser, type APIWebhook } from 'discord.js';
-import type { WebhookMessage, WebhookSendOptions, WebhookTarget, WebhookCredentials } from '../webhooks/webhooks.js';
+import type { WebhookMessage, WebhookSendOptions, WebhookTarget, WebhookCredentials } from '../webhooks/types.js';
 import type { FakeHttpAnswer, FakeRestAnswer, RecordedRequest } from './rest.js';
 
 const error = (code: number, status = 404): FakeRestAnswer => ({ status, json: { code, message: `Synthetic Discord error ${code}` } });

@@ -11,7 +11,7 @@
 - Modules are `defineModule()` definitions. They declare listeners (`on(...)`) and hooks; they never call `client.on` themselves.
 - Handlers `await` all database work inside the handler. A Drizzle query awaited outside the handler's scope loses the guild and the acting user.
 - A module emits only its own events and uses other modules only through their `api` (declared in `dependsOn`); a module with a `db` has a role that can't reach other modules' or core's tables (a module without one runs as the app role; it shouldn't touch core's tables either). The roles guard against mistakes, not hostile module code: never run `set role` or `reset role` in a module.
-- Tests never connect to Discord; use `FakeClient` and the fake interactions from `@bronto/core/testing`.
+- Tests never connect to Discord. Use `createNativeTestClient` with `FakeDiscordHttp` for native Discord.js operations; `FakeClient` and fake interactions from `@bronto/core/testing` remain available for core behavior.
 - Interaction handlers answer only through `ctx.reply`/`ctx.followUp`/`ctx.defer`/`ctx.showModal`, and throw `UserError` for messages meant for the user.
 - Module schema files import `guildTable`/`globalTable` from `@bronto/core/tables`; prefer this over `@bronto/core`, since drizzle-kit loads schema files and the main entry pulls in discord.js, pino and the runtime.
 - Never keep a transaction (`ctx.db.run`) open across a Discord API call.
