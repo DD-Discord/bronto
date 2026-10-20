@@ -683,7 +683,8 @@ hooks: {
   available again, and when the module is switched back on. It can run more than once, so make it idempotent. This is
   where in-memory state and timers are rebuilt from the database.
 - **`guildStopped`** runs when the module is switched off in a server or the bot leaves it. Cancel timers and drop
-  in-memory state for that server. Queued tasks of a switched-off module are skipped.
+  in-memory state for that server. Queued tasks of a switched-off module are skipped, and so are all queued tasks
+  and module events once the bot stops.
 - **`deleteGuildData`** runs when a server's data is deleted: 30 days after the bot left, or through
   `bronto delete-guild`. Clean up anything outside the database, such as webhooks or posted messages; the rows
   themselves are deleted by the foreign-key cascade. Throwing keeps the server's data, and the next daily purge tries

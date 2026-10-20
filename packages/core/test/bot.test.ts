@@ -10,6 +10,7 @@ import { guildModules, guilds } from '../src/db/schema.js';
 import { createBot, StartupError, type Bot } from '../src/runtime/bot.js';
 import { coreEvents, on } from '../src/runtime/events.js';
 import type { ModuleDefinition } from '../src/runtime/module.js';
+import type { ModuleQueue } from '../src/runtime/types.js';
 import { FakeClient } from '../src/testing/fake-client.js';
 import { fakeButton, fakeCommand } from '../src/testing/interactions.js';
 import { TEST_INTERACTION_SECRET } from '../src/testing/index.js';
@@ -209,6 +210,34 @@ describe('createBot', () => {
     expect(client.listenerCount(Events.MessageCreate)).toBe(1);
     await bot.stop();
     expect(client.eventNames()).toEqual([]);
+  });
+
+  it('runs no queued module work once stopped', async () => {
+    let queue: ModuleQueue | undefined;
+    const ran: string[] = [];
+    const module = widgetsModule({
+      hooks: {
+        guildReady: (ctx) => {
+          queue = ctx.queue;
+        },
+      },
+    });
+    const { bot, client } = makeBot([module]);
+    cache(client, 'g1');
+    await bot.start();
+    await ready(bot, client);
+    let release!: () => void;
+    const running = queue!.run('k', () => new Promise<void>((resolve) => (release = resolve)));
+    const waiting = queue!.run('k', async () => {
+      ran.push('waiting');
+    });
+    const stopped = bot.stop();
+    release();
+    await Promise.all([running, waiting, stopped]);
+    await queue!.run('k', async () => {
+      ran.push('after stop');
+    });
+    expect(ran).toEqual([]);
   });
 
   it('sets up guilds announced before the client is ready only after the start hooks', async () => {

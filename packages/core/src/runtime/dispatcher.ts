@@ -65,6 +65,7 @@ export class Dispatcher {
   private readonly discordListeners = new Map<DiscordEventName, Array<{ runtime: ModuleRuntime; listener: DiscordListener }>>();
   private readonly moduleListeners = new Map<EventDefinition<unknown>, Array<{ runtime: ModuleRuntime; listener: ModuleListener }>>();
   private readonly inFlight = new Set<Promise<unknown>>();
+  private stopped = false;
 
   constructor(options: DispatcherOptions) {
     this.database = options.database;
@@ -105,6 +106,7 @@ export class Dispatcher {
 
   /** Hands an event to every listening module enabled in the guild, without waiting for them. */
   deliver<P>(event: EventDefinition<P>, payload: P, guildId: string, actorId: string | null = null): void {
+    if (this.stopped) return;
     for (const { runtime, listener } of this.moduleListeners.get(event) ?? []) {
       if (!this.enablement.isEnabled(guildId, runtime.name)) continue;
       this.track(this.runHandler(runtime, guildId, actorId, eventLabel(event), (ctx) => listener.handler(ctx, payload)));
@@ -157,6 +159,11 @@ export class Dispatcher {
       state.finished = true;
     }
     return { ok: true };
+  }
+
+  /** Skips module events and queued tasks from now on; running handlers finish. */
+  stop(): void {
+    this.stopped = true;
   }
 
   /** Resolves once no handler started through handleDiscord, deliver or a module queue is still running. */
@@ -212,8 +219,8 @@ export class Dispatcher {
         run: (key, task) =>
           this.track(
             this.queue.run(`${runtime.name}/${guildId}/${key}`, async () => {
-              // A task queued before the module was switched off in the guild does not run.
-              if (!this.enablement.isEnabled(guildId, runtime.name)) return;
+              // A task does not run once the bot stopped or the module was switched off in the guild.
+              if (this.stopped || !this.enablement.isEnabled(guildId, runtime.name)) return;
               await this.runHandler(runtime, guildId, actorId, `queue:${key}`, task);
             }),
           ),

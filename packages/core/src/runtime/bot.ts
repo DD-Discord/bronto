@@ -61,7 +61,10 @@ export interface Bot {
   start(): Promise<void>;
   /** Resolves once no started work is still running. */
   idle(): Promise<void>;
-  /** Stops scheduled work, waits for running work and disconnects. The caller closes the database. */
+  /**
+   * Stops scheduled work, skips queued module tasks and events, waits for running work and disconnects. The caller
+   * closes the database.
+   */
   stop(): Promise<void>;
 }
 
@@ -283,6 +286,7 @@ export function createBot(options: BotOptions): Bot {
       markStarted();
       clearInterval(purgeTimer);
       detach();
+      dispatcher.stop();
       await idle();
       clearInterval(purgeTimer);
       await client.destroy();
