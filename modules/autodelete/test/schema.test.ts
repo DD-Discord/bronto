@@ -1,7 +1,7 @@
 import { formatSchemaProblems, migrationTargets, prepareDatabase, schemaExpectations } from '@bronto/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
-import { FakeAutodeleteDiscord } from './fake-discord.js';
+import { FakeDiscordHttp } from '@bronto/core/testing';
 import { autodeleteDb, autodeleteModule, CHANNEL, insertRule, OTHER_GUILD, prepareAutodeleteBot } from './harness.js';
 import { rules } from '../src/db/schema.js';
 import { upsertGuild } from '@bronto/core';
@@ -31,10 +31,11 @@ describe('autodelete schema', () => {
   });
 
   it('prepares the bot and hides the rows of other servers', async () => {
-    await prepareAutodeleteBot(t, new FakeAutodeleteDiscord());
+    const ab = await prepareAutodeleteBot(t, new FakeDiscordHttp());
     await upsertGuild(t.database.admin, OTHER_GUILD);
     await insertRule(t, { channelId: CHANNEL });
     expect(await autodeleteDb(t).run(async (tx) => tx.select().from(rules))).toHaveLength(1);
     expect(await autodeleteDb(t, OTHER_GUILD).run(async (tx) => tx.select().from(rules))).toEqual([]);
+    await ab.bot.stop();
   });
 });

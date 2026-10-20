@@ -1,5 +1,5 @@
 import { ChannelType, MessageFlags, type APIChannel, type APIEmbed, type APIGuild, type APIMessage, type APIUser, type APIWebhook } from 'discord.js';
-import type { WebhookCredentials } from '../webhooks/webhooks.js';
+import type { WebhookMessage, WebhookSendOptions, WebhookTarget, WebhookCredentials } from '../webhooks/webhooks.js';
 import type { FakeHttpAnswer, FakeRestAnswer, RecordedRequest } from './rest.js';
 
 const error = (code: number, status = 404): FakeRestAnswer => ({ status, json: { code, message: `Synthetic Discord error ${code}` } });
@@ -18,6 +18,8 @@ export class FakeDiscordHttp {
   private readonly overrides = new Map<string, FakeHttpAnswer>();
   private readonly commands = new Map<string, unknown>();
   readonly sent: { id: string; webhookId: string; channelId: string; threadId: string | null; message: { content: string; embeds: APIEmbed[] }; options: { silent: boolean; username?: string; avatarUrl?: string }; startedAt: number }[] = [];
+  readonly reports: { target: WebhookTarget; message: WebhookMessage; options: WebhookSendOptions }[] = [];
+  readonly dms: { userId: string; message: WebhookMessage }[] = [];
   readonly deleted: string[] = [];
   readonly botDeleted: string[] = [];
   readonly deletedPosts: string[] = [];
@@ -52,6 +54,11 @@ export class FakeDiscordHttp {
   removeWebhook(id: string): void { this.webhooks.delete(id); }
   liveMessages(channelId?: string): string[] { return [...this.messages.values()].filter(m => !this.templates.has(m.id) && (channelId === undefined || m.channel_id === channelId)).map(m => m.id); }
   override(method: string, path: string, answer: FakeHttpAnswer): void { this.overrides.set(`${method} ${path}`, answer); }
+
+  addPost(channelId: string, id: string, post: { content: string; attachmentCount: number } = { content: 'Hello', attachmentCount: 0 }): void {
+    if (!this.channels.has(channelId)) this.addChannel(channelId, { guildId: this.guildIds[0] ?? '100000000000000001', type: ChannelType.GuildText });
+    this.addMessage(channelId, id, post);
+  }
 
   clearOverride(method: string, path: string): void { this.overrides.delete(`${method} ${path}`); }
   addTemplate(guildId: string, channelId: string, messageId: string, message: { content: string; embeds: APIEmbed[] }): void {
@@ -122,10 +129,22 @@ export class FakeDiscordHttp {
     const message = this.messages.get(id)!;
     Object.assign(message, body, { id, channel_id: channelId, flags: body.flags ?? 0 });
     if (body.components) message.components = body.components as APIMessage['components'];
+    const files: { name: string; data: Buffer }[] = [];
+    if (request.body instanceof FormData) {
+      for (const [key, value] of request.body) {
+        if (key.startsWith('files[') && value instanceof File) files.push({ name: value.name, data: Buffer.from(await value.arrayBuffer()) });
+      }
+    }
+    const content: WebhookMessage = { ...(body.content !== undefined ? { content: body.content as string } : {}), ...(body.embeds !== undefined ? { embeds: body.embeds as APIEmbed[] } : {}), ...(body.components !== undefined ? { components: body.components as WebhookMessage['components'] } : {}), ...(body.flags !== undefined ? { flags: body.flags as number } : {}), ...(files.length ? { files } : {}) };
     if (webhookId) {
       const webhook = this.webhooks.get(webhookId)!;
+      this.reports.push({ target: { id: webhookId, token: webhook.token!, threadId: channelId === webhook.channel_id ? null : channelId }, message: content,
+        options: { ...(body.username !== undefined ? { username: body.username as string } : {}), ...(body.avatar_url !== undefined ? { avatarUrl: body.avatar_url as string } : {}) } });
       this.sent.push({ id, webhookId, channelId: webhook.channel_id!, threadId: channelId === webhook.channel_id ? null : channelId,
         message: { content: message.content, embeds: message.embeds }, options: { silent: Boolean(Number(body.flags) & MessageFlags.SuppressNotifications), ...(body.username !== undefined ? { username: body.username as string } : {}), ...(body.avatar_url !== undefined ? { avatarUrl: body.avatar_url as string } : {}) }, startedAt: performance.now() });
+    } else {
+      const channel = this.channels.get(channelId);
+      if (channel?.type === ChannelType.DM) this.dms.push({ userId: channel.recipients?.[0]?.id ?? '', message: content });
     }
     return ok(message);
   }

@@ -3,7 +3,8 @@ import { PermissionFlagsBits, SnowflakeUtil } from 'discord.js';
 import { and, desc, eq, gt, inArray, lt, ne } from 'drizzle-orm';
 import type { AutodeleteConfig } from './config.js';
 import { cooldowns, posts, rules, type Post, type Rule } from './db/schema.js';
-import type { AutodeleteDiscord, DeleteOutcome, FetchedPost } from './discord.js';
+import { fetchPost, deletePost, type DeleteOutcome, type FetchedPost } from './discord.js';
+import { notifyReplaced, notifyRejected, notifyLeft } from './report/notifier.js';
 import type { RuleIndex } from './rule-index.js';
 
 export type AutodeleteContext = HandlerContext<AutodeleteConfig>;
@@ -21,26 +22,6 @@ export interface Removal {
   postedAt: Date;
   post: FetchedPost | null;
   outcome: DeleteOutcome;
-}
-
-/** Reports and DMs about removed posts. */
-export interface Notifier {
-  replaced(
-    ctx: AutodeleteContext,
-    rule: Rule,
-    member: MemberInfo,
-    removed: Removal,
-    newPost: { messageId: string; content: string },
-  ): Promise<void>;
-  rejected(
-    ctx: AutodeleteContext,
-    rule: Rule,
-    member: MemberInfo,
-    rejected: Removal,
-    current: { messageId: string; post: FetchedPost | null } | null,
-    nextPostAt: Date,
-  ): Promise<void>;
-  left(ctx: AutodeleteContext, rule: Rule, member: MemberInfo, removed: Removal): Promise<void>;
 }
 
 /** The parts of a guild member (possibly partial) the tracker reads. */
@@ -65,10 +46,6 @@ export interface IncomingMessage {
 
 export interface TrackerDeps {
   index: RuleIndex;
-  discord: (ctx: AutodeleteContext) => AutodeleteDiscord;
-  notifier: Notifier;
-  /** Clock in milliseconds. */
-  now?: () => number;
 }
 
 type Decision =
@@ -89,15 +66,9 @@ const newestOf = (ids: string[]): string => ids.reduce((a, b) => (BigInt(b) > Bi
 /** Tracks the posts and cooldowns of rule channels and removes posts the rules do not allow. */
 export class Tracker {
   private readonly index: RuleIndex;
-  private readonly discord: (ctx: AutodeleteContext) => AutodeleteDiscord;
-  private readonly notifier: Notifier;
-  private readonly now: () => number;
 
   constructor(deps: TrackerDeps) {
     this.index = deps.index;
-    this.discord = deps.discord;
-    this.notifier = deps.notifier;
-    this.now = deps.now ?? Date.now;
   }
 
   async onMessage(ctx: AutodeleteContext, message: IncomingMessage): Promise<void> {
@@ -109,7 +80,6 @@ export class Tracker {
 
     const decision = await this.decide(ctx, message);
     if (decision === null) return;
-    const discord = this.discord(ctx);
     const info = memberInfo(member);
     const { channelId } = message;
 
@@ -117,9 +87,9 @@ export class Tracker {
       const { rule, current, nextPostAt } = decision;
       await this.guarded(ctx, channelId, message.id, async () => {
         const currentPost =
-          current === null ? null : { messageId: current.messageId, post: await this.fetchOrNull(ctx, discord, channelId, current.messageId) };
-        const removal = await this.remove(ctx, discord, channelId, message.id, postedAtOf(message.id));
-        await this.notifier.rejected(ctx, rule, info, removal, currentPost, nextPostAt);
+          current === null ? null : { messageId: current.messageId, post: await this.fetchOrNull(ctx, channelId, current.messageId) };
+        const removal = await this.remove(ctx, channelId, message.id, postedAtOf(message.id));
+        await notifyRejected(ctx, rule, info, removal, currentPost, nextPostAt);
       });
       return;
     }
@@ -131,9 +101,9 @@ export class Tracker {
         const newPost =
           newestId === message.id
             ? { messageId: message.id, content: message.content }
-            : { messageId: newestId, content: (await this.fetchOrNull(ctx, discord, channelId, newestId))?.content ?? '' };
-        const removal = await this.remove(ctx, discord, channelId, post.messageId, post.postedAt);
-        await this.notifier.replaced(ctx, rule, info, removal, newPost);
+            : { messageId: newestId, content: (await this.fetchOrNull(ctx, channelId, newestId))?.content ?? '' };
+        const removal = await this.remove(ctx, channelId, post.messageId, post.postedAt);
+        await notifyReplaced(ctx, rule, info, removal, newPost);
       });
     }
   }
@@ -141,7 +111,7 @@ export class Tracker {
   /** Forgets deleted posts; a member's own post deleted within the grace time resets their cooldown. */
   async onDelete(ctx: AutodeleteContext, channelId: string, messageIds: string[]): Promise<void> {
     if (messageIds.length === 0 || this.index.get(ctx.guildId, channelId) === undefined) return;
-    const now = this.now();
+    const now = Date.now();
     await ctx.db.run(async (tx) => {
       // Lock order: cooldowns before posts, as in accepting a post, so the two never deadlock.
       await tx
@@ -195,12 +165,11 @@ export class Tracker {
       return rows.map((post) => ({ post, rule: leaveRules.find((rule) => rule.channelId === post.channelId)! }));
     });
     if (removed.length === 0) return;
-    const discord = this.discord(ctx);
     const info = memberInfo(member);
     for (const { post, rule } of removed) {
       await this.guarded(ctx, post.channelId, post.messageId, async () => {
-        const removal = await this.remove(ctx, discord, post.channelId, post.messageId, post.postedAt);
-        await this.notifier.left(ctx, rule, info, removal);
+        const removal = await this.remove(ctx, post.channelId, post.messageId, post.postedAt);
+        await notifyLeft(ctx, rule, info, removal);
       });
     }
   }
@@ -267,9 +236,9 @@ export class Tracker {
   }
 
   /** A post's content for a report; null when it cannot be fetched, so the post is still removed. Logs ids only. */
-  private async fetchOrNull(ctx: AutodeleteContext, discord: AutodeleteDiscord, channelId: string, messageId: string): Promise<FetchedPost | null> {
+  private async fetchOrNull(ctx: AutodeleteContext, channelId: string, messageId: string): Promise<FetchedPost | null> {
     try {
-      return await discord.fetchPost(channelId, messageId);
+      return await fetchPost(ctx.client, channelId, messageId);
     } catch (error) {
       ctx.log.warn({ channelId, messageId, code: (error as { code?: unknown }).code }, 'Fetching a post failed; reporting it without text');
       return null;
@@ -279,13 +248,12 @@ export class Tracker {
   /** Fetches a post for the report, then deletes it. */
   private async remove(
     ctx: AutodeleteContext,
-    discord: AutodeleteDiscord,
-    channelId: string,
+      channelId: string,
     messageId: string,
     postedAt: Date,
   ): Promise<Removal> {
-    const post = await this.fetchOrNull(ctx, discord, channelId, messageId);
-    const outcome = await discord.deletePost(channelId, messageId);
+    const post = await this.fetchOrNull(ctx, channelId, messageId);
+    const outcome = await deletePost(ctx.client, channelId, messageId);
     if (outcome === 'forbidden') ctx.log.warn({ channelId, messageId }, 'Missing permission to delete a post');
     return { messageId, postedAt, post, outcome };
   }

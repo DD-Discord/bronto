@@ -1,11 +1,11 @@
 import { fakeCommand } from '@bronto/core/testing';
-import { Events, type EmbedBuilder } from 'discord.js';
+import { ChannelType, Events, type EmbedBuilder } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
-import { RuleIndex } from '../src/rule-index.js';
-import { FakeAutodeleteDiscord } from './fake-discord.js';
+import { FakeDiscordHttp } from '@bronto/core/testing';
 import {
   CHANNEL,
+  fakeMessage,
   cooldownRows,
   GUILD,
   insertCooldown,
@@ -24,8 +24,7 @@ import {
 } from './harness.js';
 
 let t: TestDatabase;
-let discord: FakeAutodeleteDiscord;
-let index: RuleIndex;
+let discord: FakeDiscordHttp;
 let ab: AutodeleteBot;
 
 /** A channel option value as discord.js resolves it. */
@@ -48,9 +47,8 @@ const embedJson = (payloads: Payload[]) => JSON.stringify(payloads.flatMap((payl
 
 beforeEach(async () => {
   t = await createTestDatabase();
-  discord = new FakeAutodeleteDiscord();
-  index = new RuleIndex();
-  ab = await prepareAutodeleteBot(t, discord, { index });
+  discord = new FakeDiscordHttp();
+  ab = await prepareAutodeleteBot(t, discord);
   await ready(ab);
 });
 
@@ -103,7 +101,7 @@ describe('/autodelete create and show', () => {
 
 describe('log channels', () => {
   it('offers text, announcement and all thread types for log-channel', () => {
-    const commands = ab.client.registered.get(GUILD) as { name: string; options: { name: string; options?: { name: string; channel_types?: number[] }[] }[] }[];
+    const commands = ab.requests.findLast(r => r.method === 'PUT' && r.path.endsWith('/commands'))!.body as { name: string; options: { name: string; options?: { name: string; channel_types?: number[] }[] }[] }[];
     const create = commands.find((command) => command.name === 'autodelete')!.options.find((option) => option.name === 'create')!;
     expect(create.options!.find((option) => option.name === 'log-channel')!.channel_types!.sort((a, b) => a - b)).toEqual([0, 5, 10, 11, 12]);
   });
@@ -117,15 +115,15 @@ describe('log channels', () => {
     expect(second!.logWebhookId).toBe(first!.logWebhookId);
     expect(second!.logWebhookToken).toBe(first!.logWebhookToken);
     expect(discord.webhooks.size).toBe(1);
-    expect(discord.webhooks.get(first!.logWebhookId!)?.channelId).toBe(LOG_CHANNEL);
+    expect(discord.webhooks.get(first!.logWebhookId!)?.channel_id).toBe(LOG_CHANNEL);
   });
 
   it('stores the thread of a thread log channel and posts through the parent', async () => {
-    discord.threads.set(LOG_THREAD, LOG_CHANNEL);
+    discord.addChannel(LOG_THREAD, { guildId: GUILD, type: ChannelType.PublicThread, parentId: LOG_CHANNEL });
     await say('create', { channel: channel(CHANNEL), 'log-channel': channel(LOG_THREAD, LOG_CHANNEL) });
     const [row] = await ruleRows(t);
     expect(row).toMatchObject({ logChannelId: LOG_THREAD, logThreadId: LOG_THREAD });
-    expect(discord.webhooks.get(row!.logWebhookId!)?.channelId).toBe(LOG_CHANNEL);
+    expect(discord.webhooks.get(row!.logWebhookId!)?.channel_id).toBe(LOG_CHANNEL);
   });
 
   it('clears the log columns and deletes the unused webhook on remove-log-channel', async () => {
@@ -162,7 +160,7 @@ describe('log channels', () => {
   });
 
   it('turns a missing Manage Webhooks permission into a message naming the channel', async () => {
-    discord.missingWebhookPermission = true;
+    discord.override('POST', `/channels/${LOG_CHANNEL}/webhooks`, () => ({ status: 403, json: { code: 50013, message: 'Missing Permissions' } }));
     expect(contents(await say('create', { channel: channel(CHANNEL), 'log-channel': channel(LOG_CHANNEL) }))).toEqual([
       `I need the Manage Webhooks permission in <#${LOG_CHANNEL}>.`,
     ]);
@@ -192,23 +190,26 @@ describe('/autodelete delete', () => {
   });
 });
 
-describe('the rule index', () => {
-  it('follows edits and deletes', async () => {
+describe('rule state used by handlers', () => {
+  async function post(channelId: string) {
+    const message = fakeMessage(channelId);
+    discord.addPost(channelId, message.id, { content: message.content, attachmentCount: 0 });
+    ab.client.emit(Events.MessageCreate, message); await ab.bot.idle();
+  }
+  it('follows command creates, edits and deletes', async () => {
     await say('create', { channel: channel(CHANNEL) });
-    expect(index.get(GUILD, CHANNEL)?.enabled).toBe(true);
+    await post(CHANNEL); expect(await postRows(t)).toHaveLength(1);
     await say('edit', { channel: channel(CHANNEL), enabled: false });
-    expect(index.get(GUILD, CHANNEL)?.enabled).toBe(false);
+    await post(CHANNEL); expect(await postRows(t)).toHaveLength(1);
     await say('delete', { channel: channel(CHANNEL) });
-    expect(index.get(GUILD, CHANNEL)).toBeUndefined();
+    await post(CHANNEL); expect(await postRows(t)).toEqual([]);
   });
-
-  it('is loaded from the database when the server becomes ready', async () => {
+  it('loads persisted rules when the guild becomes ready', async () => {
     await ab.bot.stop();
     await insertRule(t, { channelId: OTHER_CHANNEL, cooldownMs: 5 });
-    const fresh = new RuleIndex();
-    ab = await prepareAutodeleteBot(t, discord, { index: fresh });
-    await ready(ab);
-    expect(fresh.get(GUILD, OTHER_CHANNEL)?.cooldownMs).toBe(5);
+    ab = await prepareAutodeleteBot(t, discord); await ready(ab);
+    await post(OTHER_CHANNEL);
+    expect((await postRows(t))[0]).toMatchObject({ channelId: OTHER_CHANNEL });
   });
 });
 

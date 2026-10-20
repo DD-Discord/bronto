@@ -1,31 +1,16 @@
 import { defineModule, on, type ModuleDefinition } from '@bronto/core';
-import { Events, GatewayIntentBits, Partials, PermissionFlagsBits, type Client } from 'discord.js';
+import { Events, GatewayIntentBits, Partials, PermissionFlagsBits } from 'discord.js';
 import { createAutodeleteCommand } from './commands.js';
 import { autodeleteConfigSchema, type AutodeleteConfig } from './config.js';
 import * as schema from './db/schema.js';
 import { rules } from './db/schema.js';
-import { createRestAutodeleteDiscord, type AutodeleteDiscord } from './discord.js';
 import { RuleIndex } from './rule-index.js';
-import { createNotifier } from './report/notifier.js';
-import { Tracker, type Notifier } from './tracker.js';
-
-export interface AutodeleteModuleOptions {
-  /** Builds the Discord access from the client; tests pass a fake. */
-  discord?: (client: Client) => AutodeleteDiscord;
-  /** Clock in milliseconds. */
-  now?: () => number;
-  /** The rule index the module fills; tests pass one to inspect it. */
-  index?: RuleIndex;
-  /** Reports and DMs about removed posts. */
-  notifier?: Notifier;
-}
+import { Tracker } from './tracker.js';
 
 /** An autodelete module with its own in-memory state; the default export is the one deployments load. */
-export function createAutodeleteModule(options: AutodeleteModuleOptions = {}): ModuleDefinition<AutodeleteConfig> {
-  const discordFor = options.discord ?? createRestAutodeleteDiscord;
-  const discord = (ctx: { client: Client }) => discordFor(ctx.client);
-  const index = options.index ?? new RuleIndex();
-  const tracker = new Tracker({ index, discord, notifier: options.notifier ?? createNotifier(discord), now: options.now });
+export function createAutodeleteModule(): ModuleDefinition<AutodeleteConfig> {
+  const index = new RuleIndex();
+  const tracker = new Tracker({ index });
   return defineModule<AutodeleteConfig>({
     name: 'autodelete',
     // Server Members is a privileged intent.
@@ -40,7 +25,7 @@ export function createAutodeleteModule(options: AutodeleteModuleOptions = {}): M
       on(Events.MessageBulkDelete, (ctx, messages, channel) => tracker.onDelete(ctx, channel.id, [...messages.keys()])),
       on(Events.GuildMemberRemove, (ctx, member) => tracker.onLeave(ctx, member)),
     ],
-    commands: { autodelete: createAutodeleteCommand({ index, discord }) },
+    commands: { autodelete: createAutodeleteCommand({ index }) },
     hooks: {
       guildReady: async (ctx) => {
         const rows = await ctx.db.run(async (tx) => tx.select().from(rules));
@@ -55,5 +40,5 @@ export function createAutodeleteModule(options: AutodeleteModuleOptions = {}): M
 
 export default createAutodeleteModule();
 export { autodeleteConfigSchema, type AutodeleteConfig } from './config.js';
-export type { AutodeleteDiscord, DeleteOutcome, FetchedPost } from './discord.js';
-export type { MemberInfo, Notifier, Removal } from './tracker.js';
+export type { DeleteOutcome, FetchedPost } from './discord.js';
+export type { MemberInfo, Removal } from './tracker.js';

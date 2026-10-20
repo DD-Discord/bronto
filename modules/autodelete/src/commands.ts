@@ -3,6 +3,7 @@ import {
   defineCommand,
   defineSubcommand,
   MissingWebhookPermissionError,
+  ensureWebhook, withWebhookErrors, UnknownWebhookError,
   opt,
   UserError,
   type CommandContext,
@@ -12,7 +13,6 @@ import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { and, eq, ne } from 'drizzle-orm';
 import type { AutodeleteConfig } from './config.js';
 import { cooldowns, rules, type Rule } from './db/schema.js';
-import type { AutodeleteDiscord } from './discord.js';
 import { ruleEntity } from './entity.js';
 import type { RuleIndex } from './rule-index.js';
 
@@ -23,7 +23,6 @@ const LOG_CHANNEL_TYPES = [...RULE_CHANNEL_TYPES, ChannelType.PublicThread, Chan
 
 export interface AutodeleteCommandDeps {
   index: RuleIndex;
-  discord: (ctx: AutodeleteContext) => AutodeleteDiscord;
 }
 
 const LOG_COLUMNS_CLEARED = {
@@ -36,7 +35,6 @@ const LOG_COLUMNS_CLEARED = {
 /** Deletes a log webhook unless another rule of this server still uses it. */
 async function deleteUnusedWebhook(
   ctx: AutodeleteContext,
-  discord: AutodeleteDiscord,
   webhook: { id: string; token: string },
   ruleChannelId: string,
 ): Promise<void> {
@@ -47,7 +45,10 @@ async function deleteUnusedWebhook(
       .where(and(eq(rules.logWebhookId, webhook.id), ne(rules.channelId, ruleChannelId)))
       .limit(1),
   );
-  if (shared.length === 0) await discord.deleteWebhook(webhook);
+  if (shared.length === 0) {
+    try { await withWebhookErrors(webhook.token, () => ctx.client.deleteWebhook(webhook.id, { token: webhook.token })); }
+    catch (error) { if (!(error instanceof UnknownWebhookError)) throw error; }
+  }
 }
 
 export function createAutodeleteCommand(deps: AutodeleteCommandDeps): CommandDefinition {
@@ -136,7 +137,7 @@ export function createAutodeleteCommand(deps: AutodeleteCommandDeps): CommandDef
                   : null;
             let webhook;
             try {
-              webhook = await deps.discord(ctx).ensureWebhook(target.id, known, ctx.config.webhookName);
+              webhook = await ensureWebhook(ctx.client, target.id, known, ctx.config.webhookName);
             } catch (error) {
               if (error instanceof MissingWebhookPermissionError) {
                 throw new UserError(`I need the Manage Webhooks permission in <#${parentId}>.`);
@@ -146,20 +147,20 @@ export function createAutodeleteCommand(deps: AutodeleteCommandDeps): CommandDef
             return {
               logChannelId: target.id,
               logThreadId: webhook.threadId,
-              logWebhookId: webhook.id,
-              logWebhookToken: webhook.token,
+              logWebhookId: webhook.webhook.id,
+              logWebhookToken: webhook.webhook.token,
             };
           },
           afterWrite: async (ctx, record) => {
             deps.index.set(record);
             const old = previous.get(ctx);
             if (old?.logWebhookId == null || old.logWebhookToken == null || old.logWebhookId === record.logWebhookId) return;
-            await deleteUnusedWebhook(ctx, deps.discord(ctx), { id: old.logWebhookId, token: old.logWebhookToken }, record.channelId);
+            await deleteUnusedWebhook(ctx, { id: old.logWebhookId, token: old.logWebhookToken }, record.channelId);
           },
           beforeDelete: async (ctx, record) => {
             deps.index.delete(record.guildId, record.channelId);
             if (record.logWebhookId === null || record.logWebhookToken === null) return;
-            await deleteUnusedWebhook(ctx, deps.discord(ctx), { id: record.logWebhookId, token: record.logWebhookToken }, record.channelId);
+            await deleteUnusedWebhook(ctx, { id: record.logWebhookId, token: record.logWebhookToken }, record.channelId);
           },
         },
       }),
