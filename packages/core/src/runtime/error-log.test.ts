@@ -49,6 +49,33 @@ describe('serializeError', () => {
     expect((serializeError(violation) as { message: string }).message).toBe(violation.message);
   });
 
+  const failedInsert = () =>
+    Object.assign(new Error('Failed query: insert into "t" ("token") values ($1)\nparams: SECRET_TOKEN'), {
+      query: 'insert into "t" ("token") values ($1)',
+      params: ['SECRET_TOKEN'],
+    });
+
+  it('sanitizes the members of an AggregateError', () => {
+    const serialized = serializeError(new AggregateError([failedInsert(), failedInsert()], 'All failed'));
+    expect(JSON.stringify(serialized)).toContain('Failed query: insert into');
+    expect(JSON.stringify(serialized)).not.toContain('SECRET');
+  });
+
+  it('sanitizes errors kept in other properties', () => {
+    const serialized = serializeError(Object.assign(new Error('Saving failed'), { original: failedInsert() }));
+    expect(JSON.stringify(serialized)).toContain('Failed query: insert into');
+    expect(JSON.stringify(serialized)).not.toContain('SECRET');
+  });
+
+  it('sanitizes every error of a cause cycle', () => {
+    const query = failedInsert();
+    const wrapper = new Error('Saving failed', { cause: query });
+    query.cause = wrapper;
+    const serialized = serializeError(wrapper) as { message: string; stack: string };
+    expect(serialized.message).toContain('Failed query: insert into');
+    expect(JSON.stringify(serialized)).not.toContain('SECRET');
+  });
+
   it('leaves errors without query values unchanged', () => {
     const error = new Error('plain');
     expect((serializeError(error) as { raw: unknown }).raw).toBe(error);
