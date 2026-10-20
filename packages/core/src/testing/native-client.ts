@@ -7,7 +7,7 @@ class TestUser extends ClientUser {
 }
 
 export interface NativeTestClient {
-  client: Client;
+  client: Client & { emit(event: string, ...args: unknown[]): boolean };
   requests: RecordedRequest[];
   ready(): void;
 }
@@ -15,7 +15,7 @@ export interface NativeTestClient {
 /** Real managers and objects, with local login/readiness and an HTTP transport that cannot reach Discord. */
 export async function createNativeTestClient(http: FakeDiscordHttp): Promise<NativeTestClient> {
   const transport = fakeTransport(http.answer);
-  const client = new Client({ intents: [], rest: { ...transport.options, offset: 0, globalRequestsPerSecond: Infinity } });
+  const client = new Client({ intents: [], rest: { ...transport.options, offset: 0, globalRequestsPerSecond: Infinity } }) as NativeTestClient['client'];
   client.user = new TestUser(client, http.users.get(http.botId)!);
   client.application = { id: http.applicationId } as ClientApplication;
   client.login = async token => {

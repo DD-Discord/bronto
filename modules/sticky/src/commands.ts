@@ -1,11 +1,11 @@
-import { crudSubcommands, defineCommand, opt, UserError, type CommandDefinition } from '@bronto/core';
+import { crudSubcommands, defineCommand, opt, UserError, ensureWebhook, withWebhookErrors, UnknownWebhookError, MissingWebhookPermissionError, type CommandDefinition } from '@bronto/core';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { and, eq, ne, sql } from 'drizzle-orm';
 import { stickies, stickyState } from './db/schema.js';
-import { MissingWebhookPermissionError, TemplateUnavailableError, type StickyDiscord } from './discord.js';
+import { fetchTemplate, TemplateUnavailableError } from './discord.js';
 import { stickyEntity } from './entity.js';
 import { parseMessageLink } from './message.js';
-import { removePost, targetOf, type Reposter, type StickyContext } from './repost.js';
+import { removePost, type Reposter, type StickyContext } from './repost.js';
 import { entryOf, type StickyIndex } from './sticky-index.js';
 
 const STICKY_CHANNEL_TYPES = [
@@ -24,17 +24,16 @@ const MAX_CONTENT_LENGTH = 2000;
 export interface StickyCommandDeps {
   index: StickyIndex;
   reposter: Reposter;
-  discord: (ctx: StickyContext) => StickyDiscord;
 }
 
 /** Reads the template behind a message link; refuses links outside this server and messages with nothing to post. */
-async function loadTemplate(ctx: StickyContext, discord: StickyDiscord, link: string) {
+async function loadTemplate(ctx: StickyContext, link: string) {
   const parsed = parseMessageLink(link);
   if (parsed === null) throw new UserError('The template must be a message link (right-click a message → Copy Message Link).');
   if (parsed.guildId !== ctx.guildId) throw new UserError('The template must be a message in this server.');
   let template;
   try {
-    template = await discord.fetchTemplate(ctx.guildId, parsed.channelId, parsed.messageId);
+    template = await fetchTemplate(ctx.client, ctx.guildId, parsed.channelId, parsed.messageId);
   } catch (error) {
     if (error instanceof TemplateUnavailableError) throw new UserError(`I can't read that message: ${error.message}`);
     throw error;
@@ -80,9 +79,8 @@ export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition 
       },
       hooks: {
         prepare: async (ctx, values, existing) => {
-          const discord = deps.discord(ctx);
           const extra: Partial<typeof stickies.$inferInsert> = {};
-          if (values.template !== null) Object.assign(extra, await loadTemplate(ctx, discord, values.template));
+          if (values.template !== null) Object.assign(extra, await loadTemplate(ctx, values.template));
           if (existing === null) {
             const target = values.channel!;
             const webhookChannelId = target.isThread() ? target.parentId : target.id;
@@ -97,7 +95,7 @@ export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition 
             );
             let webhook;
             try {
-              webhook = await discord.ensureWebhook(target.id, sibling ?? null, ctx.config.webhookName);
+              webhook = (await ensureWebhook(ctx.client, target.id, sibling ?? null, ctx.config.webhookName)).webhook;
             } catch (error) {
               if (error instanceof MissingWebhookPermissionError) {
                 throw new UserError(`I need the Manage Webhooks permission in <#${webhookChannelId}>.`);
@@ -122,7 +120,6 @@ export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition 
           deps.reposter.cancel(record.channelId);
           // Runs after any repost still in flight, so no post of this sticky is left behind.
           await ctx.queue.run(record.channelId, async (task) => {
-            const discord = deps.discord(task);
             const [current, state] = await task.db.run(async (tx) => {
               const [row] = await tx.select().from(stickies).where(eq(stickies.channelId, record.channelId));
               const [last] = await tx.select().from(stickyState).where(eq(stickyState.channelId, record.channelId));
@@ -132,7 +129,7 @@ export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition 
             const sticky = current ?? record;
             if (state?.lastMessageId != null) {
               try {
-                await removePost(discord, sticky, state.lastMessageId);
+                await removePost(task, sticky, state.lastMessageId);
               } catch (error) {
                 task.log.warn({ err: error, channelId: record.channelId }, 'Deleting the sticky post failed');
               }
@@ -144,7 +141,13 @@ export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition 
                 .where(and(eq(stickies.webhookId, sticky.webhookId), ne(stickies.channelId, record.channelId)))
                 .limit(1),
             );
-            if (shared.length === 0) await discord.deleteWebhook(targetOf(sticky));
+            if (shared.length === 0) {
+              try {
+                await withWebhookErrors(sticky.webhookToken, () => task.client.deleteWebhook(sticky.webhookId, { token: sticky.webhookToken }));
+              } catch (error) {
+                if (!(error instanceof UnknownWebhookError)) throw error;
+              }
+            }
           });
         },
       },

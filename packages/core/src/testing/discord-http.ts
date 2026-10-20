@@ -17,6 +17,12 @@ export class FakeDiscordHttp {
   readonly webhooks = new Map<string, APIWebhook>();
   private readonly overrides = new Map<string, FakeHttpAnswer>();
   private readonly commands = new Map<string, unknown>();
+  readonly sent: { id: string; webhookId: string; channelId: string; threadId: string | null; message: { content: string; embeds: APIEmbed[] }; options: { silent: boolean; username?: string; avatarUrl?: string }; startedAt: number }[] = [];
+  readonly deleted: string[] = [];
+  readonly botDeleted: string[] = [];
+  readonly deletedPosts: string[] = [];
+  readonly deletedWebhooks: string[] = [];
+  private readonly templates = new Set<string>();
   private nextId = 100000000000005000n;
 
   constructor() { this.addUser(this.botId, { bot: true, username: 'Synthetic Bot' }); }
@@ -38,13 +44,22 @@ export class FakeDiscordHttp {
   }
   addWebhook(channelId: string, credentials?: WebhookCredentials): WebhookCredentials {
     const { id, token } = credentials ?? { id: this.newId(), token: `synthetic-token-${this.nextId}` };
+    if (!this.channels.has(channelId)) this.addChannel(channelId, { guildId: this.guildIds[0] ?? '100000000000000001', type: ChannelType.GuildText });
     const channel = this.channels.get(channelId);
     this.webhooks.set(id, { id, token, type: 1, name: 'Synthetic webhook', avatar: null, channel_id: channelId, guild_id: channel && 'guild_id' in channel ? channel.guild_id : this.guildIds[0], application_id: this.applicationId } as APIWebhook);
     return { id, token };
   }
   removeWebhook(id: string): void { this.webhooks.delete(id); }
-  liveMessages(channelId?: string): string[] { return [...this.messages.values()].filter(m => channelId === undefined || m.channel_id === channelId).map(m => m.id); }
+  liveMessages(channelId?: string): string[] { return [...this.messages.values()].filter(m => !this.templates.has(m.id) && (channelId === undefined || m.channel_id === channelId)).map(m => m.id); }
   override(method: string, path: string, answer: FakeHttpAnswer): void { this.overrides.set(`${method} ${path}`, answer); }
+
+  clearOverride(method: string, path: string): void { this.overrides.delete(`${method} ${path}`); }
+  addTemplate(guildId: string, channelId: string, messageId: string, message: { content: string; embeds: APIEmbed[] }): void {
+    if (!this.guilds.has(guildId)) this.addGuild(guildId);
+    this.addChannel(channelId, { guildId, type: ChannelType.GuildText });
+    this.addMessage(channelId, messageId, message);
+    this.templates.add(messageId);
+  }
 
   answer: FakeHttpAnswer = async request => {
     const override = this.overrides.get(`${request.method} ${request.path}`);
@@ -74,7 +89,7 @@ export class FakeDiscordHttp {
         const message = this.messages.get(extra);
         if (!message || message.channel_id !== id) return error(10008);
         if (method === 'GET') return ok(message);
-        if (method === 'DELETE') { this.messages.delete(extra); return gone(); }
+        if (method === 'DELETE') { this.messages.delete(extra); this.botDeleted.push(extra); this.deletedPosts.push(extra); return gone(); }
       }
       if (sub === 'messages' && !extra && method === 'POST') return this.send(request, id!);
     }
@@ -84,7 +99,7 @@ export class FakeDiscordHttp {
       if (sub !== undefined && sub !== webhook.token) return error(50027, 401);
       if (parts.length <= 3) {
         if (method === 'GET') return ok(webhook);
-        if (method === 'DELETE') { this.webhooks.delete(id!); return gone(); }
+        if (method === 'DELETE') { this.webhooks.delete(id!); this.deletedWebhooks.push(id!); return gone(); }
         if (method === 'POST') {
           const threadId = new URLSearchParams(request.query).get('thread_id');
           return this.send(request, threadId ?? webhook.channel_id!, id!);
@@ -94,7 +109,7 @@ export class FakeDiscordHttp {
         const message = this.messages.get(messageId);
         const channelId = new URLSearchParams(request.query).get('thread_id') ?? webhook.channel_id;
         if (!message || message.webhook_id !== id || message.channel_id !== channelId) return error(10008);
-        this.messages.delete(messageId); return gone();
+        this.messages.delete(messageId); this.deleted.push(messageId); return gone();
       }
     }
     throw new Error(`Unexpected Discord request: ${method} ${path}`);
@@ -107,6 +122,11 @@ export class FakeDiscordHttp {
     const message = this.messages.get(id)!;
     Object.assign(message, body, { id, channel_id: channelId, flags: body.flags ?? 0 });
     if (body.components) message.components = body.components as APIMessage['components'];
+    if (webhookId) {
+      const webhook = this.webhooks.get(webhookId)!;
+      this.sent.push({ id, webhookId, channelId: webhook.channel_id!, threadId: channelId === webhook.channel_id ? null : channelId,
+        message: { content: message.content, embeds: message.embeds }, options: { silent: Boolean(Number(body.flags) & MessageFlags.SuppressNotifications), ...(body.username !== undefined ? { username: body.username as string } : {}), ...(body.avatar_url !== undefined ? { avatarUrl: body.avatar_url as string } : {}) }, startedAt: performance.now() });
+    }
     return ok(message);
   }
 }

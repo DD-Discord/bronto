@@ -1,10 +1,10 @@
 import { fakeCommand } from '@bronto/core/testing';
-import { Events, type EmbedBuilder } from 'discord.js';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ChannelType, Events, type EmbedBuilder } from 'discord.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { Reposter, type StickyContext } from '../src/repost.js';
 import { StickyIndex } from '../src/sticky-index.js';
-import { FakeStickyDiscord } from './fake-discord.js';
+import { FakeDiscordHttp } from '@bronto/core/testing';
 import {
   CHANNEL,
   GUILD,
@@ -23,7 +23,7 @@ import {
 } from './harness.js';
 
 let t: TestDatabase;
-let discord: FakeStickyDiscord;
+let discord: FakeDiscordHttp;
 let sb: StickyBot;
 
 const link = (guild = GUILD, channel = TEMPLATE_CHANNEL, messageId = TEMPLATE_MESSAGE) =>
@@ -48,15 +48,16 @@ const contents = (payloads: Payload[]) => payloads.map((payload) => payload.cont
 
 beforeEach(async () => {
   t = await createTestDatabase();
-  discord = new FakeStickyDiscord();
+  discord = new FakeDiscordHttp();
   discord.addTemplate(GUILD, TEMPLATE_CHANNEL, TEMPLATE_MESSAGE, { content: 'Read the rules.', embeds: [{ title: 'Rules' }] });
-  discord.addChannel(THREAD, { guildId: GUILD, isThread: true, parentId: CHANNEL });
+  discord.addChannel(THREAD, { guildId: GUILD, type: ChannelType.PublicThread, parentId: CHANNEL });
   sb = await prepareStickyBot(t, discord);
   await ready(sb);
 });
 
 afterEach(async () => {
   await sb.bot.stop();
+  vi.useRealTimers();
   await t.drop();
 });
 
@@ -76,7 +77,7 @@ describe('/sticky create', () => {
       debounceMs: 0,
       createdBy: USER,
     });
-    expect(discord.webhooks.get(row!.webhookId)?.channelId).toBe(CHANNEL);
+    expect(discord.webhooks.get(row!.webhookId)?.channel_id).toBe(CHANNEL);
     expect(discord.liveMessages(CHANNEL)).toEqual([discord.sent[0]!.id]);
     expect((await stateOf(t, CHANNEL))?.lastMessageId).toBe(discord.sent[0]!.id);
   });
@@ -114,7 +115,7 @@ describe('/sticky create', () => {
   });
 
   it('asks for Manage Webhooks', async () => {
-    discord.missingWebhookPermission = true;
+    discord.override('POST', `/channels/${CHANNEL}/webhooks`, () => ({ status: 403, json: { code: 50013, message: 'Missing Permissions' } }));
     expect(contents(await say('create', { channel: channel(CHANNEL), template: link() }))).toEqual([
       `I need the Manage Webhooks permission in <#${CHANNEL}>.`,
     ]);
@@ -162,7 +163,7 @@ describe('/sticky show, list and edit', () => {
     await say('create', { channel: channel(CHANNEL), template: link() });
     await say('edit', { channel: channel(CHANNEL), silent: false });
     expect(discord.sent[1]!.options.silent).toBe(false);
-    expect(discord.calls.filter((call) => call === 'ensureWebhook')).toHaveLength(1);
+    expect(sb.requests.filter(r => r.method === 'POST' && r.path === `/channels/${CHANNEL}/webhooks`)).toHaveLength(1);
   });
 });
 
@@ -191,7 +192,7 @@ describe('/sticky delete', () => {
   it('still deletes the webhook when deleting the post fails, and logs a warning', async () => {
     await say('create', { channel: channel(CHANNEL), template: link() });
     const [row] = await stickyRows(t);
-    discord.failDeleteMessage = true;
+    discord.override('DELETE', `/webhooks/${row!.webhookId}/${row!.webhookToken}/messages/${discord.sent[0]!.id}`, () => { throw new Error('boom'); });
     expect(contents(await say('delete', { channel: channel(CHANNEL) }))).toEqual([`**Sticky deleted:** <#${CHANNEL}>`]);
     expect(discord.deletedWebhooks).toEqual([row!.webhookId]);
     expect(sb.lines).toContainEqual(expect.objectContaining({ level: 40, msg: 'Deleting the sticky post failed' }));
@@ -216,12 +217,10 @@ describe('/sticky delete', () => {
     let reached!: () => void;
     const inRecovery = new Promise<void>((resolve) => (reached = resolve));
     const gate = new Promise<void>((resolve) => (release = resolve));
-    const ensureWebhook = discord.ensureWebhook.bind(discord);
-    discord.ensureWebhook = async (...args) => {
-      reached();
-      await gate;
-      return ensureWebhook(...args);
-    };
+    const recoveryPath = `/channels/${CHANNEL}/webhooks`;
+    discord.override('POST', recoveryPath, async request => {
+      reached(); await gate; discord.clearOverride('POST', recoveryPath); return discord.answer(request);
+    });
     sb.client.emit(Events.MessageCreate, message(CHANNEL));
     await inRecovery;
     const fake = fakeCommand({ command: 'sticky', subcommand: 'delete', guildId: GUILD, channelId: CHANNEL, userId: USER, options: { channel: channel(CHANNEL) } });
@@ -237,7 +236,7 @@ describe('/sticky delete', () => {
   });
 
   it('queues no repost for a channel without a sticky', async () => {
-    const reposter = new Reposter({ index: new StickyIndex(), discord: () => discord });
+    const reposter = new Reposter({ index: new StickyIndex() });
     const runs: string[] = [];
     const ctx = { queue: { run: async (key: string) => void runs.push(key) } } as unknown as StickyContext;
     await reposter.queueRepost(ctx, CHANNEL);
@@ -245,11 +244,12 @@ describe('/sticky delete', () => {
   });
 
   it('posts nothing after a delete, even with a debounce pending', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     await say('create', { channel: channel(CHANNEL), template: link(), debounce: '1s' });
     sb.client.emit(Events.MessageCreate, message(CHANNEL));
     await sb.bot.idle();
     await say('delete', { channel: channel(CHANNEL) });
-    await sleep(1100);
+    await vi.advanceTimersByTimeAsync(1100);
     await sb.bot.idle();
     expect(discord.sent).toHaveLength(1);
     expect(discord.liveMessages()).toEqual([]);

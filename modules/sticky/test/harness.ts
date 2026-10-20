@@ -7,14 +7,14 @@ import {
   type LoadedModule,
   type ScopedDb,
 } from '@bronto/core';
-import { captureLog, FakeClient, type LogLine } from '@bronto/core/testing';
+import { captureLog, createNativeTestClient, type RecordedRequest, type NativeTestClient, type LogLine } from '@bronto/core/testing';
 import { eq } from 'drizzle-orm';
-import { Events } from 'discord.js';
+import { ChannelType, Events, type Client } from 'discord.js';
 import type { TestDatabase } from '../../../packages/core/test/test-db.js';
 import { stickyConfigSchema, type StickyConfig } from '../src/config.js';
 import { stickies, stickyState, type Sticky } from '../src/db/schema.js';
 import { createStickyModule } from '../src/index.js';
-import type { FakeStickyDiscord } from './fake-discord.js';
+import type { FakeDiscordHttp } from '@bronto/core/testing';
 
 // Made-up IDs; tests never use real server data.
 export const GUILD = '100000000000000001';
@@ -28,17 +28,20 @@ export const USER = '100000000000000099';
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export function stickyModule(discord?: FakeStickyDiscord, config: Partial<StickyConfig> = {}): LoadedModule {
+export function stickyModule(config: Partial<StickyConfig> = {}): LoadedModule {
   return {
     packageName: '@bronto/sticky',
-    definition: createStickyModule(discord === undefined ? {} : { discord: () => discord }),
+    definition: createStickyModule(),
     config: stickyConfigSchema.parse(config),
   };
 }
 
 export interface StickyBot {
   bot: Bot;
-  client: FakeClient;
+  client: NativeTestClient['client'];
+  requests: RecordedRequest[];
+  http: FakeDiscordHttp;
+  native: NativeTestClient;
   lines: LogLine[];
 }
 
@@ -50,35 +53,41 @@ export function stickyDb(t: TestDatabase, guildId = GUILD): ScopedDb {
 /** A bot with the sticky module: database migrated and GUILD registered, not yet ready. */
 export async function prepareStickyBot(
   t: TestDatabase,
-  discord: FakeStickyDiscord,
+  discord: FakeDiscordHttp,
   options: { config?: Partial<StickyConfig>; extra?: LoadedModule[] } = {},
 ): Promise<StickyBot> {
-  const client = new FakeClient();
-  client.guilds.cache.set(GUILD, { id: GUILD, available: true });
+  discord.addGuild(GUILD);
+  discord.addGuild(OTHER_GUILD);
+  for (const id of [CHANNEL, QUIET_CHANNEL, TEMPLATE_CHANNEL]) {
+    if (!discord.channels.has(id)) discord.addChannel(id, { guildId: GUILD, type: ChannelType.GuildText });
+  }
+  if (!discord.channels.has(THREAD)) discord.addChannel(THREAD, { guildId: GUILD, type: ChannelType.PublicThread, parentId: CHANNEL });
+  const native = await createNativeTestClient(discord);
+  const { client, requests } = native;
   const { log, lines } = captureLog();
   const bot = createBot({
     config: { discord: { token: 'token' }, database: { appUrl: t.appUrl, adminUrl: t.adminUrl }, modules: {}, interactions: {} },
-    modules: [stickyModule(discord, options.config), ...(options.extra ?? [])],
+    modules: [stickyModule(options.config), ...(options.extra ?? [])],
     database: t.database,
-    client: client.asClient(),
+    client,
     log,
   });
   await bot.prepare();
   await upsertGuild(t.database.admin, GUILD);
-  return { bot, client, lines };
+  return { bot, client, lines, requests, native, http: discord };
 }
 
 /** Logs in and runs the start-up work, as discord.js does after connecting. */
-export async function ready({ bot, client }: StickyBot): Promise<void> {
+export async function ready({ bot, native }: StickyBot): Promise<void> {
   await bot.start();
-  client.emit(Events.ClientReady, client);
+  native.ready();
   await bot.idle();
 }
 
 /** Stores a sticky of GUILD; without webhook values it gets a new webhook on its (parent) channel. */
 export async function insertSticky(
   t: TestDatabase,
-  discord: FakeStickyDiscord,
+  discord: FakeDiscordHttp,
   values: Partial<typeof stickies.$inferInsert> & { channelId: string },
 ): Promise<Sticky> {
   const webhook =

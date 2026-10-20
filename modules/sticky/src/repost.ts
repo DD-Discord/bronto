@@ -1,14 +1,8 @@
-import type { HandlerContext } from '@bronto/core';
+import { ensureWebhook, resolveWebhook, withWebhookErrors, UnknownMessageError, UnknownWebhookError, type IncomingWebhook, type HandlerContext } from '@bronto/core';
+import { DiscordAPIError, RESTJSONErrorCodes, MessageFlags } from 'discord.js';
 import { eq, isNotNull } from 'drizzle-orm';
 import type { StickyConfig } from './config.js';
 import { stickies, stickyState, type Sticky } from './db/schema.js';
-import {
-  UnknownMessageError,
-  UnknownWebhookError,
-  type PostTarget,
-  type StickyDiscord,
-  type WebhookCredentials,
-} from './discord.js';
 import { stickyEvents } from './events.js';
 import type { StickyIndex } from './sticky-index.js';
 
@@ -22,36 +16,37 @@ export interface IncomingMessage {
   author: { bot: boolean };
 }
 
-export function targetOf(sticky: Pick<Sticky, 'channelId' | 'parentChannelId' | 'webhookId' | 'webhookToken'>): PostTarget {
-  return {
-    id: sticky.webhookId,
-    token: sticky.webhookToken,
-    threadId: sticky.parentChannelId === null ? null : sticky.channelId,
-  };
-}
-
 /**
  * Deletes a sticky post through its webhook. A deleted webhook can no longer remove its posts, so the bot removes
  * the post with its own permissions; a post that is already gone counts as done.
  */
 export async function removePost(
-  discord: StickyDiscord,
+  ctx: StickyContext,
   sticky: Pick<Sticky, 'channelId' | 'parentChannelId' | 'webhookId' | 'webhookToken'>,
   messageId: string,
 ): Promise<void> {
   try {
-    await discord.deleteMessage(targetOf(sticky), messageId);
+    const webhook = await resolveWebhook(ctx.client, { id: sticky.webhookId, token: sticky.webhookToken });
+    await withWebhookErrors(sticky.webhookToken, () => webhook.deleteMessage(messageId, sticky.parentChannelId === null ? undefined : sticky.channelId));
   } catch (error) {
     if (error instanceof UnknownMessageError) return;
     if (!(error instanceof UnknownWebhookError)) throw error;
-    await discord.deleteChannelMessage(sticky.channelId, messageId);
+    await deleteChannelPost(ctx, sticky.channelId, messageId);
+  }
+}
+
+/** A bot-permission fallback for posts whose webhook no longer exists. */
+async function deleteChannelPost(ctx: StickyContext, channelId: string, messageId: string): Promise<void> {
+  try {
+    const channel = await ctx.client.channels.fetch(channelId);
+    if (channel?.isTextBased()) await channel.messages.delete(messageId);
+  } catch (error) {
+    if (!(error instanceof DiscordAPIError) || (error.code !== RESTJSONErrorCodes.UnknownMessage && error.code !== RESTJSONErrorCodes.UnknownChannel)) throw error;
   }
 }
 
 export interface ReposterOptions {
   index: StickyIndex;
-  discord: (ctx: StickyContext) => StickyDiscord;
-  now?: () => number;
 }
 
 /**
@@ -60,14 +55,10 @@ export interface ReposterOptions {
  */
 export class Reposter {
   private readonly index: StickyIndex;
-  private readonly discord: (ctx: StickyContext) => StickyDiscord;
-  private readonly now: () => number;
   private readonly timers = new Map<string, NodeJS.Timeout>();
 
   constructor(options: ReposterOptions) {
     this.index = options.index;
-    this.discord = options.discord;
-    this.now = options.now ?? Date.now;
   }
 
   /** Reacts to a new message: reposts right away, or (re)starts the channel's debounce. */
@@ -81,7 +72,7 @@ export class Reposter {
       void this.queueRepost(ctx, entry.channelId);
       return;
     }
-    const repostDueAt = new Date(this.now() + entry.debounceMs);
+    const repostDueAt = new Date(Date.now() + entry.debounceMs);
     await ctx.db.run(async (tx) => {
       await tx
         .insert(stickyState)
@@ -111,7 +102,7 @@ export class Reposter {
         .where(isNotNull(stickyState.repostDueAt)),
     );
     for (const { channelId, repostDueAt } of pending) {
-      this.arm(ctx, channelId, Math.max(0, repostDueAt!.getTime() - this.now()));
+      this.arm(ctx, channelId, Math.max(0, repostDueAt!.getTime() - Date.now()));
     }
   }
 
@@ -132,29 +123,29 @@ export class Reposter {
       return { sticky: found, lastMessageId: state?.lastMessageId ?? null };
     });
     if (sticky === undefined) return;
-    const discord = this.discord(ctx);
     try {
-      await this.post(ctx, discord, sticky, lastMessageId);
+      await this.post(ctx, sticky, lastMessageId);
     } catch (error) {
       if (!(error instanceof UnknownWebhookError)) throw error;
-      const replacement = await this.replaceWebhook(ctx, discord, sticky);
+      const replacement = await this.replaceWebhook(ctx, sticky);
       // Only the deleted webhook could remove its posts; the bot removes the last one with its own permissions.
       if (lastMessageId !== null) {
         try {
-          await discord.deleteChannelMessage(channelId, lastMessageId);
+          await deleteChannelPost(ctx, channelId, lastMessageId);
         } catch (error) {
           ctx.log.warn({ err: error, channelId }, 'Deleting the previous sticky post failed');
         }
       }
-      await this.post(ctx, discord, { ...sticky, webhookId: replacement.id, webhookToken: replacement.token }, null);
+      await this.post(ctx, { ...sticky, webhookId: replacement.id, webhookToken: replacement.token }, null, replacement);
     }
   }
 
-  private async post(ctx: StickyContext, discord: StickyDiscord, sticky: Sticky, lastMessageId: string | null): Promise<void> {
-    const target = targetOf(sticky);
+  private async post(ctx: StickyContext, sticky: Sticky, lastMessageId: string | null, resolved?: IncomingWebhook): Promise<void> {
+    const webhook = resolved ?? await resolveWebhook(ctx.client, { id: sticky.webhookId, token: sticky.webhookToken });
+    const threadId = sticky.parentChannelId === null ? undefined : sticky.channelId;
     if (lastMessageId !== null) {
       try {
-        await discord.deleteMessage(target, lastMessageId);
+        await withWebhookErrors(sticky.webhookToken, () => webhook.deleteMessage(lastMessageId, threadId));
       } catch (error) {
         if (error instanceof UnknownWebhookError) throw error;
         if (!(error instanceof UnknownMessageError)) {
@@ -162,11 +153,12 @@ export class Reposter {
         }
       }
     }
-    const messageId = await discord.send(
-      target,
-      { content: sticky.content, embeds: sticky.embeds },
-      { silent: sticky.silent, username: ctx.config.webhookName, avatarUrl: ctx.config.webhookAvatar },
-    );
+    const sent = await withWebhookErrors(sticky.webhookToken, () => webhook.send({
+      content: sticky.content || undefined, embeds: sticky.embeds, threadId,
+      flags: sticky.silent ? MessageFlags.SuppressNotifications : undefined,
+      username: ctx.config.webhookName, avatarURL: ctx.config.webhookAvatar, allowedMentions: { parse: [] },
+    }));
+    const messageId = sent.id;
     try {
       await ctx.db.run(async (tx) => {
         await tx
@@ -182,9 +174,9 @@ export class Reposter {
     ctx.emit(stickyEvents.posted, { channelId: sticky.channelId, messageId });
   }
 
-  private async replaceWebhook(ctx: StickyContext, discord: StickyDiscord, sticky: Sticky): Promise<WebhookCredentials> {
-    const webhook = await discord.ensureWebhook(
-      sticky.channelId,
+  private async replaceWebhook(ctx: StickyContext, sticky: Sticky): Promise<IncomingWebhook> {
+    const { webhook } = await ensureWebhook(
+      ctx.client, sticky.channelId,
       { id: sticky.webhookId, token: sticky.webhookToken },
       ctx.config.webhookName,
     );
