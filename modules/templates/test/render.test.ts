@@ -123,7 +123,7 @@ describe('render', () => {
     const future = new Date(Date.now() + 5 * HOUR);
     const slots: ImageSlot[] = ['image', 'thumbnail', 'author_icon', 'footer_icon'];
     const { id } = await seed({
-      embed: { description: 'x' },
+      embed: { description: 'x', author: { name: 'Me' }, footer: { text: 'Foot' } },
       images: slots.map((slot) => ({ slot, filename: `${slot}.png`, expiresAt: future })),
     });
     const embed = (await inHandler((ctx) => render(ctx, id)))!.embed!;
@@ -131,6 +131,20 @@ describe('render', () => {
     expect(embed.thumbnail?.url).toContain('thumbnail.png');
     expect(embed.author?.icon_url).toContain('author_icon.png');
     expect(embed.footer?.icon_url).toContain('footer_icon.png');
+  });
+
+  it('omits icons without an author name or footer text and logs a warning', async () => {
+    const future = new Date(Date.now() + 5 * HOUR);
+    const { id } = await seed({
+      embed: { description: 'x' },
+      images: [
+        { slot: 'author_icon', filename: 'a.png', expiresAt: future },
+        { slot: 'footer_icon', filename: 'f.png', expiresAt: future },
+      ],
+    });
+    const message = await inHandler((ctx) => render(ctx, id));
+    expect(message!.embed).toEqual({ description: 'x' });
+    expect(tb.lines.filter((line) => line.level === 40)).toHaveLength(2);
   });
 
   it('leaves out a slot whose attachment is gone and logs a warning', async () => {

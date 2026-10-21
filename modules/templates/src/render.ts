@@ -7,8 +7,8 @@ import { linkExpiry, REFRESH_MARGIN_MS } from './images.js';
 
 export { REFRESH_MARGIN_MS } from './images.js';
 
-/** Sets the slot's URL, creating the embed part when the template has none. */
-function setSlot(embed: APIEmbed, slot: ImageSlot, url: string): void {
+/** Sets the slot's URL; false when the icon has no author name or footer text to belong to. */
+function setSlot(embed: APIEmbed, slot: ImageSlot, url: string): boolean {
   switch (slot) {
     case 'image':
       embed.image = { url };
@@ -17,12 +17,15 @@ function setSlot(embed: APIEmbed, slot: ImageSlot, url: string): void {
       embed.thumbnail = { url };
       break;
     case 'author_icon':
-      embed.author = { ...embed.author!, icon_url: url };
+      if (!embed.author?.name) return false;
+      embed.author = { ...embed.author, icon_url: url };
       break;
     case 'footer_icon':
-      embed.footer = { ...embed.footer!, icon_url: url };
+      if (!embed.footer?.text) return false;
+      embed.footer = { ...embed.footer, icon_url: url };
       break;
   }
+  return true;
 }
 
 /** The preview message's attachment links by attachment ID; empty when the message or thread is gone. */
@@ -92,7 +95,11 @@ export async function render(ctx: TemplatesContext, id: string): Promise<Templat
 
   const embed = template.embed === null ? null : structuredClone(template.embed);
   if (embed !== null) {
-    for (const [slot, url] of urls) setSlot(embed, slot, url);
+    for (const [slot, url] of urls) {
+      if (!setSlot(embed, slot, url)) {
+        ctx.log.warn({ templateId: id, slot }, 'Template icon has no author name or footer text to attach to');
+      }
+    }
     if (template.showPostTime) embed.timestamp = new Date().toISOString();
   }
   return { content: template.content, embed };
