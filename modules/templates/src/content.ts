@@ -78,7 +78,17 @@ export function parseColor(input: string): number | null | 'invalid' {
   return match === null ? 'invalid' : Number.parseInt(match[1]!, 16);
 }
 
-const isLink = (url: string): boolean => /^(?:https?|attachment):\/\//i.test(url);
+const LINK_PROTOCOLS = new Set(['http:', 'https:', 'attachment:']);
+
+/** A full http(s) or attachment link Discord accepts: it parses, has no whitespace and starts with `<protocol>//`. */
+function isLink(url: string): boolean {
+  if (/\s/.test(url) || !/^[a-z]+:\/\//i.test(url)) return false;
+  try {
+    return LINK_PROTOCOLS.has(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
 
 function tooLong(part: string, value: string | undefined, limit: number): string | null {
   return value !== undefined && value.length > limit ? `${part} can be at most ${limit} characters.` : null;

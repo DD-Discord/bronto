@@ -91,6 +91,9 @@ describe('validateTemplate content', () => {
     ];
     for (const embed of embeds) expect(check('', embed)).toBe('Links must start with http:// or https://.');
     expect(check('', { description: 'x', url: 'javascript:alert(1)' })).toBe('Links must start with http:// or https://.');
+    for (const url of ['https://', 'https://exa mple.com', ' https://example.com', 'https://example.com/a b', 'https:example.com', 'http:/example.com']) {
+      expect(check('', { description: 'x', url })).toBe('Links must start with http:// or https://.');
+    }
     expect(
       check('', {
         description: 'x',
