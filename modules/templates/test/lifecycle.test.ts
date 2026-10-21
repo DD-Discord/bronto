@@ -177,6 +177,27 @@ describe('reconcile at start-up', () => {
     expect(await forumRows()).toHaveLength(0);
   });
 
+  it('keeps a forum and template created while it checked the old forum', async () => {
+    await bootstrap();
+    const NEW_FORUM = '100000000000008010';
+    const NEW_THREAD = '100000000000008011';
+    discord.channels.delete(FORUM);
+    // Answers only after a new forum and template were stored, as `create` does meanwhile.
+    discord.override('GET', `/channels/${FORUM}`, async () => {
+      discord.addChannel(NEW_FORUM, { guildId: GUILD, type: ChannelType.GuildForum, name: 'templates' });
+      discord.addChannel(NEW_THREAD, { guildId: GUILD, type: ChannelType.PublicThread, parentId: NEW_FORUM, name: 'New' });
+      await templatesDb(t).run(async (tx) => {
+        await tx.update(forums).set({ forumChannelId: NEW_FORUM });
+        await tx.insert(templates).values({ name: 'New', threadId: NEW_THREAD, previewMessageId: '1' });
+      });
+      return { status: 404, json: { code: 10003, message: 'Unknown Channel' } };
+    });
+    await ready(tb);
+    expect((await forumRows()).map((row) => row.forumChannelId)).toEqual([NEW_FORUM]);
+    expect((await rows()).map((row) => row.threadId)).toContain(NEW_THREAD);
+    expect(emitted).toEqual([]);
+  });
+
   it('keeps everything when Discord answers Missing Access', async () => {
     await bootstrap();
     discord.override('GET', `/channels/${THREAD_A}`, () => ({ status: 403, json: { code: 50001, message: 'Missing Access' } }));

@@ -21,9 +21,14 @@ export async function forgetTemplate(ctx: TemplatesContext, template: Gone): Pro
   return rows.length > 0;
 }
 
-/** Deletes every template and the forum row, announcing each template. */
-async function forgetForum(ctx: TemplatesContext): Promise<void> {
+/**
+ * Deletes every template and the forum row, announcing each template. Does nothing once another forum is stored:
+ * `create` may have replaced the gone forum while it was being checked.
+ */
+async function forgetForum(ctx: TemplatesContext, forumId: string): Promise<void> {
   const rows = await ctx.db.run(async (tx) => {
+    const [stored] = await tx.select({ id: forums.forumChannelId }).from(forums).for('update');
+    if (stored?.id !== forumId) return [];
     const deleted = await tx.delete(templates).returning();
     await tx.delete(forums);
     return deleted;
@@ -39,8 +44,7 @@ export async function onThreadDelete(ctx: TemplatesContext, data: { id: string }
 
 /** The template forum deleted in Discord deletes all its templates. */
 export async function onChannelDelete(ctx: TemplatesContext, channel: Channel | PartialDMChannel): Promise<void> {
-  if (channel.id !== (await storedForumId(ctx))) return;
-  await forgetForum(ctx);
+  await forgetForum(ctx, channel.id);
 }
 
 /** A renamed post renames its template; the rename is not a content change, so no event fires. */
@@ -68,7 +72,7 @@ export async function reconcile(ctx: TemplatesContext): Promise<void> {
       return;
     }
     if (!exists) {
-      await forgetForum(ctx);
+      await forgetForum(ctx, forumId);
       return;
     }
   }
