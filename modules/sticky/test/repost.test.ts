@@ -333,7 +333,7 @@ describe('guild deletion', () => {
     const messages = discord.liveMessages();
     const webhooks = [...discord.webhooks.keys()];
     const calls = [...sb.requests];
-    expect(messages).toHaveLength(2);
+    expect(discord.sent).toHaveLength(2);
     await sb.bot.lifecycle.deleteGuild(GUILD);
     expect(await stickyRows(t)).toEqual([]);
     expect(discord.liveMessages()).toEqual(messages);

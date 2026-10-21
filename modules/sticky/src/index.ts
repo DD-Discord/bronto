@@ -7,6 +7,7 @@ import { stickyConfigSchema, type StickyConfig } from './config.js';
 import * as schema from './db/schema.js';
 import { stickies } from './db/schema.js';
 import { stickyEvents } from './events.js';
+import { adoptLegacyStickies } from './migrate.js';
 import { Reposter } from './repost.js';
 import { entryOf, StickyIndex } from './sticky-index.js';
 
@@ -17,7 +18,7 @@ export function createStickyModule(): ModuleDefinition<StickyConfig> {
   return defineModule<StickyConfig>({
     name: 'sticky',
     dependsOn: [templates],
-    intents: [GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+    intents: [GatewayIntentBits.GuildMessages],
     config: stickyConfigSchema,
     db: { schema, migrations: new URL('../drizzle/', import.meta.url) },
     events: stickyEvents,
@@ -44,6 +45,7 @@ export function createStickyModule(): ModuleDefinition<StickyConfig> {
         const rows = await ctx.db.run(async (tx) => tx.select().from(stickies));
         for (const removed of index.replaceGuild(ctx.guildId, rows.map(entryOf))) reposter.cancel(removed.channelId);
         await reposter.resume(ctx);
+        await adoptLegacyStickies(ctx);
       },
       guildStopped: (ctx) => {
         for (const removed of index.dropGuild(ctx.guildId)) reposter.cancel(removed.channelId);
