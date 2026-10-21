@@ -8,7 +8,7 @@ import { linkExpiry, REFRESH_MARGIN_MS } from './images.js';
 export { REFRESH_MARGIN_MS } from './images.js';
 
 /** Sets the slot's URL; false when the icon has no author name or footer text to belong to. */
-function setSlot(embed: APIEmbed, slot: ImageSlot, url: string): boolean {
+export function setSlot(embed: APIEmbed, slot: ImageSlot, url: string): boolean {
   switch (slot) {
     case 'image':
       embed.image = { url };
