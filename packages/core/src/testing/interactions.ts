@@ -24,7 +24,7 @@ export type FakeCommandInput = Partial<FakeInteractionBase> & {
   options?: Record<string, unknown>;
 };
 
-type Kind = 'command' | 'autocomplete' | 'button' | 'modal';
+type Kind = 'command' | 'autocomplete' | 'button' | 'modal' | 'select';
 
 interface Details {
   command?: string;
@@ -34,6 +34,7 @@ interface Details {
   focused?: string;
   customId?: string;
   fields?: Record<string, string>;
+  values?: string[];
 }
 
 /**
@@ -47,6 +48,7 @@ export class FakeInteraction {
   readonly user: { id: string };
   readonly commandName: string | undefined;
   readonly customId: string | undefined;
+  readonly values: string[];
   replied = false;
   deferred = false;
   readonly options: {
@@ -69,6 +71,7 @@ export class FakeInteraction {
     this.cached = base.cached ?? true;
     this.commandName = details.command;
     this.customId = details.customId;
+    this.values = details.values ?? [];
     const values = details.options ?? {};
     this.options = {
       getSubcommand: () => details.subcommand ?? null,
@@ -117,6 +120,10 @@ export class FakeInteraction {
 
   isModalSubmit(): boolean {
     return this.kind === 'modal';
+  }
+
+  isStringSelectMenu(): boolean {
+    return this.kind === 'select';
   }
 
   isRepliable(): boolean {
@@ -192,4 +199,8 @@ export function fakeModal(
   input: Partial<FakeInteractionBase> & { customId: string; fields?: Record<string, string> },
 ): FakeInteraction {
   return new FakeInteraction('modal', input, input);
+}
+
+export function fakeSelect(input: Partial<FakeInteractionBase> & { customId: string; values: string[] }): FakeInteraction {
+  return new FakeInteraction('select', input, input);
 }

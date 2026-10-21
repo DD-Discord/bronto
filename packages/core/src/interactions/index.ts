@@ -15,6 +15,7 @@ export {
   createCustomId,
   defineButton,
   defineModal,
+  defineSelect,
   parseCustomId,
   type ButtonDefinition,
   type ComponentBinding,
@@ -22,6 +23,7 @@ export {
   type CustomIdCheck,
   type CustomIdTarget,
   type ModalDefinition,
+  type SelectDefinition,
 } from './components.js';
 export {
   interactionContext,
@@ -29,6 +31,7 @@ export {
   type CommandContext,
   type InteractionContext,
   type ModalContext,
+  type SelectContext,
 } from './context.js';
 export { formatDuration, parseDuration } from './duration.js';
 export { isUserError, UserError } from './errors.js';

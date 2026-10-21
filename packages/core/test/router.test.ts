@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { upsertGuild } from '../src/db/guilds.js';
 import { defineCommand, defineSubcommand, type CommandDefinition } from '../src/interactions/commands.js';
-import { createCustomId, defineButton, defineModal, type ComponentDefinition } from '../src/interactions/components.js';
+import { createCustomId, defineButton, defineModal, defineSelect, type ComponentDefinition } from '../src/interactions/components.js';
 import { ComponentSigner } from '../src/interactions/signing.js';
 import { UserError } from '../src/interactions/errors.js';
 import { opt } from '../src/interactions/options.js';
@@ -24,7 +24,7 @@ import { ModuleEnablement } from '../src/runtime/enablement.js';
 import { defineModule } from '../src/runtime/module.js';
 import { KeyedQueue } from '../src/runtime/queue.js';
 import { FakeClient } from '../src/testing/fake-client.js';
-import { fakeAutocomplete, fakeButton, fakeCommand, fakeModal, type FakeInteraction } from '../src/testing/interactions.js';
+import { fakeAutocomplete, fakeButton, fakeCommand, fakeModal, fakeSelect, type FakeInteraction } from '../src/testing/interactions.js';
 import { captureLog, type LogLine } from '../src/testing/log.js';
 import { widgetsMigrations } from './fixtures/widgets/module.js';
 import * as widgetsSchema from './fixtures/widgets/schema.js';
@@ -129,6 +129,22 @@ const slowUpdate = defineButton({
   },
 });
 
+const choose = defineSelect({
+  name: 'choose',
+  bind: { channel: true },
+  ephemeral: true,
+  execute: async (ctx, args) => {
+    await ctx.reply(`chose ${ctx.values.join(',')} with ${args.join(',')}`);
+  },
+});
+
+const chooseModal = defineSelect({
+  name: 'choose-modal',
+  execute: async (ctx) => {
+    await ctx.showModal({ custom_id: 'x', title: 'Pick', components: [] });
+  },
+});
+
 const form = defineModal({
   name: 'form',
   execute: async (ctx, args) => {
@@ -158,7 +174,7 @@ const demo = defineModule({
   name: 'widgets',
   db: { schema: widgetsSchema, migrations: widgetsMigrations },
   commands: { demo: demoCommand },
-  components: [press, form, brief, mine, slowUpdate],
+  components: [press, form, brief, mine, slowUpdate, choose, chooseModal],
 });
 
 let t: TestDatabase;
@@ -182,7 +198,7 @@ function makeRouter(sources?: InteractionSource[], deferAfterMs = 40): Interacti
   const captured = captureLog();
   lines = captured.lines;
   return new InteractionRouter({
-    sources: sources ?? [{ runtime: runtimes[0]!, commands: { demo: demoCommand }, components: [press, form, brief, mine, slowUpdate] }],
+    sources: sources ?? [{ runtime: runtimes[0]!, commands: { demo: demoCommand }, components: [press, form, brief, mine, slowUpdate, choose, chooseModal] }],
     dispatcher,
     signer,
     now: () => now,
@@ -483,6 +499,30 @@ describe('InteractionRouter components', () => {
       signer: null,
     });
     const fake = await run(router, fakeButton({ customId: sign(press) }));
+    expect(fake.responses).toEqual([{ kind: 'reply', payload: privately(COMPONENT_GONE) }]);
+  });
+});
+
+describe('InteractionRouter selects', () => {
+  it('routes a signed select with its values', async () => {
+    const customId = sign(choose, ['a'], { channelId: 'c1' });
+    const fake = await run(makeRouter(), fakeSelect({ customId, values: ['x', 'y'] }));
+    expect(fake.responses).toEqual([{ kind: 'reply', payload: privately('chose x,y with a') }]);
+  });
+
+  it('rejects a select signed for another channel', async () => {
+    const customId = sign(choose, ['a'], { channelId: 'c2' });
+    const fake = await run(makeRouter(), fakeSelect({ customId, values: ['x'] }));
+    expect(fake.responses).toEqual([{ kind: 'reply', payload: privately(COMPONENT_GONE) }]);
+  });
+
+  it('a select may open a modal', async () => {
+    const fake = await run(makeRouter(), fakeSelect({ customId: sign(chooseModal), values: ['x'] }));
+    expect(fake.responses).toEqual([{ kind: 'showModal', payload: { custom_id: 'x', title: 'Pick', components: [] } }]);
+  });
+
+  it('refuses a select ID presented as a button', async () => {
+    const fake = await run(makeRouter(), fakeButton({ customId: sign(chooseModal) }));
     expect(fake.responses).toEqual([{ kind: 'reply', payload: privately(COMPONENT_GONE) }]);
   });
 });

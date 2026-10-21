@@ -39,7 +39,7 @@ export interface ModuleDefinition<TConfig = any, TApi = unknown> {
   listeners?: Listener[];
   /** Top-level slash commands keyed by name; registered in a guild while the module is enabled there. */
   commands?: Record<string, CommandDefinition>;
-  /** Buttons and modals, routed by the custom-ID prefix `<module>:<name>`. */
+  /** Buttons, modals and selects, routed by the custom-ID prefix `<module>:<name>`. */
   components?: ComponentDefinition[];
   /** Discord permissions the bot needs for this module; missing ones are logged when a guild is set up. */
   botPermissions?: bigint[];
@@ -71,7 +71,7 @@ export function defineModule<TConfig = Record<string, never>, TApi = undefined>(
   for (const [name, command] of Object.entries(definition.commands ?? {})) checkCommand(name, command);
   const componentNames = new Set<string>();
   for (const component of definition.components ?? []) {
-    const label = component.kind === 'button' ? 'Button' : 'Modal';
+    const label = { button: 'Button', modal: 'Modal', select: 'Select' }[component.kind];
     const key = `${component.kind}:${component.name}`;
     if (componentNames.has(key)) throw new Error(`${label} "${component.name}" is defined twice in module "${definition.name}".`);
     componentNames.add(key);

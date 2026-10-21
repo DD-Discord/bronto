@@ -2,7 +2,7 @@ import { Events, GatewayIntentBits } from 'discord.js';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { defineCommand } from '../interactions/commands.js';
-import { defineButton } from '../interactions/components.js';
+import { defineButton, defineSelect } from '../interactions/components.js';
 import { coreEvents, defineEvent, eventLabel, on } from './events.js';
 import { defineModule } from './module.js';
 
@@ -76,5 +76,13 @@ describe('defineModule interactions', () => {
     const x = defineButton({ name: 'x', execute: () => undefined });
     const y = defineButton({ name: 'x', execute: () => undefined });
     expect(() => defineModule({ name: 'dupe2', components: [x, y] })).toThrow('Button "x" is defined twice');
+  });
+
+  it('defineModule rejects two selects with one name', () => {
+    const x = defineSelect({ name: 'x', execute: () => undefined });
+    const y = defineSelect({ name: 'x', execute: () => undefined });
+    expect(() => defineModule({ name: 'dupe3', components: [x, y] })).toThrow('Select "x" is defined twice');
+    const button = defineButton({ name: 'x', execute: () => undefined });
+    expect(() => defineModule({ name: 'dupe4', components: [button, defineSelect({ name: 'x', execute: () => undefined })] })).not.toThrow();
   });
 });

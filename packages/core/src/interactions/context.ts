@@ -1,4 +1,4 @@
-import type { ButtonInteraction, ChatInputCommandInteraction, ModalSubmitInteraction } from 'discord.js';
+import type { ButtonInteraction, ChatInputCommandInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from 'discord.js';
 import type { HandlerContext } from '../runtime/types.js';
 import type { ModalPayload, Reply, Responder } from './responder.js';
 
@@ -28,6 +28,13 @@ export interface UpdatableContext {
 
 export interface ButtonContext<TConfig = any> extends InteractionContext<TConfig>, UpdatableContext {
   readonly interaction: ButtonInteraction<'cached'>;
+  showModal(modal: ModalPayload): Promise<void>;
+}
+
+export interface SelectContext<TConfig = any> extends InteractionContext<TConfig>, UpdatableContext {
+  readonly interaction: StringSelectMenuInteraction<'cached'>;
+  /** The options the user chose. */
+  readonly values: string[];
   showModal(modal: ModalPayload): Promise<void>;
 }
 

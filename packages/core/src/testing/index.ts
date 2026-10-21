@@ -5,6 +5,7 @@ export {
   fakeButton,
   fakeCommand,
   fakeModal,
+  fakeSelect,
   type FakeCommandInput,
   type FakeInteractionBase,
   type FakeResponse,

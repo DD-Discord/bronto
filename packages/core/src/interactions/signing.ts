@@ -5,7 +5,7 @@ const SIGNATURE_BYTES = 8;
 
 /** Everything a component custom ID's signature covers. `userId` and `channelId` are null unless the definition binds them. */
 export interface SignatureInput {
-  kind: 'button' | 'modal';
+  kind: 'button' | 'modal' | 'select';
   module: string;
   name: string;
   args: string[];

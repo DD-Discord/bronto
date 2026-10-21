@@ -4,6 +4,7 @@ import {
   createCustomId,
   defineButton,
   defineModal,
+  defineSelect,
   parseCustomId,
   type ComponentDefinition,
 } from './components.js';
@@ -19,6 +20,8 @@ const button = owned(defineButton({ name: 'text', execute: () => undefined }));
 const modal = owned(defineModal({ name: 'text', execute: () => undefined }));
 const mine = owned(defineButton({ name: 'mine', bind: { user: true, channel: true }, execute: () => undefined }));
 const brief = owned(defineModal({ name: 'brief', expiresAfterMs: 60_000, execute: () => undefined }));
+
+const select = owned(defineSelect({ name: 'text', execute: () => undefined }));
 
 describe('components', () => {
   it('round-trips arguments', () => {
@@ -116,5 +119,23 @@ describe('components', () => {
 
   it('rejects invalid names', () => {
     expect(() => defineModal({ name: 'Bad:name', execute: () => undefined })).toThrow('Component name');
+  });
+
+  it('defineSelect validates names like buttons', () => {
+    expect(() => defineSelect({ name: 'Bad:name', execute: () => undefined })).toThrow('Component name');
+    expect(() => defineSelect({ name: 'a'.repeat(33), execute: () => undefined })).toThrow('Component name');
+    expect(() => defineSelect({ name: 's', expiresAfterMs: 0, execute: () => undefined })).toThrow('expiresAfterMs');
+    expect(defineSelect({ name: 'pick', execute: () => undefined })).toMatchObject({
+      kind: 'select',
+      defer: 'reply',
+      bind: { user: false, channel: false },
+    });
+  });
+
+  it('signs selects apart from buttons and modals of the same name', () => {
+    const id = createCustomId(signer, select, target, ['n1'], 0);
+    expect(checkCustomId(signer, select, id, target, 0)).toEqual({ ok: true, args: ['n1'] });
+    expect(checkCustomId(signer, button, id, target, 0)).toEqual({ ok: false, reason: 'invalid' });
+    expect(checkCustomId(signer, modal, id, target, 0)).toEqual({ ok: false, reason: 'invalid' });
   });
 });

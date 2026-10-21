@@ -1,4 +1,4 @@
-import type { ButtonContext, ModalContext } from './context.js';
+import type { ButtonContext, ModalContext, SelectContext } from './context.js';
 import type { ComponentSigner, SignatureInput } from './signing.js';
 
 const MAX_CUSTOM_ID = 100;
@@ -45,7 +45,12 @@ export interface ModalDefinition extends ComponentBase {
   execute(ctx: ModalContext, args: string[]): unknown;
 }
 
-export type ComponentDefinition = ButtonDefinition | ModalDefinition;
+export interface SelectDefinition extends ComponentBase {
+  readonly kind: 'select';
+  execute(ctx: SelectContext, args: string[]): unknown;
+}
+
+export type ComponentDefinition = ButtonDefinition | ModalDefinition | SelectDefinition;
 
 function base(
   name: string,
@@ -88,6 +93,19 @@ export function defineModal(input: {
   }
   const bind = { user: true, channel: input.bind?.channel ?? false };
   return { ...base(input.name, bind, input.expiresAfterMs), kind: 'modal', ephemeral: input.ephemeral, defer: input.defer ?? 'reply', execute: input.execute };
+}
+
+export function defineSelect(input: {
+  name: string;
+  /** Also binds IDs to the user and/or channel they are signed for; both off by default. */
+  bind?: { user?: boolean; channel?: boolean };
+  expiresAfterMs?: number;
+  ephemeral?: boolean;
+  defer?: ComponentDefer;
+  execute: SelectDefinition['execute'];
+}): SelectDefinition {
+  const bind = { user: input.bind?.user ?? false, channel: input.bind?.channel ?? false };
+  return { ...base(input.name, bind, input.expiresAfterMs), kind: 'select', ephemeral: input.ephemeral, defer: input.defer ?? 'reply', execute: input.execute };
 }
 
 /**
