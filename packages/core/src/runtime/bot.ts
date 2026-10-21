@@ -252,6 +252,15 @@ export function createBot(options: BotOptions): Bot {
         });
       });
     }
+    // discord.js emits every packet as 'raw'; the listener is only added when a module needs one.
+    if (dispatcher.gatewayEvents().length > 0) {
+      listen(Events.Raw, (packet: { t: string | null; d: unknown }) => {
+        if (packet.t === null) return;
+        dispatcher.handleGateway({ t: packet.t, d: packet.d }).catch((error: unknown) => {
+          log.error({ err: error }, `Dispatching gateway packet ${packet.t} failed`);
+        });
+      });
+    }
   }
 
   function detach(): void {

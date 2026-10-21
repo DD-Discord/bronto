@@ -1,4 +1,4 @@
-import { Collection, Events, Guild, type Client } from 'discord.js';
+import { Collection, Events, GatewayDispatchEvents, Guild, type Client } from 'discord.js';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { upsertGuild } from '../src/db/guilds.js';
@@ -8,7 +8,7 @@ import { guilds } from '../src/db/schema.js';
 import { createModuleRuntimes, type ModuleRuntime } from '../src/runtime/context.js';
 import { Dispatcher, guildIdOf, type HandlerResult } from '../src/runtime/dispatcher.js';
 import { ModuleEnablement } from '../src/runtime/enablement.js';
-import { defineEvent, on } from '../src/runtime/events.js';
+import { defineEvent, gatewayEvent, on } from '../src/runtime/events.js';
 import { defineModule } from '../src/runtime/module.js';
 import { KeyedQueue } from '../src/runtime/queue.js';
 import type { HandlerContext } from '../src/runtime/types.js';
@@ -25,6 +25,7 @@ interface Seen {
   detail: unknown;
 }
 
+const threadDelete = gatewayEvent(GatewayDispatchEvents.ThreadDelete);
 const counted = defineEvent<{ n: number }>('counted');
 const signer = new ComponentSigner('s'.repeat(32));
 const tap = defineButton({ name: 'tap', execute: () => undefined });
@@ -38,6 +39,9 @@ const widgets = defineModule({
   events: { counted },
   components: [tap, own],
   listeners: [
+    on(threadDelete, (ctx, data) => {
+      seen.push({ module: 'widgets', guildId: ctx.guildId, actorId: ctx.actorId, detail: data.id });
+    }),
     on(Events.MessageCreate, async (ctx, message) => {
       seen.push({ module: 'widgets', guildId: ctx.guildId, actorId: ctx.actorId, detail: message.id });
       if (message.content === 'fail') throw new Error('widgets failed');
@@ -51,6 +55,9 @@ const widgets = defineModule({
 const beta = defineModule({
   name: 'beta',
   listeners: [
+    on(threadDelete, (ctx, data) => {
+      seen.push({ module: 'beta', guildId: ctx.guildId, actorId: ctx.actorId, detail: data.id });
+    }),
     on(Events.MessageCreate, (ctx, message) => {
       seen.push({ module: 'beta', guildId: ctx.guildId, actorId: ctx.actorId, detail: message.id });
     }),
@@ -424,6 +431,53 @@ describe('Dispatcher', () => {
     await enablement.set('g7', 'widgets', true);
     await queueTask();
     expect(ran).toEqual(['task']);
+  });
+});
+
+describe('raw gateway events', () => {
+  const packet = (guildId: string | undefined) => ({
+    t: 'THREAD_DELETE',
+    d: { id: 't1', guild_id: guildId, parent_id: 'f1', type: 11 },
+  });
+
+  it('lists the raw packet types modules listen to', () => {
+    expect(dispatcher.gatewayEvents()).toEqual(['THREAD_DELETE']);
+  });
+
+  it('routes a raw THREAD_DELETE to listeners of enabled modules by guild_id', async () => {
+    await dispatcher.handleGateway(packet('g1'));
+    expect(seen).toEqual([
+      { module: 'widgets', guildId: 'g1', actorId: null, detail: 't1' },
+      { module: 'beta', guildId: 'g1', actorId: null, detail: 't1' },
+    ]);
+  });
+
+  it('ignores packets without guild_id', async () => {
+    await dispatcher.handleGateway(packet(undefined));
+    expect(seen).toEqual([]);
+  });
+
+  it('skips modules disabled in the guild', async () => {
+    await enablement.set('g2', 'widgets', false);
+    await dispatcher.handleGateway(packet('g2'));
+    expect(seen.map((entry) => entry.module)).toEqual(['beta']);
+  });
+
+  it('ignores event names no module listens to', async () => {
+    await dispatcher.handleGateway({ t: 'CHANNEL_DELETE', d: { id: 'c1', guild_id: 'g1' } });
+    expect(seen).toEqual([]);
+  });
+
+  it('drops packets of guilds the gate rejects', async () => {
+    const gated = new Dispatcher({
+      runtimes,
+      database: t.database,
+      enablement,
+      queue: new KeyedQueue(() => undefined),
+      guildGate: async () => false,
+    });
+    await gated.handleGateway(packet('g1'));
+    expect(seen).toEqual([]);
   });
 });
 

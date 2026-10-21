@@ -1,4 +1,4 @@
-import { Events } from 'discord.js';
+import { Events, GatewayDispatchEvents } from 'discord.js';
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConfigError } from '../src/config/errors.js';
@@ -8,7 +8,7 @@ import { createDatabase, type Database } from '../src/db/database.js';
 import { markGuildLeft, upsertGuild } from '../src/db/guilds.js';
 import { guildModules, guilds } from '../src/db/schema.js';
 import { createBot, StartupError, type Bot } from '../src/runtime/bot.js';
-import { coreEvents, on } from '../src/runtime/events.js';
+import { coreEvents, gatewayEvent, on } from '../src/runtime/events.js';
 import type { ModuleDefinition } from '../src/runtime/module.js';
 import type { ModuleQueue } from '../src/runtime/types.js';
 import { FakeClient } from '../src/testing/fake-client.js';
@@ -195,6 +195,30 @@ describe('createBot', () => {
     await bot.prepare();
     expect(lines).toContainEqual(expect.objectContaining({ level: 40, module: 'widgets' }));
     expect(await schemaExists('widgets')).toBe(true);
+  });
+
+  it('forwards raw packets only when a module listens', async () => {
+    const seenThreads: string[] = [];
+    const listening = widgetsModule({
+      listeners: [
+        on(gatewayEvent(GatewayDispatchEvents.ThreadDelete), (ctx, data) => {
+          seenThreads.push(`${ctx.guildId}:${data.id}`);
+        }),
+      ],
+    });
+    const { bot, client } = makeBot([listening]);
+    await bot.start();
+    await ready(bot, client);
+    client.emit(Events.GuildAvailable, { id: 'g1' });
+    await bot.idle();
+    client.emit(Events.Raw, { op: 0, t: 'THREAD_DELETE', d: { id: 't1', guild_id: 'g1', parent_id: 'f1', type: 11 }, s: 1 });
+    client.emit(Events.Raw, { op: 11, t: null, d: null, s: null });
+    await bot.idle();
+    expect(seenThreads).toEqual(['g1:t1']);
+
+    const quiet = makeBot([widgetsModule()]);
+    await quiet.bot.start();
+    expect(quiet.client.listenerCount(Events.Raw)).toBe(0);
   });
 
   it('disconnects on stop', async () => {

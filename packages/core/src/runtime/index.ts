@@ -12,9 +12,12 @@ export {
   coreEvents,
   defineEvent,
   eventLabel,
+  gatewayEvent,
   on,
   type DiscordEventName,
   type EventDefinition,
+  type GatewayEventData,
+  type GatewayEventDefinition,
   type Listener,
 } from './events.js';
 export { GuildLifecycle, type LifecycleOptions } from './lifecycle.js';
