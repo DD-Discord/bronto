@@ -126,6 +126,59 @@ describe('Responder', () => {
     });
   });
 
+  it('update as first answer calls update', async () => {
+    const { fake, responder: r } = responder();
+    await r.update({ content: 'new', flags: MessageFlags.SuppressNotifications | MessageFlags.SuppressEmbeds });
+    expect(fake.responses).toEqual([
+      { kind: 'update', payload: { content: 'new', allowedMentions: NO_PINGS, flags: MessageFlags.SuppressEmbeds } },
+    ]);
+    await r.send('more');
+    expect(kinds(fake)).toEqual(['update', 'followUp']);
+  });
+
+  it('update after deferUpdate edits the reply', async () => {
+    const { fake, responder: r } = responder();
+    await r.deferUpdate();
+    await r.deferUpdate();
+    await r.update('new');
+    expect(fake.responses).toEqual([
+      { kind: 'deferUpdate', payload: undefined },
+      { kind: 'editReply', payload: { content: 'new', allowedMentions: NO_PINGS } },
+    ]);
+  });
+
+  it('update after reply throws', async () => {
+    const { responder: r } = responder();
+    await r.send('hi');
+    await expect(r.update('new')).rejects.toThrow('update must be the first answer or follow deferUpdate.');
+    const deferred = responder();
+    await deferred.responder.defer();
+    await expect(deferred.responder.update('new')).rejects.toThrow('update must be the first answer');
+  });
+
+  it('does not deferUpdate once answered', async () => {
+    const { fake, responder: r } = responder();
+    await r.send('hi');
+    await r.deferUpdate();
+    expect(kinds(fake)).toEqual(['reply']);
+  });
+
+  it('fail after deferUpdate follows up ephemerally', async () => {
+    const { fake, responder: r } = responder();
+    await r.deferUpdate();
+    await r.fail('nope');
+    expect(fake.responses.slice(1)).toEqual([
+      { kind: 'followUp', payload: { content: 'nope', allowedMentions: NO_PINGS, flags: MessageFlags.Ephemeral } },
+    ]);
+  });
+
+  it('finish after deferUpdate sends nothing', async () => {
+    const { fake, responder: r } = responder();
+    await r.deferUpdate();
+    await r.finish();
+    expect(kinds(fake)).toEqual(['deferUpdate']);
+  });
+
   it('finishes unanswered interactions with Done', async () => {
     const open = responder();
     await open.responder.finish();

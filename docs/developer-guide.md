@@ -423,6 +423,9 @@ Answer only through the context:
 - `ctx.followUp(message)` posts an extra message.
 - `ctx.defer()` shows "thinking…".
 - `ctx.showModal(modal)` opens a form. It must be the first answer.
+- `ctx.update(message)` (buttons, and modals submitted from a message) replaces the message the component is on. It
+  must be the first answer or follow `ctx.deferUpdate()`, which acknowledges without changing the message. Set
+  `defer: 'update'` on the component so its automatic defer is a `deferUpdate` instead of "thinking…".
 
 A message is a string or `{ content, embeds, components, ephemeral, allowedMentions, flags }`. Answers follow these rules:
 

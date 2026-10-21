@@ -1,6 +1,6 @@
 import type { Interaction } from 'discord.js';
 
-export type FakeResponseKind = 'reply' | 'deferReply' | 'editReply' | 'followUp' | 'deleteReply' | 'showModal' | 'respond';
+export type FakeResponseKind = 'reply' | 'deferReply' | 'update' | 'deferUpdate' | 'editReply' | 'followUp' | 'deleteReply' | 'showModal' | 'respond';
 
 export interface FakeResponse {
   kind: FakeResponseKind;
@@ -131,6 +131,18 @@ export class FakeInteraction {
 
   deferReply(payload: unknown): Promise<void> {
     return this.record('deferReply', payload, () => {
+      this.deferred = true;
+    });
+  }
+
+  update(payload: unknown): Promise<void> {
+    return this.record('update', payload, () => {
+      this.replied = true;
+    });
+  }
+
+  deferUpdate(): Promise<void> {
+    return this.record('deferUpdate', undefined, () => {
       this.deferred = true;
     });
   }

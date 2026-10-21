@@ -18,12 +18,21 @@ export interface CommandContext<TConfig = any> extends InteractionContext<TConfi
   showModal(modal: ModalPayload): Promise<void>;
 }
 
-export interface ButtonContext<TConfig = any> extends InteractionContext<TConfig> {
+/** Component interactions can replace the message their component sits on. */
+export interface UpdatableContext {
+  /** Replaces the component's message; the first answer, or the one after `deferUpdate`. */
+  update(message: Reply): Promise<void>;
+  /** Acknowledges without changing the message yet. Components slower than 2 s are deferred automatically. */
+  deferUpdate(): Promise<void>;
+}
+
+export interface ButtonContext<TConfig = any> extends InteractionContext<TConfig>, UpdatableContext {
   readonly interaction: ButtonInteraction<'cached'>;
   showModal(modal: ModalPayload): Promise<void>;
 }
 
-export interface ModalContext<TConfig = any> extends InteractionContext<TConfig> {
+/** `update` and `deferUpdate` work only for modals submitted from a component's message. */
+export interface ModalContext<TConfig = any> extends InteractionContext<TConfig>, UpdatableContext {
   readonly interaction: ModalSubmitInteraction<'cached'>;
   /** The value of a text input in the submitted modal. */
   field(customId: string): string;

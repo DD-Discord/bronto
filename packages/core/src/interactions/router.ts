@@ -175,7 +175,7 @@ export class InteractionRouter {
     const entry = parsed === null ? undefined : this.components.get(componentKey(parsed.module, kind, parsed.name));
     const responder = new Responder(interaction as ResponseTarget, entry?.value.ephemeral ?? false);
     const label = `${kind}:${parsed?.name ?? interaction.customId}`;
-    const stopTimer = this.startDeferTimer(responder, label);
+    const stopTimer = this.startDeferTimer(responder, label, entry?.value.defer);
     if (!(await this.ready(interaction.guildId))) return this.answer(responder.fail(NOT_READY), label, stopTimer);
     if (entry === undefined || parsed === null) return this.answer(responder.fail(COMPONENT_GONE), label, stopTimer);
     if (!this.enabled(entry.source, interaction.guildId)) {
@@ -199,6 +199,8 @@ export class InteractionRouter {
           ...base,
           interaction: interaction as ButtonInteraction<'cached'>,
           showModal: (modal) => responder.showModal(modal),
+          update: (message) => responder.update(message),
+          deferUpdate: () => responder.deferUpdate(),
         };
         return component.execute(context, check.args);
       }
@@ -207,6 +209,8 @@ export class InteractionRouter {
         ...base,
         interaction: submitted,
         field: (customId) => submitted.fields.getTextInputValue(customId),
+        update: (message) => responder.update(message),
+        deferUpdate: () => responder.deferUpdate(),
       };
       return component.execute(context, check.args);
     });
@@ -235,9 +239,9 @@ export class InteractionRouter {
   }
 
   /** Starts the defer clock when handling begins, so waiting for the guild gate counts against Discord's 3 s window. */
-  private startDeferTimer(responder: Responder, label: string): () => void {
+  private startDeferTimer(responder: Responder, label: string, mode: 'reply' | 'update' = 'reply'): () => void {
     const timer = setTimeout(() => {
-      responder.defer().catch((error: unknown) => {
+      (mode === 'update' ? responder.deferUpdate() : responder.defer()).catch((error: unknown) => {
         this.log.warn({ err: error, handler: label }, 'Answering an interaction failed');
       });
     }, this.deferAfterMs);

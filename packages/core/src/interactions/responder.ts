@@ -5,6 +5,7 @@ import {
   type InteractionDeferReplyOptions,
   type InteractionEditReplyOptions,
   type InteractionReplyOptions,
+  type InteractionUpdateOptions,
   type JSONEncodable,
 } from 'discord.js';
 
@@ -36,13 +37,16 @@ export type ModalPayload = JSONEncodable<APIModalInteractionResponseCallbackData
 export interface ResponseTarget {
   reply(options: InteractionReplyOptions): Promise<unknown>;
   deferReply(options: InteractionDeferReplyOptions): Promise<unknown>;
+  /** Component interactions only: replaces the message the component is on. */
+  update?(options: InteractionUpdateOptions): Promise<unknown>;
+  deferUpdate?(): Promise<unknown>;
   editReply(options: InteractionEditReplyOptions): Promise<unknown>;
   followUp(options: InteractionReplyOptions): Promise<unknown>;
   deleteReply(): Promise<unknown>;
   showModal?(modal: ModalPayload): Promise<unknown>;
 }
 
-type State = 'open' | 'deferred' | 'answered';
+type State = 'open' | 'deferred' | 'deferredUpdate' | 'answered';
 
 // Content can come from users (names, notes), so nothing pings unless the reply names who may be pinged.
 function mentions(message: ReplyMessage): InteractionEditReplyOptions['allowedMentions'] {
@@ -124,6 +128,32 @@ export class Responder {
     });
   }
 
+  /** Replaces the message the component is on; the first answer, or the one after `deferUpdate`. */
+  update(reply: Reply): Promise<void> {
+    return this.enqueue(async () => {
+      const options = editBody(toMessage(reply));
+      if (this.state === 'open') {
+        if (this.target.update === undefined) throw new Error('This interaction cannot update its message.');
+        await this.target.update(options as InteractionUpdateOptions);
+      } else if (this.state === 'deferredUpdate') {
+        await this.target.editReply(options);
+      } else {
+        throw new Error('update must be the first answer or follow deferUpdate.');
+      }
+      this.state = 'answered';
+    });
+  }
+
+  /** Acknowledges a component interaction without changing its message yet; `update` then edits it. */
+  deferUpdate(): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.state !== 'open') return;
+      if (this.target.deferUpdate === undefined) throw new Error('This interaction cannot update its message.');
+      await this.target.deferUpdate();
+      this.state = 'deferredUpdate';
+    });
+  }
+
   showModal(modal: ModalPayload): Promise<void> {
     return this.enqueue(async () => {
       if (this.state !== 'open') throw new Error('A modal can only be the first answer to an interaction.');
@@ -136,7 +166,7 @@ export class Responder {
   /** Makes sure Discord got an answer after the handler finished. */
   finish(): Promise<void> {
     return this.enqueue(async () => {
-      if (this.state === 'answered') return;
+      if (this.state === 'answered' || this.state === 'deferredUpdate') return;
       await this.answerPrivately(DONE);
     });
   }

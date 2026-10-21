@@ -120,6 +120,15 @@ const press = defineButton({
   },
 });
 
+const slowUpdate = defineButton({
+  name: 'slow-update',
+  defer: 'update',
+  execute: async (ctx) => {
+    await sleep(150);
+    await ctx.update('redrawn');
+  },
+});
+
 const form = defineModal({
   name: 'form',
   execute: async (ctx, args) => {
@@ -149,7 +158,7 @@ const demo = defineModule({
   name: 'widgets',
   db: { schema: widgetsSchema, migrations: widgetsMigrations },
   commands: { demo: demoCommand },
-  components: [press, form, brief, mine],
+  components: [press, form, brief, mine, slowUpdate],
 });
 
 let t: TestDatabase;
@@ -173,7 +182,7 @@ function makeRouter(sources?: InteractionSource[], deferAfterMs = 40): Interacti
   const captured = captureLog();
   lines = captured.lines;
   return new InteractionRouter({
-    sources: sources ?? [{ runtime: runtimes[0]!, commands: { demo: demoCommand }, components: [press, form, brief, mine] }],
+    sources: sources ?? [{ runtime: runtimes[0]!, commands: { demo: demoCommand }, components: [press, form, brief, mine, slowUpdate] }],
     dispatcher,
     signer,
     now: () => now,
@@ -393,6 +402,14 @@ describe('InteractionRouter autocomplete', () => {
 });
 
 describe('InteractionRouter components', () => {
+  it('a slow button with defer "update" is deferred with deferUpdate', async () => {
+    const fake = await run(makeRouter(), fakeButton({ customId: sign(slowUpdate) }));
+    expect(fake.responses).toEqual([
+      { kind: 'deferUpdate', payload: undefined },
+      { kind: 'editReply', payload: { content: 'redrawn', allowedMentions: { parse: [] } } },
+    ]);
+  });
+
   it('routes buttons and modals with their custom ID arguments', async () => {
     const router = makeRouter();
     const button = await run(router, fakeButton({ customId: sign(press, ['a', 'b']) }));
