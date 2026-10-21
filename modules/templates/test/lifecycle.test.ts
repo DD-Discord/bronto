@@ -21,6 +21,7 @@ const watcher = defineModule({
 
 const THREAD_A = '100000000000008001';
 const THREAD_B = '100000000000008002';
+const THIRD = '100000000000008004';
 const OTHER_THREAD = '100000000000008003';
 
 function addPost(threadId: string, name: string) {
@@ -154,7 +155,23 @@ describe('reconcile at start-up', () => {
     discord.channels.delete(THREAD_A);
     await ready(tb);
     // The forum check failed, so nothing is touched.
+    expect(tb.lines.some((line) => line.level === 40 && line.msg === 'Checking the template forum failed' && line.channelId === FORUM)).toBe(true);
     expect(await rows()).toHaveLength(2);
     expect(await forumRows()).toHaveLength(1);
+  });
+
+  it('removes only the deleted post when other posts fail to answer', async () => {
+    await bootstrap();
+    await seed(THIRD, 'Gamma');
+    discord.override('GET', `/channels/${THREAD_A}`, () => ({ status: 500, json: { message: 'oops' } }));
+    discord.override('GET', `/channels/${THREAD_B}`, () => ({ status: 403, json: { code: 50001, message: 'Missing Access' } }));
+    discord.channels.delete(THIRD);
+    await ready(tb);
+    expect((await rows()).map((row) => row.threadId).sort()).toEqual([THREAD_A, THREAD_B]);
+    expect(await forumRows()).toHaveLength(1);
+    const warned = tb.lines.filter((line) => line.level === 40 && line.msg === 'Checking a template post failed');
+    expect(warned.map((line) => line.threadId).sort()).toEqual([THREAD_A, THREAD_B]);
+    expect(warned.every((line) => typeof line.templateId === 'string' && line.err !== undefined)).toBe(true);
+    expect(tb.lines.filter((line) => line.level === 30 && line.msg === 'Template deleted' && line.threadId === THIRD)).toHaveLength(1);
   });
 });

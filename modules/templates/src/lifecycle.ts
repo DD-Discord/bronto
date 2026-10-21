@@ -60,22 +60,27 @@ export async function onThreadUpdate(ctx: TemplatesContext, _old: AnyThreadChann
 export async function reconcile(ctx: TemplatesContext): Promise<void> {
   const forumId = await storedForumId(ctx);
   if (forumId !== null) {
+    let exists: boolean;
     try {
-      if (!(await channelExists(ctx, forumId))) {
-        await forgetForum(ctx);
-        return;
-      }
+      exists = await channelExists(ctx, forumId);
     } catch (error) {
       ctx.log.warn({ err: error, channelId: forumId }, 'Checking the template forum failed');
+      return;
+    }
+    if (!exists) {
+      await forgetForum(ctx);
       return;
     }
   }
   const rows = await ctx.db.run(async (tx) => tx.select().from(templates));
   for (const row of rows) {
+    let exists: boolean;
     try {
-      if (!(await channelExists(ctx, row.threadId))) await forgetTemplate(ctx, row);
+      exists = await channelExists(ctx, row.threadId);
     } catch (error) {
       ctx.log.warn({ err: error, templateId: row.id, threadId: row.threadId }, 'Checking a template post failed');
+      continue;
     }
+    if (!exists) await forgetTemplate(ctx, row);
   }
 }
