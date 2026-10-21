@@ -83,7 +83,12 @@ afterEach(async () => {
 
 describe('/sticky create', () => {
   it('creates a sticky for a template', async () => {
-    expect(contents(await say('create', { channel: channel(CHANNEL), template }))).toEqual(['**Sticky created.**']);
+    const created = await say('create', { channel: channel(CHANNEL), template });
+    expect(contents(created)).toEqual(['**Sticky created.**']);
+    expect(created[0]!.embeds![0]!.toJSON().fields![0]).toEqual({
+      name: 'Template',
+      value: `[Welcome rules](${(await templateInfo(template)).url})`,
+    });
     const [row] = await stickyRows(t);
     expect(row).toMatchObject({
       channelId: CHANNEL,
@@ -179,7 +184,12 @@ describe('/sticky show, list and edit', () => {
   it('switches to another template', async () => {
     const other = await createTemplate(sb, 'New rules');
     await say('create', { channel: channel(CHANNEL), template });
-    expect(contents(await say('edit', { channel: channel(CHANNEL), template: other }))).toEqual(['**Sticky updated.**']);
+    const updated = await say('edit', { channel: channel(CHANNEL), template: other });
+    expect(contents(updated)).toEqual(['**Sticky updated.**']);
+    expect(updated[0]!.embeds![0]!.toJSON().fields![0]).toEqual({
+      name: 'Template',
+      value: `[New rules](${(await templateInfo(other)).url})`,
+    });
     const [row] = await stickyRows(t);
     expect(row).toMatchObject({ templateId: other, content: null, embeds: null });
   });

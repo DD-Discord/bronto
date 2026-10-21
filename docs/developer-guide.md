@@ -877,7 +877,9 @@ What you get:
   for internal IDs, not for keys the user chooses, such as a channel.
 - **`fallback`:** `fallback: (ctx) => ctx.channelId` makes `show` default to the current channel. `create`, `edit` and
   `delete` always need the option, so nothing is changed or deleted "here" by accident.
-- **Replies:** embeds built by `formatFull`, which gets a base embed with a stable color per record. Answers are
+- **Replies:** embeds built by `formatFull(record, base, ctx)`, which gets a base embed with a stable color per record
+  and the handler's context, so it may be async and look up related data (e.g. through another module's API). Call
+  `entity.formatFull(record, ctx)` (it returns a promise) to show a record in your own replies. Answers are
   private by default (`ephemeral: false` changes that). Long lists are split across messages.
 - **Customizing:** `omit: ['edit']` leaves a subcommand out, `override: { list: mySubcommand }` replaces one, and
   `descriptions` renames them.

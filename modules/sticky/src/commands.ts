@@ -9,13 +9,12 @@ import {
   MissingWebhookPermissionError,
   type Autocomplete,
   type CommandDefinition,
-  type HandlerContext,
 } from '@bronto/core';
 import templates from '@bronto/templates';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { sql } from 'drizzle-orm';
 import { stickies } from './db/schema.js';
-import { stickyEntity, templateField } from './entity.js';
+import { stickyEntity, templateField, templateOf } from './entity.js';
 import type { Reposter } from './repost.js';
 import { entryOf, type StickyIndex } from './sticky-index.js';
 
@@ -43,9 +42,6 @@ const suggestTemplates: Autocomplete = async (ctx, query) =>
     name: `${template.name} · ${template.createdAt.toISOString().slice(0, 10)}`,
     value: template.id,
   }));
-
-/** Name and post link of a sticky's template, or null when it no longer exists. */
-const templateOf = (ctx: HandlerContext, templateId: string) => ctx.modules.get(templates).get(templateId);
 
 export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition {
   return defineCommand({
@@ -83,9 +79,7 @@ export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition 
             if (channelId === null) throw new UserError('Name the sticky with the `channel` option.');
             const sticky = await stickyEntity.find(ctx.db, channelId);
             if (sticky === null) throw new UserError(`There is no sticky for <#${channelId}>.`);
-            const embed = stickyEntity.formatFull(sticky);
-            embed.spliceFields(0, 1, { name: 'Template', value: templateField(sticky, await templateOf(ctx, sticky.templateId)) });
-            await ctx.reply({ embeds: [embed] });
+            await ctx.reply({ embeds: [await stickyEntity.formatFull(sticky, ctx)] });
           },
         }),
         list: defineSubcommand({

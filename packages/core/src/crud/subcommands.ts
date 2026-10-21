@@ -175,7 +175,7 @@ export function crudSubcommands<
       throw error;
     }
     await hooks.afterWrite?.(ctx, row, 'create');
-    await ctx.reply({ content: `**${singular} created.**`, embeds: [entity.formatFull(row)] });
+    await ctx.reply({ content: `**${singular} created.**`, embeds: [await entity.formatFull(row, ctx)] });
   };
 
   const edit = async (ctx: CommandContext, raw: Record<string, unknown>): Promise<void> => {
@@ -201,12 +201,12 @@ export function crudSubcommands<
     });
     if (row === undefined) throw new UserError(notFound(recordKey));
     await hooks.afterWrite?.(ctx, row, 'edit');
-    await ctx.reply({ content: `**${singular} updated.**`, embeds: [entity.formatFull(row)] });
+    await ctx.reply({ content: `**${singular} updated.**`, embeds: [await entity.formatFull(row, ctx)] });
   };
 
   const show = async (ctx: CommandContext, raw: Record<string, unknown>): Promise<void> => {
     const record = await load(ctx, keyFrom(ctx, raw, true));
-    await ctx.reply({ embeds: [entity.formatFull(record)] });
+    await ctx.reply({ embeds: [await entity.formatFull(record, ctx)] });
   };
 
   const list = async (ctx: CommandContext): Promise<void> => {

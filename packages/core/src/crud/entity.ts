@@ -4,6 +4,7 @@ import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import type { ScopedDb } from '../db/scoped.js';
 import { plainText, truncate } from '../interactions/format.js';
 import type { Autocomplete } from '../interactions/options.js';
+import type { HandlerContext } from '../runtime/types.js';
 
 const MAX_DESCRIPTION = 4096;
 
@@ -29,7 +30,8 @@ export interface EntityInput<TTable extends PgTable> {
   key: keyof InferSelectModel<TTable> & string;
   displayName: { singular: string; plural: string };
   formatShort: (record: InferSelectModel<TTable>) => string;
-  formatFull?: (record: InferSelectModel<TTable>, base: () => EmbedBuilder) => EmbedBuilder;
+  /** The full embed; `ctx` is the context of the handler showing the record, e.g. to look up related data. */
+  formatFull?: (record: InferSelectModel<TTable>, base: () => EmbedBuilder, ctx: HandlerContext) => EmbedBuilder | Promise<EmbedBuilder>;
 }
 
 /** Display and lookup metadata for one table, shared by CRUD commands, autocomplete, logs and module APIs. */
@@ -40,7 +42,7 @@ export interface Entity<TTable extends PgTable = PgTable> {
   readonly displayName: { singular: string; plural: string };
   keyOf(record: InferSelectModel<TTable>): string;
   formatShort(record: InferSelectModel<TTable>): string;
-  formatFull(record: InferSelectModel<TTable>): EmbedBuilder;
+  formatFull(record: InferSelectModel<TTable>, ctx: HandlerContext): Promise<EmbedBuilder>;
   /** The record with this key in the db's guild, or null. */
   find(db: ScopedDb, key: string): Promise<InferSelectModel<TTable> | null>;
   /** The db guild's records, oldest first. */
@@ -70,7 +72,7 @@ export function defineEntity<TTable extends PgTable>(input: EntityInput<TTable>)
     displayName: input.displayName,
     keyOf,
     formatShort: input.formatShort,
-    formatFull: (record) => (input.formatFull === undefined ? base(record) : input.formatFull(record, () => base(record))),
+    formatFull: async (record, ctx) => (input.formatFull === undefined ? base(record) : input.formatFull(record, () => base(record), ctx)),
     async find(db, key) {
       const rows = await db.run(async (tx) => tx.select().from(input.table as PgTable).where(eq(keyColumn, key)).limit(1));
       return (rows[0] as Row | undefined) ?? null;
