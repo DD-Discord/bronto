@@ -1,4 +1,4 @@
-import { Collection, type Interaction } from 'discord.js';
+import { Collection, PermissionsBitField, type Interaction } from 'discord.js';
 
 export type FakeResponseKind = 'reply' | 'deferReply' | 'update' | 'deferUpdate' | 'editReply' | 'followUp' | 'deleteReply' | 'showModal' | 'respond';
 
@@ -15,6 +15,8 @@ export interface FakeInteractionBase {
   rejectResponses: boolean;
   /** Whether the guild is in the client's cache; true by default. False fakes a guild the bot has not loaded yet. */
   cached: boolean;
+  /** The member's permissions in the interaction's channel; every permission by default. */
+  permissions: bigint;
 }
 
 export type FakeCommandInput = Partial<FakeInteractionBase> & {
@@ -54,6 +56,7 @@ export class FakeInteraction {
   readonly commandName: string | undefined;
   readonly customId: string | undefined;
   readonly values: string[];
+  readonly memberPermissions: PermissionsBitField;
   replied = false;
   deferred = false;
   readonly options: {
@@ -78,6 +81,7 @@ export class FakeInteraction {
     this.user = { id: base.userId ?? 'u1' };
     this.rejectResponses = base.rejectResponses ?? false;
     this.cached = base.cached ?? true;
+    this.memberPermissions = new PermissionsBitField(base.permissions ?? PermissionsBitField.All);
     this.commandName = details.command;
     this.customId = details.customId;
     this.values = details.values ?? [];

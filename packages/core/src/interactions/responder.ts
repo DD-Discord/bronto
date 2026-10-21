@@ -16,6 +16,8 @@ export interface ReplyMessage {
   content?: string;
   embeds?: BaseMessageOptions['embeds'];
   components?: BaseMessageOptions['components'];
+  /** Files to attach. */
+  files?: BaseMessageOptions['files'];
   /** Visible only to the user. Ignored for the answer to a deferred interaction, which keeps the defer's visibility. */
   ephemeral?: boolean;
   /** Users and roles this message may ping; nobody by default. `@everyone` and `@here` never ping. */
@@ -65,6 +67,7 @@ function body(message: ReplyMessage): InteractionEditReplyOptions {
   if (message.content !== undefined) options.content = message.content;
   if (message.embeds !== undefined) options.embeds = message.embeds;
   if (message.components !== undefined) options.components = message.components;
+  if (message.files !== undefined) options.files = message.files;
   return options;
 }
 

@@ -87,13 +87,19 @@ export async function createPost(ctx: TemplatesContext, input: NewTemplate): Pro
 
 /**
  * Edits the post's starter message to show the template. Uploads replace the attachments of their slots, the others
- * stay. An archived post is unarchived and the edit retried once; the bot owns the post, so this works when it is
+ * stay unless `syncAttachments` is set: then exactly the stored image rows stay attached, so images whose rows were
+ * deleted are dropped from the message. An archived post is unarchived and the edit retried once; the bot owns the post, so this works when it is
  * locked too.
  */
-export async function updatePreview(ctx: TemplatesContext, template: Template, uploads: PendingUpload[] = []): Promise<void> {
+export async function updatePreview(
+  ctx: TemplatesContext,
+  template: Template,
+  uploads: PendingUpload[] = [],
+  { syncAttachments = false }: { syncAttachments?: boolean } = {},
+): Promise<void> {
   const replaced = new Set(uploads.map((upload) => upload.slot));
   const stored =
-    uploads.length === 0
+    uploads.length === 0 && !syncAttachments
       ? []
       : await ctx.db.run(async (tx) =>
           tx
@@ -105,7 +111,7 @@ export async function updatePreview(ctx: TemplatesContext, template: Template, u
   // Built per attempt: discord.js appends the new files to the `attachments` list it is given.
   const options = (): MessageEditOptions => ({
     ...previewMessage(ctx, template, uploads),
-    ...(uploads.length === 0 ? {} : { attachments: kept.map((image) => ({ id: image.attachmentId })) }),
+    ...(uploads.length === 0 && !syncAttachments ? {} : { attachments: kept.map((image) => ({ id: image.attachmentId })) }),
   });
 
   const thread = await ctx.client.channels.fetch(template.threadId);

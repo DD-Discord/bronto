@@ -1,7 +1,7 @@
 import { defineModule, on, type ModuleDefinition } from '@bronto/core';
 import { Events, GatewayIntentBits } from 'discord.js';
 import { templatesApi, type TemplatesApi } from './api.js';
-import { previewButtons } from './buttons.js';
+import { previewComponents } from './buttons.js';
 import { createTemplatesCommand } from './commands.js';
 import * as schema from './db/schema.js';
 import { templatesEvents, templatesGates } from './events.js';
@@ -17,7 +17,7 @@ export function createTemplatesModule(): ModuleDefinition<Record<string, never>,
     gates: templatesGates,
     listeners: [on(Events.ThreadCreate, (ctx, thread, newlyCreated) => onThreadCreate(ctx, thread, newlyCreated))],
     commands: { templates: createTemplatesCommand() },
-    components: previewButtons,
+    components: previewComponents,
     api: (ctx) => templatesApi(ctx),
   });
 }
