@@ -16,6 +16,7 @@
     "@bronto/autodelete": "workspace:*",
     "@bronto/example-notes": "workspace:*",
     "@bronto/sticky": "workspace:*",
+    "@bronto/templates": "workspace:*",
     "discord.js": "14.27.0",
     "drizzle-orm": "0.45.4",
     "tsx": "4.23.15",
