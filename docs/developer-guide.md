@@ -16,7 +16,7 @@ Contents:
   - [3. Settings](#3-settings)
   - [4. Storing data](#4-storing-data)
   - [5. Slash commands](#5-slash-commands)
-  - [6. Buttons and modals](#6-buttons-and-modals)
+  - [6. Buttons, selects and modals](#6-buttons-selects-and-modals)
   - [7. Listening to Discord events](#7-listening-to-discord-events)
   - [8. Events and APIs between modules](#8-events-and-apis-between-modules)
   - [9. Lifecycle hooks](#9-lifecycle-hooks)
@@ -214,8 +214,8 @@ modules:
 Settings apply to the whole deployment. They aren't per server; per-server settings belong in a table.
 
 The core has one setting of its own besides `discord`, `database` and `modules`: `interactions.secret` signs the custom
-IDs of buttons and modals (section 6). It must be at least 32 characters and is required once a loaded module defines
-components:
+IDs of buttons, selects and modals (section 6). It must be at least 32 characters and is required once a loaded module
+defines components:
 
 ```yaml
 interactions:
@@ -423,11 +423,15 @@ Answer only through the context:
 - `ctx.followUp(message)` posts an extra message.
 - `ctx.defer()` shows "thinking…".
 - `ctx.showModal(modal)` opens a form. It must be the first answer.
-- `ctx.update(message)` (buttons, and modals submitted from a message) replaces the message the component is on. It
-  must be the first answer or follow `ctx.deferUpdate()`, which acknowledges without changing the message. Set
-  `defer: 'update'` on the component so its automatic defer is a `deferUpdate` instead of "thinking…".
+- `ctx.update(message)` (buttons, selects, and modals submitted from a message) replaces the message the component is
+  on. It must be the first answer or follow `ctx.deferUpdate()`, which acknowledges without changing the message. Set
+  `defer: 'update'` on the component so its automatic defer is a `deferUpdate` instead of "thinking…". After
+  `deferUpdate`, `ctx.reply` posts a follow-up instead of editing the message; once the interaction is answered any
+  other way, `ctx.update` throws.
 
-A message is a string or `{ content, embeds, components, ephemeral, allowedMentions, flags }`. Answers follow these rules:
+A message is a string or `{ content, embeds, components, files, ephemeral, allowedMentions, flags }`. `files` takes
+discord.js attachments, e.g. `files: [{ attachment: Buffer.from(json), name: 'export.json' }]`. Answers follow these
+rules:
 
 - **Nobody gets pinged by default.** User text can contain `@everyone`, so replies disable all mentions. `<@id>` still
   renders as a mention, but doesn't notify. To ping on purpose, list who may be pinged:
@@ -448,11 +452,11 @@ A message is a string or `{ content, embeds, components, ephemeral, allowedMenti
 The raw interaction is available as `ctx.interaction`, to read things like `member` or `guild`. Don't answer through
 it, or the router's bookkeeping breaks.
 
-## 6. Buttons and modals
+## 6. Buttons, selects and modals
 
-Buttons and modals are components. A handler creates their custom IDs with `ctx.customId(component, args, target?)`,
-and the router uses the ID to find the handler, even after a restart. The bot signs every ID it hands out, so a client
-can't edit the arguments or use the ID somewhere else:
+Buttons, select menus and modals are components. A handler creates their custom IDs with
+`ctx.customId(component, args, target?)`, and the router uses the ID to find the handler, even after a restart. The bot
+signs every ID it hands out, so a client can't edit the arguments or use the ID somewhere else:
 
 ```ts
 import { defineButton } from '@bronto/core';
@@ -528,6 +532,32 @@ and treat modal field values as untrusted user input.
 - A module API (section 8) can call `ctx.customId` for its own module's components; the ID is made for the calling
   handler's server and actor.
 
+**Selects.** `defineSelect` defines a string select menu. Sign its ID with `ctx.customId` like a button's and put it
+on a `StringSelectMenuBuilder`; the handler reads the chosen options from `ctx.values`:
+
+```ts
+import { defineSelect } from '@bronto/core';
+
+const pickNote = defineSelect({
+  name: 'pick',
+  bind: { user: true },
+  execute: async (ctx) => {
+    const note = await findNote(ctx, ctx.values[0]!);
+    await ctx.update(`Showing **${note.title}**.`);
+  },
+});
+
+const menu = new StringSelectMenuBuilder()
+  .setCustomId(ctx.customId(pickNote))
+  .setPlaceholder('Pick a note')
+  .addOptions(notes.map((note) => ({ label: note.title, value: note.id })));
+```
+
+A select takes the same `bind` (user and channel, both off by default), `expiresAfterMs`, `ephemeral` and `defer` as
+a button, and its handler can answer with `showModal`, `update` and `deferUpdate` too. The values are user input like
+modal fields: check that the chosen option still exists. List selects in `components` with the buttons and modals;
+`fakeSelect({ customId, values })` from `@bronto/core/testing` presses one in tests.
+
 ## 7. Listening to Discord events
 
 ```ts
@@ -554,6 +584,28 @@ export default defineModule({
 - **Server must be ready:** an event reaches handlers only after its server is set up, which loads the module switches
   and runs `guildReady` (section 9).
 - **Isolated errors:** each module's handler runs on its own. One failing handler doesn't affect the others.
+
+### Raw gateway events
+
+discord.js emits some events only for objects in its cache; `Events.ThreadDelete`, for example, misses threads the
+cache never held or already dropped. To see every packet, listen to the raw gateway event instead:
+
+```ts
+import { gatewayEvent, on } from '@bronto/core';
+import { GatewayDispatchEvents } from 'discord.js';
+
+listeners: [
+  on(gatewayEvent(GatewayDispatchEvents.ThreadDelete), async (ctx, data) => {
+    // `data` is the packet's payload as Discord sends it (snake_case, typed), not a discord.js object.
+    await forgetThread(ctx, data.id);
+  }),
+],
+```
+
+- Only packets with a `guild_id` reach modules. Like other events, they wait until the server is set up and reach only
+  modules switched on there.
+- The bot reads raw packets only when a loaded module listens to one. Declare the intents the packet needs.
+- The discord.js event still fires for cached objects; don't handle the same change twice.
 
 ### Webhooks
 
@@ -591,8 +643,8 @@ const message = await withWebhookErrors(webhook.token, () => webhook.send({
 
 ## 8. Events and APIs between modules
 
-Modules talk to each other in two ways: **events** for notifications ("this happened") and **APIs** for questions or
-requests ("tell me X", "do Y").
+Modules talk to each other in three ways: **events** for notifications ("this happened"), **APIs** for questions or
+requests ("tell me X", "do Y"), and **gates** for vetoes ("may this happen?").
 
 ### Events
 
@@ -679,6 +731,49 @@ export const badgesModule = defineModule({
 - **Boundaries:** a module with a `db` can't read another module's tables; the database refuses it (section 4), as a
   guard against mistakes rather than hostile code. Ask through its API. An API's `ctx.db` runs as the
   module that provides the API, so it reaches that module's tables.
+
+### Gates
+
+A gate lets a module ask the other modules whether an action may happen, for example before deleting
+something another module still uses:
+
+```ts
+import { defineGate, gate, UserError } from '@bronto/core';
+
+export const notesGates = {
+  deleting: defineGate<{ id: string }>('deleting'),
+};
+
+export const notesModule = defineModule({
+  name: 'notes',
+  gates: notesGates,          // claims ownership; only notes may check it
+  // ...
+});
+
+// In notes' delete button, before deleting and outside ctx.db.run:
+const verdict = await ctx.check(notesGates.deleting, { id });
+if (!verdict.allowed) throw new UserError(`Not deleted: ${verdict.reasons.join('; ')}`);
+
+// In a module that lists notes in dependsOn:
+listeners: [
+  gate(notesGates.deleting, async (ctx, { id }) => {
+    if (await isPinned(ctx, id)) return { deny: 'The note is pinned on the board' };
+  }),
+],
+```
+
+- **The answer:** `ctx.check(gate, payload)` resolves to `{ allowed: true }` or `{ allowed: false, reasons }`. A module
+  checks only its own gates.
+- **Order:** listeners are asked one after another, in module dependency order, each as a handler with the caller's
+  server and actor. Modules switched off in the server are skipped. The first denial wins; later listeners aren't
+  asked.
+- **Allow or deny:** return nothing to allow, `{ deny: reason }` with a non-empty reason to deny.
+- **Fail closed:** a listener that throws denies with "<module> failed to answer"; one that doesn't answer within 5
+  seconds (`GATE_TIMEOUT_MS`) denies with "<module> did not answer in time" and keeps running in the background with
+  its answer ignored; a `deny` that isn't a non-empty string denies with "<module> gave an invalid answer".
+- **Outside transactions:** listeners do their own database and Discord work, so `ctx.check` inside `ctx.db.run`
+  throws. Like `emit`, it also throws after the handler returned.
+- **No lock:** nothing holds between the check and the action, so the action still re-checks what it depends on.
 
 ## 9. Lifecycle hooks
 
@@ -897,12 +992,12 @@ describe('karma', () => {
 });
 ```
 
-- **Fake interactions:** `fakeCommand`, `fakeAutocomplete`, `fakeButton` and `fakeModal` default to server `g1`, user
-  `u1` and channel `c1`. Every answer is recorded in `responses`, as `{ kind, payload }` with kinds such as `reply`,
-  `deferReply`, `editReply`, `followUp` and `showModal`.
+- **Fake interactions:** `fakeCommand`, `fakeAutocomplete`, `fakeButton`, `fakeSelect` and `fakeModal` default to
+  server `g1`, user `u1` and channel `c1`. Every answer is recorded in `responses`, as `{ kind, payload }` with kinds
+  such as `reply`, `deferReply`, `editReply`, `followUp` and `showModal`.
 - **Object options** (users, channels, roles) are passed as objects, e.g. `{ id: 'u2' }`.
-- **Buttons and modals:** pass `interactions: { secret: TEST_INTERACTION_SECRET }` in the config, as above. Press a
-  button with the custom ID your module posted, as above, or build one with
+- **Buttons, selects and modals:** pass `interactions: { secret: TEST_INTERACTION_SECRET }` in the config, as above.
+  Press a button with the custom ID your module posted, as above, or build one with
   `createCustomId(new ComponentSigner(TEST_INTERACTION_SECRET), component, { guildId: 'g1', userId: 'u1', channelId: 'c1' }, args, Date.now())`.
   A modal ID only works for the user it was made for, so submit it with the same `userId`.
 - **Inspecting data:** `t.database.admin` reads every server's rows (the admin connection bypasses row-level
@@ -1017,7 +1112,8 @@ packages/
 │   │   ├── context.ts       per-module context and API construction
 │   │   ├── dispatcher.ts    runs handlers: gateway events, module events, hooks, queued tasks
 │   │   ├── handler-scope.ts the current handler run, for API contexts
-│   │   ├── events.ts        on(), defineEvent(), core events
+│   │   ├── events.ts        on(), defineEvent(), gatewayEvent(), core events
+│   │   ├── gates.ts         defineGate(), gate(), the gate timeout
 │   │   ├── queue.ts         KeyedQueue
 │   │   ├── enablement.ts    per-server module switches (cached)
 │   │   ├── lifecycle.ts     server set-up, leave, switch, purge
@@ -1034,6 +1130,7 @@ packages/
     ├── src/client.ts        discord.js client with the union of the modules' intents
     └── src/importer.ts      resolves module packages from the working directory
 modules/sticky/              a production module (section 24)
+modules/templates/           a production module: message templates as forum posts, with an API, events and a gate
 modules/autodelete/          a production module: per-channel post rules, cooldowns, leave cleanup
 examples/notes/              a small example module: CRUD, a button, a modal
 ```

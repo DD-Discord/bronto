@@ -735,6 +735,13 @@ describe('gates', () => {
     expect(asked).toEqual(['gate_first']);
   });
 
+  it.each([[''], [42], [null], [{ reason: 'no' }]])('a verdict with deny %j denies with "<module> gave an invalid answer"', async (deny) => {
+    behaviour.gate_first = () => ({ deny }) as unknown as GateVerdict;
+    await check();
+    expect(result).toEqual({ allowed: false, reasons: ['gate_first gave an invalid answer'] });
+    expect(asked).toEqual(['gate_first']);
+  });
+
   it('a listener over 5 s denies with "<module> did not answer in time"', async () => {
     vi.useFakeTimers();
     try {

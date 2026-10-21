@@ -1,9 +1,9 @@
 # Copy to config.yaml next to your .env. Values like ${NAME} come from the environment.
 discord:
   token: ${DISCORD_TOKEN}
-# Signs button and modal custom IDs; needed when a loaded module has buttons or modals (example-notes does).
+# Signs button, select and modal custom IDs; needed when a loaded module has buttons, selects or modals (example-notes does).
 # At least 32 characters, e.g. `openssl rand -base64 32`. Changing it breaks every button and modal already posted.
-# Remove this section if no loaded module has buttons or modals.
+# Remove this section if no loaded module has buttons, selects or modals.
 interactions:
   secret: ${INTERACTION_SECRET}
 database:
@@ -16,4 +16,4 @@ modules:
   "@bronto/example-notes": {}
   # "@bronto/autodelete": {}   # needs the Message Content and Server Members intents; see modules/autodelete/README.md
   # "@bronto/templates": {}   # needs the Message Content intent and a Community server; see modules/templates/README.md
-  # "@bronto/sticky": {}   # needs @bronto/templates and the Message Content intent; see modules/sticky/README.md
+  # "@bronto/sticky": {}   # needs @bronto/templates (which needs the Message Content intent); see modules/sticky/README.md

@@ -73,7 +73,7 @@ export function createBot(options: BotOptions): Bot {
   const log = options.log.child({}, { serializers: { err: serializeError } });
   const secret = config.interactions.secret;
   if (secret === undefined && modules.some((module) => (module.definition.components ?? []).length > 0)) {
-    throw new ConfigError(['interactions.secret: required because a module defines buttons or modals']);
+    throw new ConfigError(['interactions.secret: required because a module defines buttons, selects or modals']);
   }
   const signer = secret === undefined ? null : new ComponentSigner(secret);
   const queue = new KeyedQueue((key, error) => log.error({ err: error, key }, 'Queued task failed'));

@@ -46,9 +46,9 @@ export interface HandlerContext<TConfig = any> extends ModuleContext<TConfig> {
   check<P>(gate: GateDefinition<P>, payload: P): Promise<GateResult>;
   readonly queue: ModuleQueue;
   /**
-   * A signed custom ID for one of this module's buttons or modals, bound to this guild. `target.userId` defaults to the
-   * actor; `target.channelId` defaults to the interaction's channel in interaction contexts. They count only when the
-   * definition binds them; a binding without a value throws.
+   * A signed custom ID for one of this module's buttons, selects or modals, bound to this guild. `target.userId`
+   * defaults to the actor; `target.channelId` defaults to the interaction's channel in interaction contexts. They count
+   * only when the definition binds them; a binding without a value throws.
    */
   customId(component: ComponentDefinition, args?: string[], target?: { userId?: string; channelId?: string }): string;
 }
