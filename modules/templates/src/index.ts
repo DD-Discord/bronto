@@ -1,11 +1,12 @@
-import { defineModule, on, type ModuleDefinition } from '@bronto/core';
-import { Events, GatewayIntentBits } from 'discord.js';
+import { defineModule, gatewayEvent, on, type ModuleDefinition } from '@bronto/core';
+import { Events, GatewayDispatchEvents, GatewayIntentBits } from 'discord.js';
 import { templatesApi, type TemplatesApi } from './api.js';
 import { previewComponents } from './buttons.js';
 import { createTemplatesCommand } from './commands.js';
 import { dropDrafts, editorComponents } from './editor.js';
 import * as schema from './db/schema.js';
 import { templatesEvents, templatesGates } from './events.js';
+import { onChannelDelete, onThreadDelete, onThreadUpdate, reconcile } from './lifecycle.js';
 import { onThreadCreate } from './new-post.js';
 import { dropWaitingUploads } from './save.js';
 
@@ -17,11 +18,18 @@ export function createTemplatesModule(): ModuleDefinition<Record<string, never>,
     db: { schema, migrations: new URL('../drizzle/', import.meta.url) },
     events: templatesEvents,
     gates: templatesGates,
-    listeners: [on(Events.ThreadCreate, (ctx, thread, newlyCreated) => onThreadCreate(ctx, thread, newlyCreated))],
+    listeners: [
+      on(Events.ThreadCreate, (ctx, thread, newlyCreated) => onThreadCreate(ctx, thread, newlyCreated)),
+      // Raw packet: discord.js emits ThreadDelete only for cached threads.
+      on(gatewayEvent(GatewayDispatchEvents.ThreadDelete), (ctx, data) => onThreadDelete(ctx, data)),
+      on(Events.ChannelDelete, (ctx, channel) => onChannelDelete(ctx, channel)),
+      on(Events.ThreadUpdate, (ctx, before, after) => onThreadUpdate(ctx, before, after)),
+    ],
     commands: { templates: createTemplatesCommand() },
     components: [...previewComponents, ...editorComponents],
     api: (ctx) => templatesApi(ctx),
     hooks: {
+      guildReady: (ctx) => reconcile(ctx),
       // Drafts and uploads waiting for a redraw are kept in memory per guild.
       guildStopped: (ctx) => {
         dropDrafts(ctx.guildId);

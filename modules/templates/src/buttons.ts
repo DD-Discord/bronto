@@ -12,11 +12,11 @@ import {
   TextInputStyle,
   type APIEmbed,
 } from 'discord.js';
-import { eq } from 'drizzle-orm';
 import type { TemplatesContext } from './context.js';
-import { IMAGE_SLOTS, templates, type ImageSlot, type TemplateImage } from './db/schema.js';
+import { IMAGE_SLOTS, type ImageSlot, type TemplateImage } from './db/schema.js';
 import { openEditor } from './editor.js';
-import { templatesEvents, templatesGates } from './events.js';
+import { templatesGates } from './events.js';
+import { forgetTemplate } from './lifecycle.js';
 import { requireEditor, templateForThread } from './permissions.js';
 import { clearSlot, render, setSlot, slotUrl } from './render.js';
 import { storeTemplate } from './save.js';
@@ -141,10 +141,7 @@ export const deleteConfirmButton = defineButton({
     }
     // The interaction lives in the thread, so it is answered before the thread goes away.
     await ctx.update({ content: 'Template deleted.', components: [] });
-    await ctx.db.run(async (tx) => {
-      await tx.delete(templates).where(eq(templates.id, template.id));
-    });
-    ctx.emit(templatesEvents.deleted, { id: template.id });
+    await forgetTemplate(ctx, template);
     try {
       await deleteThread(ctx, template.threadId);
     } catch (error) {
