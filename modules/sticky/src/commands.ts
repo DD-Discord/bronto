@@ -6,8 +6,6 @@ import {
   opt,
   UserError,
   ensureWebhook,
-  withWebhookErrors,
-  UnknownWebhookError,
   MissingWebhookPermissionError,
   type Autocomplete,
   type CommandDefinition,
@@ -15,10 +13,10 @@ import {
 } from '@bronto/core';
 import templates from '@bronto/templates';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
-import { and, eq, ne, sql } from 'drizzle-orm';
-import { stickies, stickyState } from './db/schema.js';
+import { sql } from 'drizzle-orm';
+import { stickies } from './db/schema.js';
 import { stickyEntity, templateField } from './entity.js';
-import { removePost, type Reposter } from './repost.js';
+import type { Reposter } from './repost.js';
 import { entryOf, type StickyIndex } from './sticky-index.js';
 
 const STICKY_CHANNEL_TYPES = [
@@ -150,41 +148,7 @@ export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition 
           deps.reposter.cancel(record.channelId);
           void deps.reposter.queueRepost(ctx, record.channelId);
         },
-        beforeDelete: async (ctx, record) => {
-          deps.index.delete(record.channelId);
-          deps.reposter.cancel(record.channelId);
-          // Runs after any repost still in flight, so no post of this sticky is left behind.
-          await ctx.queue.run(record.channelId, async (task) => {
-            const [current, state] = await task.db.run(async (tx) => {
-              const [row] = await tx.select().from(stickies).where(eq(stickies.channelId, record.channelId));
-              const [last] = await tx.select().from(stickyState).where(eq(stickyState.channelId, record.channelId));
-              return [row, last] as const;
-            });
-            // A repost that ran meanwhile may have replaced the webhook the command loaded.
-            const sticky = current ?? record;
-            if (state?.lastMessageId != null) {
-              try {
-                await removePost(task, sticky, state.lastMessageId);
-              } catch (error) {
-                task.log.warn({ err: error, channelId: record.channelId }, 'Deleting the sticky post failed');
-              }
-            }
-            const shared = await task.db.run(async (tx) =>
-              tx
-                .select({ channelId: stickies.channelId })
-                .from(stickies)
-                .where(and(eq(stickies.webhookId, sticky.webhookId), ne(stickies.channelId, record.channelId)))
-                .limit(1),
-            );
-            if (shared.length === 0) {
-              try {
-                await withWebhookErrors(sticky.webhookToken, () => task.client.deleteWebhook(sticky.webhookId, { token: sticky.webhookToken }));
-              } catch (error) {
-                if (!(error instanceof UnknownWebhookError)) throw error;
-              }
-            }
-          });
-        },
+        beforeDelete: (ctx, record) => deps.reposter.deleteSticky(ctx, record),
       },
     }),
   });

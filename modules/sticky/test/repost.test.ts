@@ -103,13 +103,13 @@ describe('reposting', () => {
     expect(discord.sent[0]).toMatchObject({ channelId: CHANNEL, threadId: THREAD });
   });
 
-  it('skips stickies without a stored copy', async () => {
+  it('skips stickies whose template is missing and that have no stored copy', async () => {
     const sb = await start();
     await insertSticky(t, discord, { channelId: CHANNEL, content: null, embeds: null });
     await ready(sb);
     await say(sb, message(CHANNEL));
     expect(discord.sent).toEqual([]);
-    expect(sb.lines).toContainEqual(expect.objectContaining({ level: 20, msg: 'Skipped a repost: the sticky has nothing stored to post', channelId: CHANNEL }));
+    expect(sb.lines).toContainEqual(expect.objectContaining({ level: 20, msg: "Skipped a repost: the sticky's template doesn't exist", channelId: CHANNEL }));
   });
 
   it('ends a burst with the sticky below the newest message and every earlier post deleted', async () => {
@@ -192,6 +192,8 @@ describe('reposting', () => {
       config: { webhookName: 'Sticky' },
       log: { warn: () => undefined, info: () => undefined, error: (...args: unknown[]) => void errors.push(args) },
       emit: () => undefined,
+      // No template: the stored copy is posted.
+      modules: { get: () => ({ render: async () => null }) },
       db: {
         run: async () => {
           runs += 1;

@@ -189,7 +189,7 @@ describe('/sticky show, list and edit', () => {
     await say('edit', { channel: channel(CHANNEL), template });
     const [row] = await stickyRows(t);
     expect(row).toMatchObject({ templateId: template, content: null, embeds: null });
-    expect(discord.sent).toHaveLength(1);
+    expect(discord.sent.map((sent) => sent.message.embeds)).toEqual([[], [expect.objectContaining({ title: 'Rules' })]]);
   });
 
   it('refuses to switch to a template that does not exist', async () => {

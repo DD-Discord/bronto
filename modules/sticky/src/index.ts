@@ -1,6 +1,7 @@
-import { defineModule, on, type ModuleDefinition } from '@bronto/core';
-import templates from '@bronto/templates';
+import { defineModule, gate, on, type ModuleDefinition } from '@bronto/core';
+import templates, { templatesEvents, templatesGates } from '@bronto/templates';
 import { Events, GatewayIntentBits, PermissionFlagsBits } from 'discord.js';
+import { asc, eq } from 'drizzle-orm';
 import { createStickyCommand } from './commands.js';
 import { stickyConfigSchema, type StickyConfig } from './config.js';
 import * as schema from './db/schema.js';
@@ -26,7 +27,17 @@ export function createStickyModule(): ModuleDefinition<StickyConfig> {
       PermissionFlagsBits.ManageMessages,
       PermissionFlagsBits.ReadMessageHistory,
     ],
-    listeners: [on(Events.MessageCreate, (ctx, message) => reposter.onMessage(ctx, message))],
+    listeners: [
+      on(Events.MessageCreate, (ctx, message) => reposter.onMessage(ctx, message)),
+      on(templatesEvents.updated, (ctx, { id }) => reposter.refreshTemplate(ctx, id)),
+      on(templatesEvents.deleted, (ctx, { id }) => reposter.deleteForTemplate(ctx, id)),
+      gate(templatesGates.deleting, async (ctx, { id }) => {
+        const users = await ctx.db.run(async (tx) =>
+          tx.select({ channelId: stickies.channelId }).from(stickies).where(eq(stickies.templateId, id)).orderBy(asc(stickies.channelId)),
+        );
+        if (users.length > 0) return { deny: `Used by the stickies in ${users.map(({ channelId }) => `<#${channelId}>`).join(', ')}` };
+      }),
+    ],
     commands: { sticky: createStickyCommand({ index, reposter }) },
     hooks: {
       guildReady: async (ctx) => {

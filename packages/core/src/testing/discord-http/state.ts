@@ -19,6 +19,8 @@ export class DiscordState {
   readonly reports: { target: WebhookTarget; message: WebhookMessage; options: WebhookSendOptions }[] = [];
   readonly dms: { userId: string; message: WebhookMessage }[] = [];
   readonly deleted: string[] = [];
+  /** Webhook messages edited through their webhook, in order. */
+  readonly edited: string[] = [];
   readonly botDeleted: string[] = [];
   readonly deletedPosts: string[] = [];
   readonly deletedWebhooks: string[] = [];

@@ -21,6 +21,21 @@ it('keeps fixture authorization and resource errors realistic', async () => {
   expect(await request('GET', `/channels/${CHANNEL}`)).toMatchObject({ status: 403, json: { code: 50001 } });
 });
 
+it('edits webhook messages through their webhook only', async () => {
+  const http = new FakeDiscordHttp();
+  http.addGuild(GUILD); http.addChannel(CHANNEL, { guildId: GUILD, type: ChannelType.GuildText });
+  const webhook = http.addWebhook(CHANNEL);
+  const other = http.addWebhook(CHANNEL);
+  const request = (method: string, path: string, body?: unknown) => http.answer({ method, path, query: '', body, authorized: false });
+  const sent = await request('POST', `/webhooks/${webhook.id}/${webhook.token}`, { content: 'v1' });
+  const id = (sent.json as { id: string }).id;
+  expect(await request('PATCH', `/webhooks/${other.id}/${other.token}/messages/${id}`, { content: 'nope' })).toMatchObject({ status: 404, json: { code: 10008 } });
+  expect(await request('PATCH', `/webhooks/${webhook.id}/${webhook.token}/messages/${id}`, { content: 'v2', embeds: [{ title: 'T' }] }))
+    .toMatchObject({ status: 200, json: { content: 'v2', embeds: [{ title: 'T' }] } });
+  expect(http.edited).toEqual([id]);
+  expect(await request('PATCH', `/webhooks/${webhook.id}/${webhook.token}/messages/${MESSAGE}`, { content: 'v3' })).toMatchObject({ status: 404, json: { code: 10008 } });
+});
+
 // Accepting an unimplemented subresource can hide an unexpected SDK request.
 it.each([
   ['GET', `/channels/${CHANNEL}/messages/${MESSAGE}/unexpected`],

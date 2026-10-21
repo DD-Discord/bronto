@@ -1,6 +1,7 @@
 import { ensureWebhook, resolveWebhook, withWebhookErrors, UnknownMessageError, UnknownWebhookError, type IncomingWebhook, type HandlerContext } from '@bronto/core';
-import { DiscordAPIError, RESTJSONErrorCodes, MessageFlags } from 'discord.js';
-import { eq, isNotNull } from 'drizzle-orm';
+import templates from '@bronto/templates';
+import { DiscordAPIError, RESTJSONErrorCodes, MessageFlags, type APIEmbed } from 'discord.js';
+import { and, eq, isNotNull, ne } from 'drizzle-orm';
 import type { StickyConfig } from './config.js';
 import { stickies, stickyState, type Sticky } from './db/schema.js';
 import { stickyEvents } from './events.js';
@@ -45,6 +46,23 @@ async function deleteChannelPost(ctx: StickyContext, channelId: string, messageI
   }
 }
 
+/** What a sticky posts. */
+export interface StickyMessage {
+  content: string;
+  embeds: APIEmbed[];
+}
+
+/**
+ * The sticky's template as it is now; a sticky whose template is missing falls back to the copy it stored before it
+ * used templates. Null when there is neither. Called outside any transaction, since the templates API reads on its own.
+ */
+async function messageOf(ctx: StickyContext, sticky: Sticky): Promise<StickyMessage | null> {
+  const rendered = await ctx.modules.get(templates).render(sticky.templateId);
+  if (rendered !== null) return { content: rendered.content, embeds: rendered.embed === null ? [] : [rendered.embed] };
+  if (sticky.content === null && sticky.embeds === null) return null;
+  return { content: sticky.content ?? '', embeds: sticky.embeds ?? [] };
+}
+
 export interface ReposterOptions {
   index: StickyIndex;
 }
@@ -56,6 +74,8 @@ export interface ReposterOptions {
 export class Reposter {
   private readonly index: StickyIndex;
   private readonly timers = new Map<string, NodeJS.Timeout>();
+  /** Channels with a repost queued that hasn't started; a template refresh queued behind it may replace it. */
+  private readonly repostWanted = new Set<string>();
 
   constructor(options: ReposterOptions) {
     this.index = options.index;
@@ -90,7 +110,72 @@ export class Reposter {
    */
   queueRepost(ctx: StickyContext, channelId: string): Promise<void> {
     if (this.index.get(channelId) === undefined) return Promise.resolve();
+    this.repostWanted.add(channelId);
     return ctx.queue.run(channelId, (task) => this.repost(task, channelId));
+  }
+
+  /** Brings the live posts of the stickies using a template up to date with it. */
+  async refreshTemplate(ctx: StickyContext, templateId: string): Promise<void> {
+    const rows = await ctx.db.run(async (tx) =>
+      tx.select({ channelId: stickies.channelId }).from(stickies).where(eq(stickies.templateId, templateId)),
+    );
+    await Promise.all(
+      rows
+        .filter(({ channelId }) => this.index.get(channelId) !== undefined)
+        .map(({ channelId }) => ctx.queue.run(channelId, (task) => this.refresh(task, channelId))),
+    );
+  }
+
+  /** Deletes the stickies using a template, one at a time so a webhook they share goes with the last of them. */
+  async deleteForTemplate(ctx: StickyContext, templateId: string): Promise<void> {
+    const rows = await ctx.db.run(async (tx) => tx.select().from(stickies).where(eq(stickies.templateId, templateId)));
+    for (const record of rows) {
+      await this.deleteSticky(ctx, record);
+      await ctx.db.run(async (tx) => {
+        await tx.delete(stickies).where(eq(stickies.channelId, record.channelId));
+      });
+      ctx.log.info({ channelId: record.channelId, templateId }, 'Deleted a sticky whose template was deleted');
+    }
+  }
+
+  /**
+   * Removes a sticky from the index and deletes its post, and its webhook unless another sticky uses it. The caller
+   * deletes the row afterwards.
+   */
+  async deleteSticky(ctx: StickyContext, record: Sticky): Promise<void> {
+    this.index.delete(record.channelId);
+    this.cancel(record.channelId);
+    // Runs after any repost still in flight, so no post of this sticky is left behind.
+    await ctx.queue.run(record.channelId, async (task) => {
+      const [current, state] = await task.db.run(async (tx) => {
+        const [row] = await tx.select().from(stickies).where(eq(stickies.channelId, record.channelId));
+        const [last] = await tx.select().from(stickyState).where(eq(stickyState.channelId, record.channelId));
+        return [row, last] as const;
+      });
+      // A repost that ran meanwhile may have replaced the webhook the caller loaded.
+      const sticky = current ?? record;
+      if (state?.lastMessageId != null) {
+        try {
+          await removePost(task, sticky, state.lastMessageId);
+        } catch (error) {
+          task.log.warn({ err: error, channelId: record.channelId }, 'Deleting the sticky post failed');
+        }
+      }
+      const shared = await task.db.run(async (tx) =>
+        tx
+          .select({ channelId: stickies.channelId })
+          .from(stickies)
+          .where(and(eq(stickies.webhookId, sticky.webhookId), ne(stickies.channelId, record.channelId)))
+          .limit(1),
+      );
+      if (shared.length === 0) {
+        try {
+          await withWebhookErrors(sticky.webhookToken, () => task.client.deleteWebhook(sticky.webhookId, { token: sticky.webhookToken }));
+        } catch (error) {
+          if (!(error instanceof UnknownWebhookError)) throw error;
+        }
+      }
+    });
   }
 
   /** Re-arms the guild's pending debounces after start-up or a switch back on; overdue ones post right away. */
@@ -113,6 +198,7 @@ export class Reposter {
 
   /** Deletes the previous post, sends a new one and records it. Must run inside the channel's queue. */
   async repost(ctx: StickyContext, channelId: string): Promise<void> {
+    this.repostWanted.delete(channelId);
     const { sticky, lastMessageId } = await ctx.db.run(async (tx) => {
       const [found] = await tx.select().from(stickies).where(eq(stickies.channelId, channelId));
       const [state] = await tx.select().from(stickyState).where(eq(stickyState.channelId, channelId));
@@ -123,12 +209,13 @@ export class Reposter {
       return { sticky: found, lastMessageId: state?.lastMessageId ?? null };
     });
     if (sticky === undefined) return;
-    if (sticky.content === null && sticky.embeds === null) {
-      ctx.log.debug({ channelId }, 'Skipped a repost: the sticky has nothing stored to post');
+    const message = await messageOf(ctx, sticky);
+    if (message === null) {
+      ctx.log.debug({ channelId, templateId: sticky.templateId }, "Skipped a repost: the sticky's template doesn't exist");
       return;
     }
     try {
-      await this.post(ctx, sticky, lastMessageId);
+      await this.post(ctx, sticky, message, lastMessageId);
     } catch (error) {
       if (!(error instanceof UnknownWebhookError)) throw error;
       const replacement = await this.replaceWebhook(ctx, sticky);
@@ -140,11 +227,39 @@ export class Reposter {
           ctx.log.warn({ err: error, channelId }, 'Deleting the previous sticky post failed');
         }
       }
-      await this.post(ctx, { ...sticky, webhookId: replacement.id, webhookToken: replacement.token }, null, replacement);
+      await this.post(ctx, { ...sticky, webhookId: replacement.id, webhookToken: replacement.token }, message, null, replacement);
     }
   }
 
-  private async post(ctx: StickyContext, sticky: Sticky, lastMessageId: string | null, resolved?: IncomingWebhook): Promise<void> {
+  /**
+   * Edits the live post to the sticky's current template; reposts when that post or its webhook is gone, or when a
+   * repost this refresh replaced in the queue was still due. A sticky without a post is left for its next repost.
+   * Must run inside the channel's queue.
+   */
+  private async refresh(ctx: StickyContext, channelId: string): Promise<void> {
+    if (this.repostWanted.has(channelId)) return this.repost(ctx, channelId);
+    const { sticky, lastMessageId } = await ctx.db.run(async (tx) => {
+      const [found] = await tx.select().from(stickies).where(eq(stickies.channelId, channelId));
+      const [state] = await tx.select().from(stickyState).where(eq(stickyState.channelId, channelId));
+      return { sticky: found, lastMessageId: state?.lastMessageId ?? null };
+    });
+    if (sticky === undefined || lastMessageId === null) return;
+    const message = await messageOf(ctx, sticky);
+    if (message === null) return;
+    try {
+      const webhook = await resolveWebhook(ctx.client, { id: sticky.webhookId, token: sticky.webhookToken });
+      await withWebhookErrors(sticky.webhookToken, () => webhook.editMessage(lastMessageId, {
+        content: message.content, embeds: message.embeds,
+        threadId: sticky.parentChannelId === null ? undefined : sticky.channelId,
+        allowedMentions: { parse: [] },
+      }));
+    } catch (error) {
+      if (!(error instanceof UnknownMessageError) && !(error instanceof UnknownWebhookError)) throw error;
+      await this.repost(ctx, channelId);
+    }
+  }
+
+  private async post(ctx: StickyContext, sticky: Sticky, message: StickyMessage, lastMessageId: string | null, resolved?: IncomingWebhook): Promise<void> {
     const webhook = resolved ?? await resolveWebhook(ctx.client, { id: sticky.webhookId, token: sticky.webhookToken });
     const threadId = sticky.parentChannelId === null ? undefined : sticky.channelId;
     if (lastMessageId !== null) {
@@ -158,7 +273,7 @@ export class Reposter {
       }
     }
     const sent = await withWebhookErrors(sticky.webhookToken, () => webhook.send({
-      content: sticky.content || undefined, embeds: sticky.embeds ?? [], threadId,
+      content: message.content || undefined, embeds: message.embeds, threadId,
       flags: sticky.silent ? MessageFlags.SuppressNotifications : undefined,
       username: ctx.config.webhookName, avatarURL: ctx.config.webhookAvatar, allowedMentions: { parse: [] },
     }));

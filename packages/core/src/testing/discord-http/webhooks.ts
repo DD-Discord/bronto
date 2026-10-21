@@ -1,6 +1,6 @@
 import type { APIWebhook } from 'discord.js';
 import type { FakeHttpAnswer, RecordedRequest } from '../rest.js';
-import { sendMessage } from './messages.js';
+import { readPayload, sendMessage } from './messages.js';
 import { error, gone, ok } from './responses.js';
 import { route } from './router.js';
 import type { DiscordState } from './state.js';
@@ -37,6 +37,17 @@ export function webhookRoutes(state: DiscordState) {
     state.deleted.push(messageId);
     return gone();
   });
+  const editMessage = withWebhook(async (webhook, request, { messageId }: WebhookParams & { messageId: string }) => {
+    const message = state.messages.get(messageId);
+    const channelId = new URLSearchParams(request.query).get('thread_id') ?? webhook.channel_id;
+    if (!message || message.webhook_id !== webhook.id || message.channel_id !== channelId) return error(10008);
+    const { body } = await readPayload(request);
+    if (body.content !== undefined) message.content = (body.content as string | null) ?? '';
+    if (body.embeds !== undefined) message.embeds = (body.embeds as typeof message.embeds | null) ?? [];
+    message.edited_timestamp = new Date().toISOString();
+    state.edited.push(messageId);
+    return ok(state.present(message));
+  });
 
   return [
     route('POST', '/channels/:channelId/webhooks', (_request, { channelId }) => {
@@ -51,5 +62,6 @@ export function webhookRoutes(state: DiscordState) {
     route('POST', '/webhooks/:webhookId', send),
     route('POST', '/webhooks/:webhookId/:token', send),
     route('DELETE', '/webhooks/:webhookId/:token/messages/:messageId', deleteMessage),
+    route('PATCH', '/webhooks/:webhookId/:token/messages/:messageId', editMessage),
   ];
 }
