@@ -12,14 +12,14 @@ import {
   TextInputStyle,
   type APIEmbed,
 } from 'discord.js';
-import { and, eq, inArray } from 'drizzle-orm';
-import { normalizeEmbed, validateTemplate } from './content.js';
+import { eq } from 'drizzle-orm';
 import type { TemplatesContext } from './context.js';
-import { IMAGE_SLOTS, templateImages, templates, type ImageSlot } from './db/schema.js';
+import { IMAGE_SLOTS, templates, type ImageSlot, type TemplateImage } from './db/schema.js';
+import { openEditor } from './editor.js';
 import { templatesEvents, templatesGates } from './events.js';
 import { requireEditor, templateForThread } from './permissions.js';
-import { updatePreview } from './posts.js';
-import { render, setSlot } from './render.js';
+import { render, setSlot, slotUrl } from './render.js';
+import { storeTemplate } from './save.js';
 import { exportJson, parseTemplateJson } from './transfer.js';
 
 const CONFIRM_TTL_MS = 15 * 60_000;
@@ -34,13 +34,6 @@ function previewButton(name: string, execute: ButtonDefinition['execute']): Butt
   return defineButton({ name, bind: { channel: true }, ephemeral: true, execute });
 }
 
-const SLOT_URLS: Record<ImageSlot, (embed: APIEmbed) => string | undefined> = {
-  image: (embed) => embed.image?.url,
-  thumbnail: (embed) => embed.thumbnail?.url,
-  author_icon: (embed) => embed.author?.icon_url,
-  footer_icon: (embed) => embed.footer?.icon_url,
-};
-
 function clearSlot(embed: APIEmbed, slot: ImageSlot): void {
   if (slot === 'image') delete embed.image;
   else if (slot === 'thumbnail') delete embed.thumbnail;
@@ -48,9 +41,31 @@ function clearSlot(embed: APIEmbed, slot: ImageSlot): void {
   else if (slot === 'footer_icon' && embed.footer) delete embed.footer.icon_url;
 }
 
-export const editButton = previewButton('edit', () => {
-  throw new UserError('Not available yet.');
-});
+/**
+ * The imported embed with uploaded images kept. An exported file carries the template's uploads as Discord links; a
+ * link to the attachment a slot holds now (same attachment ID; the signature changes) maps back to that slot's
+ * `attachment://` value. Any other `attachment://` value would point at nothing and is cleared.
+ */
+function keepUploads(imported: APIEmbed, currentEmbed: APIEmbed | null, stored: TemplateImage[]): APIEmbed {
+  const embed = structuredClone(imported);
+  for (const slot of IMAGE_SLOTS) {
+    const url = slotUrl(embed, slot);
+    if (url === undefined) continue;
+    const current = slotUrl(currentEmbed ?? {}, slot);
+    const keeps = current?.startsWith(UPLOAD_PREFIX) === true;
+    if (url.startsWith(UPLOAD_PREFIX)) {
+      if (!keeps || url !== current) clearSlot(embed, slot);
+      continue;
+    }
+    const attachmentId = ATTACHMENT_LINK.exec(url)?.[1];
+    if (keeps && attachmentId !== undefined && stored.some((image) => image.slot === slot && image.attachmentId === attachmentId)) {
+      setSlot(embed, slot, current!);
+    }
+  }
+  return embed;
+}
+
+export const editButton = previewButton('edit', (ctx) => openEditor(ctx));
 
 export const exportButton = previewButton('export', async (ctx) => {
   requireEditor(ctx);
@@ -85,55 +100,15 @@ export const importModal = defineModal({
   ephemeral: true,
   execute: async (ctx) => {
     requireEditor(ctx);
-    const template = await templateForThread(ctx, ctx.channelId!);
+    await templateForThread(ctx, ctx.channelId!);
     const text = (await uploadedText(ctx)) ?? ctx.field('json');
     if (text.trim() === '') throw new UserError('Paste template JSON or upload a .json file.');
     const parsed = parseTemplateJson(text);
-
-    // An exported file carries the template's uploaded images as Discord links. A link to the attachment a slot
-    // holds now (same attachment ID; the signature changes) maps back to that slot's `attachment://` value. Any other
-    // `attachment://` value would point at nothing and is cleared.
-    const stored = await ctx.db.run(async (tx) => tx.select().from(templateImages).where(eq(templateImages.templateId, template.id)));
-    const embed = parsed.embed === null ? null : structuredClone(parsed.embed);
-    for (const slot of IMAGE_SLOTS) {
-      const url = embed === null ? undefined : SLOT_URLS[slot](embed);
-      if (embed === null || url === undefined) continue;
-      const current = SLOT_URLS[slot](template.embed ?? {});
-      const keeps = current?.startsWith(UPLOAD_PREFIX) === true;
-      if (url.startsWith(UPLOAD_PREFIX)) {
-        if (!keeps || url !== current) clearSlot(embed, slot);
-        continue;
-      }
-      const attachmentId = ATTACHMENT_LINK.exec(url)?.[1];
-      if (keeps && attachmentId !== undefined && stored.some((image) => image.slot === slot && image.attachmentId === attachmentId)) {
-        setSlot(embed, slot, current!);
-      }
-    }
-    const message = { content: parsed.content, embed: embed === null ? null : normalizeEmbed(embed) };
-    const problem = validateTemplate(message);
-    if (problem !== null) throw new UserError(problem);
-
-    const removed = IMAGE_SLOTS.filter((slot) => {
-      const url = message.embed === null ? undefined : SLOT_URLS[slot](message.embed);
-      return !url?.startsWith(UPLOAD_PREFIX);
-    });
-    const updated = await ctx.db.run(async (tx) => {
-      const [row] = await tx.update(templates).set(message).where(eq(templates.id, template.id)).returning();
-      if (row === undefined) throw new UserError('This template no longer exists.');
-      await tx.delete(templateImages).where(and(eq(templateImages.templateId, template.id), inArray(templateImages.slot, removed)));
-      return row;
-    });
-    ctx.emit(templatesEvents.updated, { id: updated.id });
-    try {
-      await updatePreview(ctx, updated, [], { syncAttachments: true });
-    } catch (error) {
-      ctx.log.warn({ err: error, templateId: updated.id }, 'Updating the post after an import failed');
-      const reason =
-        error instanceof UserError || error instanceof DiscordAPIError ? error.message : 'something went wrong, the error was logged';
-      await ctx.reply(`Saved, but the post couldn't be updated: ${reason}`);
-      return;
-    }
-    await ctx.reply('Template imported.');
+    const { failure } = await storeTemplate(ctx, ctx.channelId!, (current, stored) => ({
+      content: parsed.content,
+      embed: parsed.embed === null ? null : keepUploads(parsed.embed, current.embed, stored),
+    }));
+    await ctx.reply(failure === null ? 'Template imported.' : `Saved, but the post couldn't be updated: ${failure}`);
   },
 });
 

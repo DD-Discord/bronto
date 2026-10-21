@@ -3,6 +3,7 @@ import { Events, GatewayIntentBits } from 'discord.js';
 import { templatesApi, type TemplatesApi } from './api.js';
 import { previewComponents } from './buttons.js';
 import { createTemplatesCommand } from './commands.js';
+import { editorComponents } from './editor.js';
 import * as schema from './db/schema.js';
 import { templatesEvents, templatesGates } from './events.js';
 import { onThreadCreate } from './new-post.js';
@@ -17,7 +18,7 @@ export function createTemplatesModule(): ModuleDefinition<Record<string, never>,
     gates: templatesGates,
     listeners: [on(Events.ThreadCreate, (ctx, thread, newlyCreated) => onThreadCreate(ctx, thread, newlyCreated))],
     commands: { templates: createTemplatesCommand() },
-    components: previewComponents,
+    components: [...previewComponents, ...editorComponents],
     api: (ctx) => templatesApi(ctx),
   });
 }

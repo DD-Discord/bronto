@@ -7,6 +7,20 @@ import { linkExpiry, REFRESH_MARGIN_MS } from './images.js';
 
 export { REFRESH_MARGIN_MS } from './images.js';
 
+/** The slot's URL in the embed, if any. */
+export function slotUrl(embed: APIEmbed, slot: ImageSlot): string | undefined {
+  switch (slot) {
+    case 'image':
+      return embed.image?.url;
+    case 'thumbnail':
+      return embed.thumbnail?.url;
+    case 'author_icon':
+      return embed.author?.icon_url;
+    case 'footer_icon':
+      return embed.footer?.icon_url;
+  }
+}
+
 /** Sets the slot's URL; false when the icon has no author name or footer text to belong to. */
 export function setSlot(embed: APIEmbed, slot: ImageSlot, url: string): boolean {
   switch (slot) {
