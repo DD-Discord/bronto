@@ -742,6 +742,42 @@ describe('gates', () => {
     expect(asked).toEqual(['gate_first']);
   });
 
+  it.each([[false], [true], [null], ['no'], [0], [{}], [{ reason: 'no' }]])(
+    'a verdict %j denies with "<module> gave an invalid answer"',
+    async (verdict) => {
+      behaviour.gate_first = () => verdict as unknown as GateVerdict;
+      await check();
+      expect(result).toEqual({ allowed: false, reasons: ['gate_first gave an invalid answer'] });
+      expect(asked).toEqual(['gate_first']);
+    },
+  );
+
+  it('lets an API method check its own gate for the calling handler', async () => {
+    const releasing = defineGate<{ id: string }>('releasing');
+    const keeper = defineModule({
+      name: 'gate_keeper',
+      gates: { releasing },
+      api: (ctx) => ({ release: (id: string) => ctx.check(releasing, { id }) }),
+    });
+    const holder = defineModule({
+      name: 'gate_holder',
+      dependsOn: [keeper],
+      listeners: [gate(releasing, (ctx, payload) => ({ deny: `${payload.id} held for ${ctx.actorId}` }))],
+    });
+    const user = defineModule({ name: 'gate_user', dependsOn: [keeper] });
+    const rts = createModuleRuntimes(
+      [keeper, holder, user].map((definition) => ({ packageName: `@test/${definition.name}`, definition, config: {} })),
+      { client: {} as Client, database: t.database, log: captureLog().log },
+    );
+    const d = new Dispatcher({ runtimes: rts, database: t.database, enablement: gateEnablement, queue: new KeyedQueue(() => undefined) });
+    let answer: GateResult | undefined;
+    const run = await d.runHandler(rts[2]!, 'g1', 'u7', 'test', async (ctx) => {
+      answer = await ctx.modules.get(keeper).release('t9');
+    });
+    expect(run).toEqual({ ok: true });
+    expect(answer).toEqual({ allowed: false, reasons: ['t9 held for u7'] });
+  });
+
   it('a listener over 5 s denies with "<module> did not answer in time"', async () => {
     vi.useFakeTimers();
     try {

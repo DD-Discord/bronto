@@ -288,12 +288,14 @@ export class Dispatcher {
         return { allowed: false, reasons: [`${runtime.name} did not answer in time`] };
       }
       if (!outcome.ok) return { allowed: false, reasons: [`${runtime.name} failed to answer`] };
-      // Any verdict carrying `deny` denies; one without a usable reason counts as an invalid answer (fail closed).
+      // Only no answer allows; `{ deny: '<reason>' }` denies with the reason, anything else is an invalid answer
+      // (fail closed).
+      if (verdict === undefined) continue;
       if (typeof verdict === 'object' && verdict !== null && 'deny' in verdict) {
         const { deny } = verdict;
         if (typeof deny === 'string' && deny !== '') return { allowed: false, reasons: [deny] };
-        return { allowed: false, reasons: [`${runtime.name} gave an invalid answer`] };
       }
+      return { allowed: false, reasons: [`${runtime.name} gave an invalid answer`] };
     }
     return { allowed: true };
   }

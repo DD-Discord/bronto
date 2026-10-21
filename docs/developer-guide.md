@@ -770,7 +770,8 @@ listeners: [
 - **Allow or deny:** return nothing to allow, `{ deny: reason }` with a non-empty reason to deny.
 - **Fail closed:** a listener that throws denies with "<module> failed to answer"; one that doesn't answer within 5
   seconds (`GATE_TIMEOUT_MS`) denies with "<module> did not answer in time" and keeps running in the background with
-  its answer ignored; a `deny` that isn't a non-empty string denies with "<module> gave an invalid answer".
+  its answer ignored; any other answer (`false`, a string, an object without a non-empty string `deny`) denies with
+  "<module> gave an invalid answer".
 - **Outside transactions:** listeners do their own database and Discord work, so `ctx.check` inside `ctx.db.run`
   throws. Like `emit`, it also throws after the handler returned.
 - **No lock:** nothing holds between the check and the action, so the action still re-checks what it depends on.
@@ -1182,7 +1183,7 @@ Details:
 - **Building runtimes** (`runtime/context.ts`): each module gets a `ModuleContext` (name, child logger, settings,
   client, `modules.get`). The bot's logger serializes `err` without the values of failed queries (Drizzle's params,
   Postgres' `detail`, the input quoted in data exception messages), so row contents and tokens stay out of the log. APIs are built in dependency order, so an API factory can capture the APIs it depends on.
-  An API factory gets that context with getters for `guildId`, `actorId`, `db`, `queue`, `emit` and `customId`. Each read asks
+  An API factory gets that context with getters for `guildId`, `actorId`, `db`, `queue`, `emit`, `customId` and `check`. Each read asks
   the current handler scope (`runtime/handler-scope.ts`, an `AsyncLocalStorage` that `runHandler` installs) for the
   provider's context in that run, and throws outside a handler.
 - **The guild gate:** gateway events and interactions for a server wait until the start hooks have run and the server
