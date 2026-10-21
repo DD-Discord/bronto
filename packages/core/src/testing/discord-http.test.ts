@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { ChannelType, DiscordAPIError, type ForumChannel, type ThreadChannel } from 'discord.js';
+import { ChannelType, PermissionFlagsBits, DiscordAPIError, type ForumChannel, type ThreadChannel } from 'discord.js';
 import { FakeDiscordHttp } from './discord-http.js';
 import { createNativeTestClient, type NativeTestClient } from './native-client.js';
 const GUILD = '100000000000000001';
@@ -168,4 +168,32 @@ it('rejects message edits in archived threads with 50083 and supports kept and n
   const error = await apiError(edited.edit({ content: 'v3' }));
   expect(error).toMatchObject({ status: 400, code: 50083, message: 'Thread is archived' });
   expect(http.messages.get(post.id)!.content).toBe('v2');
+});
+
+it('serves guild members with their roles, and computes permissions from roles and overwrites', async () => {
+  const http = new FakeDiscordHttp();
+  const MEMBER = '100000000000000201';
+  const ROLE = '100000000000000301';
+  http.addGuild(GUILD);
+  http.addRole(GUILD, { id: ROLE, permissions: 0n });
+  http.addMember(GUILD, MEMBER, { roles: [ROLE] });
+  http.addChannel(CHANNEL, { guildId: GUILD, type: ChannelType.GuildText });
+  http.addChannel(OTHER, {
+    guildId: GUILD,
+    type: ChannelType.GuildText,
+    permissionOverwrites: [{ id: GUILD, type: 0, deny: String(PermissionFlagsBits.ViewChannel), allow: '0' }],
+  });
+  const { client } = await createNativeTestClient(http);
+  try {
+    const guild = await client.guilds.fetch({ guild: GUILD, force: true });
+    const member = await guild.members.fetch(MEMBER);
+    expect([...member.roles.cache.keys()].sort()).toEqual([GUILD, ROLE].sort());
+    const visible = await client.channels.fetch(CHANNEL);
+    const hidden = await client.channels.fetch(OTHER);
+    expect(visible && 'permissionsFor' in visible && visible.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel)).toBe(true);
+    expect(hidden && 'permissionsFor' in hidden && hidden.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel)).toBe(false);
+    await expect(guild.members.fetch('100000000000000202')).rejects.toMatchObject({ status: 404, code: 10007 });
+  } finally {
+    await client.destroy();
+  }
 });

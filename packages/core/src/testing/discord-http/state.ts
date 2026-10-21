@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
-import { ChannelType, type MessageFlags, type APIAttachment, type APIChannel, type APIEmbed, type APIGuild, type APIMessage, type APIUser, type APIWebhook } from 'discord.js';
+import { ChannelType, PermissionFlagsBits, type MessageFlags, type APIAttachment, type APIChannel, type APIEmbed, type APIGuild, type APIGuildMember, type APIOverwrite, type APIRole, type APIMessage, type APIUser, type APIWebhook } from 'discord.js';
 import type { WebhookMessage, WebhookSendOptions, WebhookTarget, WebhookCredentials } from '../../webhooks/types.js';
+
+/** What @everyone may do in a new guild: read and write in channels and threads. */
+export const EVERYONE_PERMISSIONS = PermissionFlagsBits.ViewChannel | PermissionFlagsBits.SendMessages | PermissionFlagsBits.SendMessagesInThreads | PermissionFlagsBits.ReadMessageHistory;
 
 /** Resources and fixture builders shared by the HTTP handlers of one fake. */
 export class DiscordState {
@@ -22,6 +25,8 @@ export class DiscordState {
   readonly deletedChannels: string[] = [];
   /** Bytes behind attachment objects, keyed by attachment id; the fake CDN serves them. */
   readonly files = new Map<string, StoredFile>();
+  /** Guild members by `<guildId>:<userId>`. */
+  readonly members = new Map<string, APIGuildMember>();
   private signatures = 0;
   private readonly templates = new Set<string>();
   private nextId = 100000000000005000n;
@@ -31,13 +36,23 @@ export class DiscordState {
   newId(): string { return String(++this.nextId); }
   /** Guilds are communities by default; forum channels exist only in communities. */
   addGuild(id: string, options: { community?: boolean } = {}): void {
-    this.guilds.set(id, { id, name: 'Synthetic guild', unavailable: false, owner_id: '100000000000000099', roles: [], emojis: [], features: (options.community ?? true) ? ['COMMUNITY'] : [], stickers: [], channels: [], members: [] } as unknown as APIGuild);
+    this.guilds.set(id, { id, name: 'Synthetic guild', unavailable: false, owner_id: '100000000000000099', roles: [{ id, name: '@everyone', permissions: String(EVERYONE_PERMISSIONS), position: 0, color: 0, hoist: false, managed: false, mentionable: false, flags: 0 }], emojis: [], features: (options.community ?? true) ? ['COMMUNITY'] : [], stickers: [], channels: [], members: [] } as unknown as APIGuild);
+  }
+  /** Adds a role; discord.js computes permissions from these, so a guild fetched earlier needs a forced refetch. */
+  addRole(guildId: string, role: { id: string; name?: string; permissions?: bigint }): void {
+    const guild = this.guilds.get(guildId)!;
+    guild.roles.push({ id: role.id, name: role.name ?? 'Synthetic role', permissions: String(role.permissions ?? 0n), position: guild.roles.length, color: 0, hoist: false, managed: false, mentionable: false, flags: 0 } as unknown as APIRole);
+  }
+  /** Adds a guild member (and the user when unknown) holding the given roles besides @everyone. */
+  addMember(guildId: string, userId: string, options: { roles?: string[] } = {}): void {
+    if (!this.users.has(userId)) this.addUser(userId);
+    this.members.set(`${guildId}:${userId}`, { user: this.users.get(userId)!, roles: options.roles ?? [], joined_at: '2026-01-01T00:00:00Z', deaf: false, mute: false, flags: 0 } as unknown as APIGuildMember);
   }
   addUser(id: string, options: { bot?: boolean; username?: string } = {}): void {
     this.users.set(id, { id, username: options.username ?? `User ${id.slice(-3)}`, discriminator: '0', global_name: null, avatar: null, bot: options.bot ?? false });
   }
-  addChannel(id: string, options: { guildId: string; type: ChannelType; parentId?: string | null; name?: string; ownerId?: string; archived?: boolean; locked?: boolean; extra?: Record<string, unknown> }): void {
-    this.channels.set(id, { id, guild_id: options.guildId, type: options.type, parent_id: options.parentId ?? null, name: options.name ?? 'synthetic-channel', position: 0, permission_overwrites: [], owner_id: options.ownerId ?? this.botId, thread_metadata: { archived: options.archived ?? false, locked: options.locked ?? false, auto_archive_duration: 60, archive_timestamp: '2026-01-01T00:00:00Z' }, ...(options.type === ChannelType.GuildForum ? { available_tags: [], default_auto_archive_duration: 1440, flags: 0 } : {}), ...options.extra } as APIChannel);
+  addChannel(id: string, options: { guildId: string; type: ChannelType; parentId?: string | null; name?: string; ownerId?: string; permissionOverwrites?: APIOverwrite[]; archived?: boolean; locked?: boolean; extra?: Record<string, unknown> }): void {
+    this.channels.set(id, { id, guild_id: options.guildId, type: options.type, parent_id: options.parentId ?? null, name: options.name ?? 'synthetic-channel', position: 0, permission_overwrites: options.permissionOverwrites ?? [], owner_id: options.ownerId ?? this.botId, thread_metadata: { archived: options.archived ?? false, locked: options.locked ?? false, auto_archive_duration: 60, archive_timestamp: '2026-01-01T00:00:00Z' }, ...(options.type === ChannelType.GuildForum ? { available_tags: [], default_auto_archive_duration: 1440, flags: 0 } : {}), ...options.extra } as APIChannel);
   }
   addMessage(channelId: string, id: string, options: { content?: string; authorId?: string; webhookId?: string | null; embeds?: APIEmbed[]; attachmentCount?: number; files?: NewFile[] } = {}): void {
     const authorId = options.authorId ?? this.botId;
