@@ -1,5 +1,5 @@
 import { FakeDiscordHttp } from '@bronto/core/testing';
-import { ChannelType, Events } from 'discord.js';
+import { ChannelType, Events, OverwriteType, PermissionFlagsBits } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { forums, templateImages, templates } from '../src/db/schema.js';
@@ -11,6 +11,8 @@ let tb: TemplatesBot;
 
 const OTHER_FORUM = '100000000000000020';
 const TEXT = '100000000000000030';
+const STAFF = '100000000000000031';
+const MEMBER = '100000000000000098';
 let nextId = 100000000000007000n;
 const id = () => String(++nextId);
 
@@ -20,6 +22,13 @@ beforeEach(async () => {
   tb = await prepareTemplatesBot(t, discord);
   discord.addChannel(OTHER_FORUM, { guildId: GUILD, type: ChannelType.GuildForum });
   discord.addChannel(TEXT, { guildId: GUILD, type: ChannelType.GuildText });
+  discord.addChannel(STAFF, {
+    guildId: GUILD,
+    type: ChannelType.GuildText,
+    permissionOverwrites: [{ id: GUILD, type: OverwriteType.Role, allow: '0', deny: String(PermissionFlagsBits.ViewChannel) }],
+  });
+  discord.addMember(GUILD, USER);
+  discord.addMember(GUILD, MEMBER);
   await templatesDb(t).run(async (tx) => {
     await tx.insert(forums).values({ forumChannelId: FORUM });
   });
@@ -95,6 +104,17 @@ describe('new posts', () => {
     expect(discord.channels.has(threadId)).toBe(true);
     expect(discord.messages.get(lastMessageId(threadId))?.content).toBe(
       "I couldn't turn this post into a template: The message link must point to this server.",
+    );
+  });
+
+  it('refuses a link to a channel the poster cannot read and keeps the post', async () => {
+    const source = id();
+    discord.addMessage(STAFF, source, { content: 'Staff only' });
+    const threadId = await userPost(`https://discord.com/channels/${GUILD}/${STAFF}/${source}`, { ownerId: MEMBER });
+    expect(await stored()).toHaveLength(0);
+    expect(discord.channels.has(threadId)).toBe(true);
+    expect(discord.messages.get(lastMessageId(threadId))?.content).toBe(
+      "I couldn't turn this post into a template: You can only import messages you can read.",
     );
   });
 

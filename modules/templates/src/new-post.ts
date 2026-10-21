@@ -1,5 +1,5 @@
 import { UserError } from '@bronto/core';
-import type { APIEmbed, AnyThreadChannel } from 'discord.js';
+import { PermissionFlagsBits, type APIEmbed, type AnyThreadChannel, type GuildBasedChannel } from 'discord.js';
 import { sendableEmbed, type TemplateMessage } from './content.js';
 import type { TemplatesContext } from './context.js';
 import type { ImageSlot } from './db/schema.js';
@@ -30,15 +30,35 @@ async function download(url: string, slot: ImageSlot): Promise<PendingUpload> {
   }
 }
 
+/** Whether the member who wrote the post may view the channel and its history. */
+async function posterCanRead(ctx: TemplatesContext, channel: GuildBasedChannel, posterId: string): Promise<boolean> {
+  let member;
+  try {
+    member = await channel.guild.members.fetch(posterId);
+  } catch (error) {
+    ctx.log.debug({ err: error }, 'Fetching the member who wrote a post failed');
+    return false;
+  }
+  return channel.permissionsFor(member).has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]);
+}
+
 /** The content and first embed of a message in this server; Discord-hosted images of the embed are downloaded. */
-async function fromLink(ctx: TemplatesContext, link: { guildId: string; channelId: string; messageId: string }): Promise<Body> {
+async function fromLink(
+  ctx: TemplatesContext,
+  link: { guildId: string; channelId: string; messageId: string },
+  posterId: string,
+): Promise<Body> {
   if (link.guildId !== ctx.guildId) throw new UserError('The message link must point to this server.');
   let message;
   try {
     const channel = await ctx.client.channels.fetch(link.channelId);
     if (channel === null || !channel.isTextBased()) throw new Error('not a text channel');
+    if (channel.isDMBased() || !(await posterCanRead(ctx, channel, posterId))) {
+      throw new UserError('You can only import messages you can read.');
+    }
     message = await channel.messages.fetch(link.messageId);
   } catch (error) {
+    if (error instanceof UserError) throw error;
     ctx.log.debug({ err: error }, 'Reading the linked message failed');
     throw new UserError("I couldn't read that message.");
   }
@@ -54,11 +74,11 @@ async function fromLink(ctx: TemplatesContext, link: { guildId: string; channelI
   return { content: message.content, embed, uploads };
 }
 
-async function bodyOf(ctx: TemplatesContext, text: string): Promise<Body> {
+async function bodyOf(ctx: TemplatesContext, text: string, posterId: string): Promise<Body> {
   const parsed = parseBody(text);
   switch (parsed.kind) {
     case 'link':
-      return fromLink(ctx, parsed);
+      return fromLink(ctx, parsed, posterId);
     case 'json':
       return { ...parsed.message, uploads: [] };
     case 'text':
@@ -86,7 +106,7 @@ export async function onThreadCreate(ctx: TemplatesContext, thread: AnyThreadCha
   try {
     const starter = await thread.fetchStarterMessage();
     if (starter === null) return;
-    const body = await bodyOf(ctx, starter.content);
+    const body = await bodyOf(ctx, starter.content, starter.author.id);
     await createPost(ctx, { name: thread.name, tags: thread.appliedTags, ...body });
   } catch (error) {
     const reason = error instanceof UserError ? error.message : 'Something went wrong.';
