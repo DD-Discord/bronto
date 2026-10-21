@@ -1,5 +1,5 @@
 import { defineModule, gatewayEvent, on, type ModuleDefinition } from '@bronto/core';
-import { Events, GatewayDispatchEvents, GatewayIntentBits } from 'discord.js';
+import { Events, GatewayDispatchEvents, GatewayIntentBits, PermissionFlagsBits } from 'discord.js';
 import { templatesApi, type TemplatesApi } from './api.js';
 import { previewComponents } from './buttons.js';
 import { createTemplatesCommand } from './commands.js';
@@ -16,6 +16,16 @@ export function createTemplatesModule(): ModuleDefinition<Record<string, never>,
     name: 'templates',
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
     db: { schema, migrations: new URL('../drizzle/', import.meta.url) },
+    botPermissions: [
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.ReadMessageHistory,
+      PermissionFlagsBits.SendMessages,
+      PermissionFlagsBits.SendMessagesInThreads,
+      PermissionFlagsBits.ManageThreads,
+      PermissionFlagsBits.ManageChannels,
+      PermissionFlagsBits.AttachFiles,
+      PermissionFlagsBits.EmbedLinks,
+    ],
     events: templatesEvents,
     gates: templatesGates,
     listeners: [
