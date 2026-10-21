@@ -138,7 +138,11 @@ async function redraw(ctx: TemplatesContext, templateId: string, uploads: Pendin
   await updatePreview(ctx, template, placed, { syncAttachments: true });
 }
 
-async function download(change: Extract<SectionChange, { files: unknown }>, refuse: (message: string) => UserError): Promise<PendingUpload[]> {
+async function download(
+  ctx: TemplatesContext,
+  change: Extract<SectionChange, { files: unknown }>,
+  refuse: (message: string) => UserError,
+): Promise<PendingUpload[]> {
   const uploads: PendingUpload[] = [];
   for (const slot of IMAGE_SLOTS) {
     const file = change.files[slot];
@@ -147,7 +151,9 @@ async function download(change: Extract<SectionChange, { files: unknown }>, refu
       const response = await fetch(file.url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       uploads.push({ slot, name: file.name, data: Buffer.from(await response.arrayBuffer()) });
-    } catch {
+    } catch (error) {
+      const cause = error instanceof Error && error.cause !== undefined ? String(error.cause) : undefined;
+      ctx.log.warn({ slot, reason: String(error), cause }, 'Downloading an uploaded image failed');
       throw refuse("I couldn't download that image.");
     }
   }
@@ -162,7 +168,7 @@ async function download(change: Extract<SectionChange, { files: unknown }>, refu
 export async function saveChange(ctx: ModalContext | ButtonContext, threadId: string, change: SectionChange): Promise<void> {
   const refuse = (message: string): UserError =>
     change.section === 'remove-embed' ? new UserError(message) : new TryAgainError(message, change.section, draftOf(change));
-  const uploads = change.section === 'remove-embed' ? [] : await download(change, refuse);
+  const uploads = change.section === 'remove-embed' ? [] : await download(ctx, change, refuse);
   const stored = await storeTemplate(
     ctx,
     threadId,

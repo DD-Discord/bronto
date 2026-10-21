@@ -10,6 +10,7 @@ import {
   SeparatorBuilder,
   StringSelectMenuBuilder,
   TextDisplayBuilder,
+  type APIEmbed,
 } from 'discord.js';
 import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
@@ -40,14 +41,22 @@ function imageState(images: TemplateImage[], slot: ImageSlot, url: string | unde
   return images.some((image) => image.slot === slot) ? '✓ (uploaded)' : '✓';
 }
 
+/** Title, link and color markers, with the description on its own line. */
+function bodySummary(embed: APIEmbed): string {
+  const head = [[shown(embed.title ?? '', 60), embed.title !== undefined], ['link', embed.url !== undefined], ['color', embed.color !== undefined]] as [string, boolean][];
+  if (embed.description === undefined) return parts(head);
+  const markers = head.filter(([, present]) => present).map(([name]) => name).join(' · ');
+  return `${markers}\n${shown(embed.description, 100)}`;
+}
+
 function summaries(template: Template, images: TemplateImage[]): [Section, string][] {
   const embed = template.embed ?? {};
   const content = template.content.trim() === '' ? '(none)' : shown(template.content, 100);
   return [
     ['content', `**Content**\n${content}`],
-    ['body', `**Body**  ${parts([['title', embed.title !== undefined], ['description', embed.description !== undefined], ['url', embed.url !== undefined], ['color', embed.color !== undefined]])}`],
+    ['body', `**Body**  ${bodySummary(embed)}`],
     ['author', `**Author**  ${embed.author === undefined ? '(none)' : parts([[shown(embed.author.name, 60), true], ['link', embed.author.url !== undefined], ['icon', embed.author.icon_url !== undefined]])}`],
-    ['footer', `**Footer**  ${parts([['footer text', embed.footer !== undefined], ['icon', embed.footer?.icon_url !== undefined], ['time of posting', template.showPostTime]])}`],
+    ['footer', `**Footer**  ${parts([[shown(embed.footer?.text ?? '', 60), embed.footer !== undefined], ['icon', embed.footer?.icon_url !== undefined], ['time of posting', template.showPostTime]])}`],
     [
       'images',
       `**Images**  thumbnail ${imageState(images, 'thumbnail', embed.thumbnail?.url)} · image ${imageState(images, 'image', embed.image?.url)}`,
