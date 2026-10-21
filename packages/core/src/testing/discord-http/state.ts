@@ -69,10 +69,29 @@ export class DiscordState {
     this.files.set(id, { channelId, filename: file.filename, contentType: file.contentType ?? guessContentType(file.filename), data });
     return this.signAttachment({ id, filename: file.filename, size: data.length, content_type: file.contentType ?? guessContentType(file.filename), url: '', proxy_url: '' } as APIAttachment, channelId);
   }
-  /** Signs the URLs of stored attachments afresh, as Discord does whenever a message is served. */
+  /**
+   * The message as Discord serves it: attachment URLs signed afresh, and attachments an embed shows through
+   * `attachment://<name>` moved out of `attachments` into that embed URL. The stored message keeps the references.
+   */
   present<T extends APIMessage>(message: T): T {
     for (const attachment of message.attachments) if (this.files.has(attachment.id)) this.signAttachment(attachment, message.channel_id);
-    return message;
+    const shown = new Set<string>();
+    const resolve = (url: string | undefined): string | undefined => {
+      if (url?.startsWith('attachment://') !== true) return url;
+      const attachment = message.attachments.find((entry) => entry.filename === url.slice('attachment://'.length));
+      if (attachment === undefined) return url;
+      shown.add(attachment.id);
+      return attachment.url;
+    };
+    const embeds = message.embeds.map((embed) => {
+      const copy = structuredClone(embed);
+      if (copy.image) copy.image.url = resolve(copy.image.url)!;
+      if (copy.thumbnail) copy.thumbnail.url = resolve(copy.thumbnail.url)!;
+      if (copy.author?.icon_url) copy.author.icon_url = resolve(copy.author.icon_url);
+      if (copy.footer?.icon_url) copy.footer.icon_url = resolve(copy.footer.icon_url);
+      return copy;
+    });
+    return { ...message, embeds, attachments: message.attachments.filter((attachment) => !shown.has(attachment.id)) };
   }
   private signAttachment(attachment: APIAttachment, channelId: string): APIAttachment {
     const issued = Math.floor(Date.now() / 1000);

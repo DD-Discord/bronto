@@ -5,7 +5,7 @@ import { normalizeEmbed, validateTemplate, type TemplateMessage } from './conten
 import type { TemplatesContext } from './context.js';
 import { templateImages, templates, type ImageSlot, type Template } from './db/schema.js';
 import { ensureForum } from './forum.js';
-import { linkExpiry } from './images.js';
+import { linkExpiry, messageAttachments } from './images.js';
 import { previewBody, previewButtonRow, previewMessage, uploadFileName, withUploads, type PendingUpload } from './preview.js';
 
 export type { PendingUpload } from './preview.js';
@@ -25,7 +25,7 @@ function postTitle(name: string): string {
 function imageValues(message: Message, uploads: PendingUpload[]) {
   return uploads.map((upload) => {
     const name = uploadFileName(upload);
-    const attachment = message.attachments.find((entry) => entry.name === name);
+    const attachment = messageAttachments(message).find((entry) => entry.name === name);
     if (attachment === undefined) throw new Error(`The preview message has no attachment named ${name}.`);
     // A link without a readable expiry is stored as already due, so the next render refetches it.
     const expiresAt = linkExpiry(attachment.url) ?? new Date();

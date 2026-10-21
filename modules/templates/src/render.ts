@@ -3,7 +3,7 @@ import { DiscordAPIError, RESTJSONErrorCodes, type APIEmbed } from 'discord.js';
 import type { TemplatesContext } from './context.js';
 import type { TemplateMessage } from './content.js';
 import { IMAGE_SLOTS, templateImages, templates, type ImageSlot, type TemplateImage } from './db/schema.js';
-import { linkExpiry, REFRESH_MARGIN_MS } from './images.js';
+import { linkExpiry, messageAttachments, REFRESH_MARGIN_MS } from './images.js';
 
 export { REFRESH_MARGIN_MS } from './images.js';
 
@@ -67,7 +67,7 @@ async function currentLinks(ctx: TemplatesContext, threadId: string, messageId: 
     const channel = await ctx.client.channels.fetch(threadId);
     if (channel === null || !channel.isTextBased()) return new Map();
     const message = await channel.messages.fetch(messageId);
-    return new Map(message.attachments.map((attachment) => [attachment.id, attachment.url]));
+    return new Map(messageAttachments(message).map((attachment) => [attachment.id, attachment.url]));
   } catch (error) {
     if (
       error instanceof DiscordAPIError &&

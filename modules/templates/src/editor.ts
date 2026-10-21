@@ -43,7 +43,7 @@ function imageState(images: TemplateImage[], slot: ImageSlot, url: string | unde
 
 /** Title, link and color markers, with the description on its own line. */
 function bodySummary(embed: APIEmbed): string {
-  const head = [[shown(embed.title ?? '', 60), embed.title !== undefined], ['link', embed.url !== undefined], ['color', embed.color !== undefined]] as [string, boolean][];
+  const head = [[shown(embed.title ?? '', 60), embed.title !== undefined], ['link', embed.url !== undefined], [`#${(embed.color ?? 0).toString(16).padStart(6, '0').toUpperCase()}`, embed.color !== undefined]] as [string, boolean][];
   if (embed.description === undefined) return parts(head);
   const markers = head.filter(([, present]) => present).map(([name]) => name).join(' · ');
   return `${markers}\n${shown(embed.description, 100)}`;

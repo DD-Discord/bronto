@@ -58,7 +58,6 @@ export async function sendMessage(
   const { attachments: _, ...fields } = body;
   Object.assign(message, fields, { id, channel_id: channelId, flags: body.flags ?? 0 });
   message.attachments = storeUploads(state, channelId, body, files, true);
-  state.present(message);
 
   const content: WebhookMessage = {
     ...(body.content !== undefined ? { content: body.content as string } : {}),
@@ -91,7 +90,7 @@ export async function sendMessage(
       state.dms.push({ userId: channel.recipients?.[0]?.id ?? '', message: content });
     }
   }
-  return ok(message);
+  return ok(state.present(message));
 }
 
 export const isThread = (type: ChannelType): boolean =>

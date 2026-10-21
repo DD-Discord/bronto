@@ -145,6 +145,28 @@ it('uploads files with a forum post, signs urls and re-signs them on every fetch
   expect(next.searchParams.get('hm')).not.toBe(url.searchParams.get('hm'));
 });
 
+it('moves attachments an embed shows into the embed, as Discord does', async () => {
+  const { forum, http } = await forumSetup();
+  const post = await forum.threads.create({
+    name: 'Embedded',
+    message: {
+      embeds: [{ title: 'T', image: { url: 'attachment://pic.png' }, footer: { text: 'F', icon_url: 'attachment://icon.png' } }],
+      files: [{ attachment: Buffer.from('pic'), name: 'pic.png' }, { attachment: Buffer.from('icon'), name: 'icon.png' }, { attachment: Buffer.from('x'), name: 'loose.txt' }],
+    },
+  });
+  const starter = (await post.fetchStarterMessage())!;
+  expect(starter.attachments.map((a) => a.name)).toEqual(['loose.txt']);
+  const pic = [...http.files.entries()].find(([, file]) => file.filename === 'pic.png')![0];
+  expect(starter.embeds[0]!.image!.url).toMatch(new RegExp(`^https://cdn\\.discordapp\\.com/attachments/${post.id}/${pic}/pic\\.png\\?ex=`));
+  expect(starter.embeds[0]!.footer!.iconURL).toMatch(/\/icon\.png\?ex=/);
+
+  // An edit keeps an embedded attachment by id and can still reference it by name.
+  const edited = await starter.edit({ embeds: [{ title: 'T2', image: { url: 'attachment://pic.png' } }], attachments: [{ id: pic } as never] });
+  expect(edited.embeds[0]!.image!.url).toContain(`/${pic}/pic.png?ex=`);
+  expect(edited.attachments.size).toBe(0);
+  expect(http.files.has(pic)).toBe(true);
+});
+
 it('edits and archives posts through channel PATCH', async () => {
   const { forum, http } = await forumSetup();
   http.channels.set(FORUM, { ...http.channels.get(FORUM)!, available_tags: [{ id: '100000000000000777', name: 'Tag', moderated: false, emoji_id: null, emoji_name: null }] } as never);

@@ -73,7 +73,7 @@ describe('editorView', () => {
   it('summarizes sections with their text', () => {
     const { all } = view({ title: 'Rules', description: 'Be nice.\nNo spam.', color: 1, footer: { text: 'See you', icon_url: 'https://x/y.png' } });
     const text = all.filter((component) => typeof component.content === 'string').map((component) => component.content).join('\n');
-    expect(text).toContain('**Body**  Rules · color\nBe nice. No spam.');
+    expect(text).toContain('**Body**  Rules · #000001\nBe nice. No spam.');
     expect(text).toContain('**Footer**  See you · icon');
     const only = view({ description: 'Just text' }).all.filter((component) => typeof component.content === 'string').map((component) => component.content).join('\n');
     expect(only).toContain('**Body**  \nJust text');
