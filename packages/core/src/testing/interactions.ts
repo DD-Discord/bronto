@@ -17,6 +17,8 @@ export interface FakeInteractionBase {
   cached: boolean;
   /** The member's permissions in the interaction's channel; every permission by default. */
   permissions: bigint;
+  /** The largest file in bytes the bot may upload in the interaction's context; 10 MiB by default. */
+  attachmentSizeLimit: number;
 }
 
 export type FakeCommandInput = Partial<FakeInteractionBase> & {
@@ -57,6 +59,7 @@ export class FakeInteraction {
   readonly customId: string | undefined;
   readonly values: string[];
   readonly memberPermissions: PermissionsBitField;
+  readonly attachmentSizeLimit: number;
   replied = false;
   deferred = false;
   readonly options: {
@@ -82,6 +85,7 @@ export class FakeInteraction {
     this.rejectResponses = base.rejectResponses ?? false;
     this.cached = base.cached ?? true;
     this.memberPermissions = new PermissionsBitField(base.permissions ?? PermissionsBitField.All);
+    this.attachmentSizeLimit = base.attachmentSizeLimit ?? 10 * 1024 * 1024;
     this.commandName = details.command;
     this.customId = details.customId;
     this.values = details.values ?? [];

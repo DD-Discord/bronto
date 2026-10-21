@@ -59,4 +59,9 @@ describe('fake interactions', () => {
     expect(() => modal.fields.getUploadedFiles('missing')).toThrow('No modal field missing');
     expect(() => modal.fields.getCheckbox('missing')).toThrow('No modal field missing');
   });
+
+  it('carries the upload size limit, 10 MiB unless given', () => {
+    expect(fakeModal({ customId: 'x' }).attachmentSizeLimit).toBe(10 * 1024 * 1024);
+    expect(fakeModal({ customId: 'x', attachmentSizeLimit: 1024 }).attachmentSizeLimit).toBe(1024);
+  });
 });
