@@ -1,4 +1,5 @@
 import { defineModule, on, type ModuleDefinition } from '@bronto/core';
+import templates from '@bronto/templates';
 import { Events, GatewayIntentBits, PermissionFlagsBits } from 'discord.js';
 import { createStickyCommand } from './commands.js';
 import { stickyConfigSchema, type StickyConfig } from './config.js';
@@ -14,6 +15,7 @@ export function createStickyModule(): ModuleDefinition<StickyConfig> {
   const reposter = new Reposter({ index });
   return defineModule<StickyConfig>({
     name: 'sticky',
+    dependsOn: [templates],
     intents: [GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
     config: stickyConfigSchema,
     db: { schema, migrations: new URL('../drizzle/', import.meta.url) },

@@ -1,11 +1,24 @@
-import { crudSubcommands, defineCommand, opt, UserError, ensureWebhook, withWebhookErrors, UnknownWebhookError, MissingWebhookPermissionError, type CommandDefinition } from '@bronto/core';
+import {
+  batchLines,
+  crudSubcommands,
+  defineCommand,
+  defineSubcommand,
+  opt,
+  UserError,
+  ensureWebhook,
+  withWebhookErrors,
+  UnknownWebhookError,
+  MissingWebhookPermissionError,
+  type Autocomplete,
+  type CommandDefinition,
+  type HandlerContext,
+} from '@bronto/core';
+import templates from '@bronto/templates';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { and, eq, ne, sql } from 'drizzle-orm';
 import { stickies, stickyState } from './db/schema.js';
-import { fetchTemplate, TemplateUnavailableError } from './discord.js';
-import { stickyEntity } from './entity.js';
-import { parseMessageLink } from './message.js';
-import { removePost, type Reposter, type StickyContext } from './repost.js';
+import { stickyEntity, templateField } from './entity.js';
+import { removePost, type Reposter } from './repost.js';
 import { entryOf, type StickyIndex } from './sticky-index.js';
 
 const STICKY_CHANNEL_TYPES = [
@@ -18,37 +31,23 @@ const STICKY_CHANNEL_TYPES = [
 ];
 
 const MAX_DEBOUNCE_MS = 86_400_000;
-// Discord's limit for a message's content.
-const MAX_CONTENT_LENGTH = 2000;
 
 export interface StickyCommandDeps {
   index: StickyIndex;
   reposter: Reposter;
 }
 
-/** Reads the template behind a message link; refuses links outside this server and messages with nothing to post. */
-async function loadTemplate(ctx: StickyContext, link: string) {
-  const parsed = parseMessageLink(link);
-  if (parsed === null) throw new UserError('The template must be a message link (right-click a message → Copy Message Link).');
-  if (parsed.guildId !== ctx.guildId) throw new UserError('The template must be a message in this server.');
-  let template;
-  try {
-    template = await fetchTemplate(ctx.client, ctx.guildId, parsed.channelId, parsed.messageId);
-  } catch (error) {
-    if (error instanceof TemplateUnavailableError) throw new UserError(`I can't read that message: ${error.message}`);
-    throw error;
-  }
-  if (template.content === '' && template.embeds.length === 0) throw new UserError('That message has no text or embeds to repeat.');
-  if (template.content.length > MAX_CONTENT_LENGTH) {
-    throw new UserError(`That message is longer than ${MAX_CONTENT_LENGTH} characters, which a webhook cannot post.`);
-  }
-  return {
-    templateChannelId: parsed.channelId,
-    templateMessageId: parsed.messageId,
-    content: template.content,
-    embeds: template.embeds,
-  };
-}
+const channelOption = () => opt.channel({ description: 'Channel or thread of the sticky', channelTypes: STICKY_CHANNEL_TYPES });
+
+/** Templates whose name contains the query, as `name · created date` (UTC). */
+const suggestTemplates: Autocomplete = async (ctx, query) =>
+  (await ctx.modules.get(templates).search(query)).map((template) => ({
+    name: `${template.name} · ${template.createdAt.toISOString().slice(0, 10)}`,
+    value: template.id,
+  }));
+
+/** Name and post link of a sticky's template, or null when it no longer exists. */
+const templateOf = (ctx: HandlerContext, templateId: string) => ctx.modules.get(templates).get(templateId);
 
 export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition {
   return defineCommand({
@@ -57,13 +56,13 @@ export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition 
     subcommands: crudSubcommands(stickyEntity, {
       key: {
         name: 'channel',
-        option: opt.channel({ description: 'Channel or thread of the sticky', channelTypes: STICKY_CHANNEL_TYPES }),
+        option: channelOption(),
         toKey: (value) => value.id,
         format: (channelId) => `<#${channelId}>`,
         fallback: (ctx) => ctx.channelId,
       },
       fields: {
-        template: { option: opt.string({ description: 'Link to the message to repeat' }) },
+        template: { option: opt.string({ description: 'Template to post', autocomplete: suggestTemplates }), column: 'templateId' },
         'ignore-bots': { option: opt.boolean({ description: 'Ignore messages from bots (default: yes)' }), column: 'ignoreBots', default: true },
         silent: { option: opt.boolean({ description: 'Post without notifications (default: yes)' }), column: 'silent', default: true },
         debounce: {
@@ -74,13 +73,49 @@ export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition 
       },
       descriptions: {
         create: 'Creates a sticky in a channel or thread',
-        show: 'Shows the sticky of a channel (default: this one)',
         delete: 'Deletes the sticky of a channel (default: this one)',
+      },
+      override: {
+        show: defineSubcommand({
+          description: 'Shows the sticky of a channel (default: this one)',
+          ephemeral: true,
+          options: { channel: channelOption() },
+          execute: async (ctx, { channel }) => {
+            const channelId = channel?.id ?? ctx.channelId;
+            if (channelId === null) throw new UserError('Name the sticky with the `channel` option.');
+            const sticky = await stickyEntity.find(ctx.db, channelId);
+            if (sticky === null) throw new UserError(`There is no sticky for <#${channelId}>.`);
+            const embed = stickyEntity.formatFull(sticky);
+            embed.spliceFields(0, 1, { name: 'Template', value: templateField(sticky, await templateOf(ctx, sticky.templateId)) });
+            await ctx.reply({ embeds: [embed] });
+          },
+        }),
+        list: defineSubcommand({
+          description: 'Lists all stickies',
+          ephemeral: true,
+          execute: async (ctx) => {
+            const records = await stickyEntity.list(ctx.db);
+            if (records.length === 0) {
+              await ctx.reply('There are no stickies yet.');
+              return;
+            }
+            const lines = [`**${records.length} ${records.length === 1 ? 'Sticky' : 'Stickies'}**`];
+            for (const sticky of records) {
+              const template = await templateOf(ctx, sticky.templateId);
+              lines.push(`- <#${sticky.channelId}> · ${template === null ? 'missing template' : templateField(sticky, template)}`);
+            }
+            for (const chunk of batchLines(lines)) await ctx.reply(chunk);
+          },
+        }),
       },
       hooks: {
         prepare: async (ctx, values, existing) => {
           const extra: Partial<typeof stickies.$inferInsert> = {};
-          if (values.template !== null) Object.assign(extra, await loadTemplate(ctx, values.template));
+          if (values.template !== null) {
+            if ((await templateOf(ctx, values.template)) === null) throw new UserError("That template doesn't exist.");
+            // A copy stored before templates no longer describes what the sticky posts.
+            Object.assign(extra, { content: null, embeds: null });
+          }
           if (existing === null) {
             const target = values.channel!;
             const webhookChannelId = target.isThread() ? target.parentId : target.id;

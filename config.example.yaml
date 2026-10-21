@@ -15,4 +15,5 @@ database:
 modules:
   "@bronto/example-notes": {}
   # "@bronto/autodelete": {}   # needs the Message Content and Server Members intents; see modules/autodelete/README.md
-  # "@bronto/sticky": {}   # needs the Message Content intent; see modules/sticky/README.md
+  # "@bronto/templates": {}   # needs the Message Content intent and a Community server; see modules/templates/README.md
+  # "@bronto/sticky": {}   # needs @bronto/templates and the Message Content intent; see modules/sticky/README.md

@@ -123,6 +123,10 @@ export class Reposter {
       return { sticky: found, lastMessageId: state?.lastMessageId ?? null };
     });
     if (sticky === undefined) return;
+    if (sticky.content === null && sticky.embeds === null) {
+      ctx.log.debug({ channelId }, 'Skipped a repost: the sticky has nothing stored to post');
+      return;
+    }
     try {
       await this.post(ctx, sticky, lastMessageId);
     } catch (error) {
@@ -154,7 +158,7 @@ export class Reposter {
       }
     }
     const sent = await withWebhookErrors(sticky.webhookToken, () => webhook.send({
-      content: sticky.content || undefined, embeds: sticky.embeds, threadId,
+      content: sticky.content || undefined, embeds: sticky.embeds ?? [], threadId,
       flags: sticky.silent ? MessageFlags.SuppressNotifications : undefined,
       username: ctx.config.webhookName, avatarURL: ctx.config.webhookAvatar, allowedMentions: { parse: [] },
     }));

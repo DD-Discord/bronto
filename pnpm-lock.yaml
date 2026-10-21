@@ -255,6 +255,9 @@ importers:
       '@bronto/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@bronto/templates':
+        specifier: workspace:*
+        version: link:../templates
       discord.js:
         specifier: 14.27.0
         version: 14.27.0
