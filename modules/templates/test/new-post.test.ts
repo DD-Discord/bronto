@@ -144,6 +144,17 @@ describe('new posts', () => {
     );
   });
 
+  it('refuses a linked image over 25 MB', async () => {
+    const source = id();
+    const file = discord.addFile(TEXT, { filename: 'huge.png', data: Buffer.alloc(25 * 1024 * 1024 + 1) });
+    discord.addMessage(TEXT, source, { embeds: [{ title: 'Huge', image: { url: file.url } }] });
+    const threadId = await userPost(`https://discord.com/channels/${GUILD}/${TEXT}/${source}`);
+    expect(await stored()).toHaveLength(0);
+    expect(discord.messages.get(lastMessageId(threadId))?.content).toBe(
+      "I couldn't turn this post into a template: I couldn't download an image from that message.",
+    );
+  });
+
   it('replies and keeps the post when the template is invalid', async () => {
     const threadId = await userPost(JSON.stringify({ embeds: [{ description: 'x'.repeat(7000) }] }));
     expect(await stored()).toHaveLength(0);

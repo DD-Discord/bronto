@@ -306,6 +306,16 @@ describe('uploads', () => {
     expect(await t.database.admin.select().from(templateImages)).toHaveLength(0);
   });
 
+  it('refuses an uploaded image whose download is over 25 MB', async () => {
+    const row = await makeTemplate();
+    const big = discord.addFile(TEXT, { filename: 'big.png', data: Buffer.alloc(25 * 1024 * 1024 + 1) });
+    // Discord reports a small size; the download itself is capped.
+    const file = { filename: big.filename, url: big.url, size: 1024, contentType: 'image/png' };
+    const fake = await edit(row.threadId, 'images', { uploads: { image_upload: [file] } });
+    expect(textOf(payload(fake))).toContain("I couldn't download that image.");
+    expect(await t.database.admin.select().from(templateImages)).toHaveLength(0);
+  });
+
   it('answers an image download that times out like a failed one', async () => {
     const row = await makeTemplate();
     const file = await uploadedImage();

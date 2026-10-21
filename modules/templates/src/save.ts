@@ -6,7 +6,7 @@ import type { TemplatesContext } from './context.js';
 import { IMAGE_SLOTS, templateImages, templates, type ImageSlot, type Template, type TemplateImage } from './db/schema.js';
 import { editorView } from './editor.js';
 import { templatesEvents } from './events.js';
-import { DOWNLOAD_TIMEOUT_MS } from './images.js';
+import { downloadFile } from './images.js';
 import { updatePreview } from './posts.js';
 import { uploadFileName, type PendingUpload } from './preview.js';
 import { slotUrl } from './render.js';
@@ -148,9 +148,7 @@ async function download(
     const file = change.files[slot];
     if (file === undefined) continue;
     try {
-      const response = await fetch(file.url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      uploads.push({ slot, name: file.name, data: Buffer.from(await response.arrayBuffer()) });
+      uploads.push({ slot, name: file.name, data: await downloadFile(file.url) });
     } catch (error) {
       const cause = error instanceof Error && error.cause !== undefined ? String(error.cause) : undefined;
       ctx.log.warn({ slot, reason: String(error), cause }, 'Downloading an uploaded image failed');

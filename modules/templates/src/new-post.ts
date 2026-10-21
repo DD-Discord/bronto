@@ -4,7 +4,7 @@ import { sendableEmbed, type TemplateMessage } from './content.js';
 import type { TemplatesContext } from './context.js';
 import type { ImageSlot } from './db/schema.js';
 import { storedForumId } from './forum.js';
-import { DOWNLOAD_TIMEOUT_MS } from './images.js';
+import { downloadFile } from './images.js';
 import { createPost, type PendingUpload } from './posts.js';
 import { parseBody } from './transfer.js';
 
@@ -22,10 +22,9 @@ type Body = TemplateMessage & { uploads: PendingUpload[] };
 async function download(url: string, slot: ImageSlot): Promise<PendingUpload> {
   const failure = new UserError("I couldn't download an image from that message.");
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
-    if (!response.ok) throw failure;
+    const data = await downloadFile(url);
     const name = decodeURIComponent(new URL(url).pathname.split('/').pop() ?? '');
-    return { slot, name, data: Buffer.from(await response.arrayBuffer()) };
+    return { slot, name, data };
   } catch {
     throw failure;
   }

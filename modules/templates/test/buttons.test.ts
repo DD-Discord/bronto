@@ -127,6 +127,15 @@ describe('import', () => {
     expect(stored).toMatchObject({ content: 'From file', embed: null });
   });
 
+  it('refuses an uploaded file whose download is larger than reported', async () => {
+    const row = await makeTemplate();
+    const big = discord.addFile(TEXT, { filename: 't.json', data: `{"content":"${'x'.repeat(1_000_000)}"}` });
+    const fake = await submitImport(row.threadId, { uploads: [{ filename: big.filename, url: big.url, size: 100 }] });
+    expect(payload(fake).content).toBe("I couldn't download that file.");
+    const [stored] = await t.database.admin.select().from(templates);
+    expect(stored).toMatchObject({ content: 'Hello' });
+  });
+
   it('answers a file download that times out like a failed one', async () => {
     const row = await makeTemplate();
     const file = await uploadedJson('t.json', JSON.stringify({ content: 'From file' }));

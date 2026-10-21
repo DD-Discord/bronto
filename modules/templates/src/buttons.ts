@@ -16,7 +16,7 @@ import type { TemplatesContext } from './context.js';
 import { IMAGE_SLOTS, type ImageSlot, type TemplateImage } from './db/schema.js';
 import { openEditor } from './editor.js';
 import { templatesGates } from './events.js';
-import { DOWNLOAD_TIMEOUT_MS } from './images.js';
+import { downloadFile } from './images.js';
 import { forgetTemplate } from './lifecycle.js';
 import { requireEditor, templateForThread } from './permissions.js';
 import { clearSlot, render, setSlot, slotUrl } from './render.js';
@@ -80,9 +80,7 @@ async function uploadedText(ctx: Parameters<typeof importModal.execute>[0]): Pro
   if (file.size > MAX_IMPORT_FILE_BYTES) throw new UserError('The file is too large.');
   const failure = new UserError("I couldn't download that file.");
   try {
-    const response = await fetch(file.url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
-    if (!response.ok) throw failure;
-    return await response.text();
+    return (await downloadFile(file.url, MAX_IMPORT_FILE_BYTES)).toString('utf8');
   } catch {
     throw failure;
   }
