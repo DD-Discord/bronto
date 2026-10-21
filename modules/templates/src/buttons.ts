@@ -19,13 +19,15 @@ import { IMAGE_SLOTS, templateImages, templates, type ImageSlot } from './db/sch
 import { templatesEvents, templatesGates } from './events.js';
 import { requireEditor, templateForThread } from './permissions.js';
 import { updatePreview } from './posts.js';
-import { render } from './render.js';
+import { render, setSlot } from './render.js';
 import { exportJson, parseTemplateJson } from './transfer.js';
 
 const CONFIRM_TTL_MS = 15 * 60_000;
 const MAX_IMPORT_TEXT = 4000;
 const MAX_IMPORT_FILE_BYTES = 1_000_000;
 const UPLOAD_PREFIX = 'attachment://';
+// Captures the attachment ID of a Discord attachment link.
+const ATTACHMENT_LINK = /^https:\/\/(?:cdn\.discordapp\.com|media\.discordapp\.net)\/attachments\/\d+\/(\d+)\//;
 
 /** A preview button: signed for the template's thread, without arguments or expiry. */
 function previewButton(name: string, execute: ButtonDefinition['execute']): ButtonDefinition {
@@ -88,13 +90,23 @@ export const importModal = defineModal({
     if (text.trim() === '') throw new UserError('Paste template JSON or upload a .json file.');
     const parsed = parseTemplateJson(text);
 
-    // An exported file may still reference the template's uploaded images; those stay only where the template
-    // has the same upload now. Other `attachment://` links would point at nothing.
+    // An exported file carries the template's uploaded images as Discord links. A link to the attachment a slot
+    // holds now (same attachment ID; the signature changes) maps back to that slot's `attachment://` value. Any other
+    // `attachment://` value would point at nothing and is cleared.
+    const stored = await ctx.db.run(async (tx) => tx.select().from(templateImages).where(eq(templateImages.templateId, template.id)));
     const embed = parsed.embed === null ? null : structuredClone(parsed.embed);
     for (const slot of IMAGE_SLOTS) {
       const url = embed === null ? undefined : SLOT_URLS[slot](embed);
-      if (embed !== null && url?.startsWith(UPLOAD_PREFIX) && url !== SLOT_URLS[slot](template.embed ?? {})) {
-        clearSlot(embed, slot);
+      if (embed === null || url === undefined) continue;
+      const current = SLOT_URLS[slot](template.embed ?? {});
+      const keeps = current?.startsWith(UPLOAD_PREFIX) === true;
+      if (url.startsWith(UPLOAD_PREFIX)) {
+        if (!keeps || url !== current) clearSlot(embed, slot);
+        continue;
+      }
+      const attachmentId = ATTACHMENT_LINK.exec(url)?.[1];
+      if (keeps && attachmentId !== undefined && stored.some((image) => image.slot === slot && image.attachmentId === attachmentId)) {
+        setSlot(embed, slot, current!);
       }
     }
     const message = { content: parsed.content, embed: embed === null ? null : normalizeEmbed(embed) };
@@ -112,7 +124,15 @@ export const importModal = defineModal({
       return row;
     });
     ctx.emit(templatesEvents.updated, { id: updated.id });
-    await updatePreview(ctx, updated, [], { syncAttachments: true });
+    try {
+      await updatePreview(ctx, updated, [], { syncAttachments: true });
+    } catch (error) {
+      ctx.log.warn({ err: error, templateId: updated.id }, 'Updating the post after an import failed');
+      const reason =
+        error instanceof UserError || error instanceof DiscordAPIError ? error.message : 'something went wrong, the error was logged';
+      await ctx.reply(`Saved, but the post couldn't be updated: ${reason}`);
+      return;
+    }
     await ctx.reply('Template imported.');
   },
 });
@@ -142,23 +162,27 @@ export const deleteConfirmButton = defineButton({
   bind: { user: true, channel: true },
   expiresAfterMs: CONFIRM_TTL_MS,
   ephemeral: true,
+  defer: 'update',
   execute: async (ctx) => {
     requireEditor(ctx);
     const template = await templateForThread(ctx, ctx.channelId!);
     const verdict = await ctx.check(templatesGates.deleting, { id: template.id });
     if (!verdict.allowed) {
-      await ctx.reply(`Can't delete this template:\n${verdict.reasons.map((reason) => `• ${reason}`).join('\n')}`);
+      await ctx.update({ content: `Can't delete this template:\n${verdict.reasons.map((reason) => `• ${reason}`).join('\n')}`, components: [] });
       return;
     }
+    // The interaction lives in the thread, so it is answered before the thread goes away.
+    await ctx.update({ content: 'Template deleted.', components: [] });
     await ctx.db.run(async (tx) => {
       await tx.delete(templates).where(eq(templates.id, template.id));
     });
+    ctx.emit(templatesEvents.deleted, { id: template.id });
     try {
       await deleteThread(ctx, template.threadId);
-    } finally {
-      ctx.emit(templatesEvents.deleted, { id: template.id });
+    } catch (error) {
+      ctx.log.warn({ err: error, threadId: template.threadId }, 'Deleting the post of a deleted template failed');
+      await ctx.followUp({ content: "Template deleted, but its post couldn't be removed.", ephemeral: true });
     }
-    await ctx.reply('Template deleted.');
   },
 });
 

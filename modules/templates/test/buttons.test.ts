@@ -179,6 +179,42 @@ describe('import', () => {
     expect(discord.messages.get(row!.threadId)!.attachments.map((a) => a.filename)).toEqual(['image.png']);
   });
 
+  it('keeps uploaded images through export and import', async () => {
+    const created = await inHandler(tb, (ctx) => templatesApi(ctx).create({ name: 'Pic', content: 'Hi', embed: { title: 'T' } }));
+    const [row] = await t.database.admin.select().from(templates).where(eq(templates.id, created.id));
+    const { updatePreview } = await import('../src/posts.js');
+    await inHandler(tb, (ctx) => updatePreview(ctx, row!, [{ slot: 'image', name: 'a.png', data: Buffer.from('png') }]));
+    await t.database.admin
+      .update(templates)
+      .set({ embed: { title: 'T', image: { url: 'attachment://image.png' } } })
+      .where(eq(templates.id, row!.id));
+    const [before] = await t.database.admin.select().from(templateImages);
+
+    const exported = await click(row!.threadId, 'export');
+    const json = payload(exported).files[0].attachment.toString();
+    expect(JSON.parse(json).embeds[0].image.url).toMatch(/^https:\/\/cdn\.discordapp\.com\/attachments\//);
+    await submitImport(row!.threadId, { json });
+
+    const images = await t.database.admin.select().from(templateImages);
+    expect(images).toHaveLength(1);
+    expect(images[0]!.attachmentId).toBe(before!.attachmentId);
+    const [stored] = await t.database.admin.select().from(templates);
+    expect(stored!.embed).toEqual({ title: 'T', image: { url: 'attachment://image.png' } });
+    expect(discord.messages.get(row!.threadId)!.attachments.map((a) => a.filename)).toEqual(['image.png']);
+  });
+
+  it('says so when the post could not be updated after saving', async () => {
+    const row = await makeTemplate();
+    discord.override('PATCH', `/channels/${row.threadId}/messages/${row.previewMessageId}`, () => ({
+      status: 403,
+      json: { code: 50013, message: 'Missing Permissions' },
+    }));
+    const fake = await submitImport(row.threadId, { json: JSON.stringify({ content: 'Saved text' }) });
+    expect(payload(fake).content).toMatch(/^Saved, but the post couldn't be updated: .*Missing Permissions/);
+    const [stored] = await t.database.admin.select().from(templates);
+    expect(stored!.content).toBe('Saved text');
+  });
+
   it('is refused for members who may not post in the thread', async () => {
     const row = await makeTemplate();
     const fake = await click(row.threadId, 'import', { userId: MEMBER, permissions: PermissionFlagsBits.ViewChannel });
@@ -206,9 +242,21 @@ describe('delete', () => {
     const row = await makeTemplate();
     const customId = await confirmId(row.threadId);
     const fake = await confirm(row.threadId, customId);
-    expect(payload(fake).content).toBe('Template deleted.');
+    expect(fake.responses[0]!.kind).toBe('update');
+    expect(payload(fake)).toMatchObject({ content: 'Template deleted.', components: [] });
     expect(await t.database.admin.select().from(templates)).toHaveLength(0);
     expect(discord.channels.has(row.threadId)).toBe(false);
+    expect(emitted).toEqual([`deleted ${row.id}`]);
+  });
+
+  it('answers before the thread goes and reports a post that could not be removed', async () => {
+    const row = await makeTemplate();
+    discord.override('DELETE', `/channels/${row.threadId}`, () => ({ status: 403, json: { code: 50013, message: 'Missing Permissions' } }));
+    const fake = await confirm(row.threadId, await confirmId(row.threadId));
+    expect(fake.responses.map((response) => response.kind)).toEqual(['update', 'followUp']);
+    expect(payload(fake)).toMatchObject({ content: 'Template deleted.', components: [] });
+    expect(payload(fake, 1).content).toBe("Template deleted, but its post couldn't be removed.");
+    expect(await t.database.admin.select().from(templates)).toHaveLength(0);
     expect(emitted).toEqual([`deleted ${row.id}`]);
   });
 
@@ -216,7 +264,8 @@ describe('delete', () => {
     const row = await makeTemplate();
     denial = ['Used by the welcome message.'];
     const fake = await confirm(row.threadId, await confirmId(row.threadId));
-    expect(payload(fake).content).toBe("Can't delete this template:\n• Used by the welcome message.");
+    expect(fake.responses[0]!.kind).toBe('update');
+    expect(payload(fake)).toMatchObject({ content: "Can't delete this template:\n• Used by the welcome message.", components: [] });
     expect(await t.database.admin.select().from(templates)).toHaveLength(1);
     expect(discord.channels.has(row.threadId)).toBe(true);
     expect(emitted).toEqual([]);
