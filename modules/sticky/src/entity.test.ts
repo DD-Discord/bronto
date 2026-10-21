@@ -45,6 +45,9 @@ describe('stickyEntity', () => {
     expect(templateField(sticky, { name: 'Rules', url: 'https://discord.com/channels/100000000000000001/100000000000000030' })).toBe(
       '[Rules](https://discord.com/channels/100000000000000001/100000000000000030)',
     );
+    expect(templateField(sticky, { name: 'Rules [old] (v2)', url: 'https://discord.com/channels/1/2' })).toBe(
+      '[Rules \\[old\\] \\(v2\\)](https://discord.com/channels/1/2)',
+    );
     expect(templateField(sticky, null)).toBe('Missing (`7d0c3a52-58b4-4c43-9a43-2d4f3c1e0b6a`)');
   });
 });

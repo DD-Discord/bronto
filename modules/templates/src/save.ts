@@ -6,6 +6,7 @@ import type { TemplatesContext } from './context.js';
 import { IMAGE_SLOTS, templateImages, templates, type ImageSlot, type Template, type TemplateImage } from './db/schema.js';
 import { editorView } from './editor.js';
 import { templatesEvents } from './events.js';
+import { DOWNLOAD_TIMEOUT_MS } from './images.js';
 import { updatePreview } from './posts.js';
 import { uploadFileName, type PendingUpload } from './preview.js';
 import { slotUrl } from './render.js';
@@ -78,6 +79,7 @@ interface Batch {
   error: unknown;
 }
 
+// Module-level, so shared by every instance of the module in the process, like the components that use it.
 const waiting = new Map<string, Batch>();
 
 /** The template's waiting batch, created when there is none. */
@@ -142,7 +144,7 @@ async function download(change: Extract<SectionChange, { files: unknown }>, refu
     const file = change.files[slot];
     if (file === undefined) continue;
     try {
-      const response = await fetch(file.url);
+      const response = await fetch(file.url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       uploads.push({ slot, name: file.name, data: Buffer.from(await response.arrayBuffer()) });
     } catch {

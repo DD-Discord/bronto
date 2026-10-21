@@ -1,7 +1,7 @@
 import { ensureWebhook, resolveWebhook, withWebhookErrors, UnknownMessageError, UnknownWebhookError, type IncomingWebhook, type HandlerContext } from '@bronto/core';
 import templates from '@bronto/templates';
 import { DiscordAPIError, RESTJSONErrorCodes, MessageFlags, type APIEmbed } from 'discord.js';
-import { and, eq, isNotNull, ne } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull, ne } from 'drizzle-orm';
 import type { StickyConfig } from './config.js';
 import { stickies, stickyState, type Sticky } from './db/schema.js';
 import { stickyEvents } from './events.js';
@@ -129,13 +129,40 @@ export class Reposter {
   /** Deletes the stickies using a template, one at a time so a webhook they share goes with the last of them. */
   async deleteForTemplate(ctx: StickyContext, templateId: string): Promise<void> {
     const rows = await ctx.db.run(async (tx) => tx.select().from(stickies).where(eq(stickies.templateId, templateId)));
+    for (const record of rows) await this.deleteForGoneTemplate(ctx, record);
+  }
+
+  /**
+   * Deletes the stickies without a stored copy whose template no longer exists, e.g. because it was deleted while
+   * sticky was switched off. Only a template the API reports missing counts; a failed lookup keeps the sticky.
+   */
+  async deleteWithoutTemplate(ctx: StickyContext): Promise<void> {
+    const rows = await ctx.db.run(async (tx) =>
+      tx
+        .select()
+        .from(stickies)
+        .where(and(isNull(stickies.content), isNull(stickies.embeds)))
+        .orderBy(asc(stickies.channelId)),
+    );
     for (const record of rows) {
-      await this.deleteSticky(ctx, record);
-      await ctx.db.run(async (tx) => {
-        await tx.delete(stickies).where(eq(stickies.channelId, record.channelId));
-      });
-      ctx.log.info({ channelId: record.channelId, templateId }, 'Deleted a sticky whose template was deleted');
+      let template: unknown;
+      try {
+        template = await ctx.modules.get(templates).get(record.templateId);
+      } catch (error) {
+        ctx.log.warn({ err: error, channelId: record.channelId, templateId: record.templateId }, "Checking a sticky's template failed");
+        continue;
+      }
+      if (template === null) await this.deleteForGoneTemplate(ctx, record);
     }
+  }
+
+  /** Deletes a sticky whose template is gone: its post, its webhook unless shared, then its row. */
+  private async deleteForGoneTemplate(ctx: StickyContext, record: Sticky): Promise<void> {
+    await this.deleteSticky(ctx, record);
+    await ctx.db.run(async (tx) => {
+      await tx.delete(stickies).where(eq(stickies.channelId, record.channelId));
+    });
+    ctx.log.info({ channelId: record.channelId, templateId: record.templateId }, 'Deleted a sticky whose template was deleted');
   }
 
   /**

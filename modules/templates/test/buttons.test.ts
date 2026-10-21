@@ -2,14 +2,14 @@ import { defineModule, gate, on } from '@bronto/core';
 import { fakeButton, fakeModal, FakeDiscordHttp, type FakeInteraction } from '@bronto/core/testing';
 import { ChannelType, Events, PermissionFlagsBits, type ActionRowBuilder, type ButtonBuilder, type ModalBuilder } from 'discord.js';
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { templatesApi } from '../src/api.js';
 import { forums, templateImages, templates } from '../src/db/schema.js';
 import { templatesEvents, templatesGates } from '../src/events.js';
 import { createTemplatesModule } from '../src/index.js';
 import { exportJson } from '../src/transfer.js';
-import { FORUM, GUILD, inHandler, prepareTemplatesBot, ready, templatesDb, USER, type TemplatesBot } from './harness.js';
+import { FORUM, GUILD, inHandler, prepareTemplatesBot, ready, stallDownloads, templatesDb, USER, type TemplatesBot } from './harness.js';
 
 let t: TestDatabase;
 let discord: FakeDiscordHttp;
@@ -125,6 +125,17 @@ describe('import', () => {
     await submitImport(row.threadId, { uploads: [file] });
     const [stored] = await t.database.admin.select().from(templates);
     expect(stored).toMatchObject({ content: 'From file', embed: null });
+  });
+
+  it('answers a file download that times out like a failed one', async () => {
+    const row = await makeTemplate();
+    const file = await uploadedJson('t.json', JSON.stringify({ content: 'From file' }));
+    stallDownloads();
+    const fake = await submitImport(row.threadId, { uploads: [file] });
+    vi.restoreAllMocks();
+    expect(payload(fake).content).toBe("I couldn't download that file.");
+    const [stored] = await t.database.admin.select().from(templates);
+    expect(stored).toMatchObject({ content: 'Hello' });
   });
 
   it('refuses a file that is not .json', async () => {

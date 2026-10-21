@@ -17,6 +17,7 @@ import {
   TEST_INTERACTION_SECRET,
 } from '@bronto/core/testing';
 import { ChannelType } from 'discord.js';
+import { vi } from 'vitest';
 import type { TestDatabase } from '../../../packages/core/test/test-db.js';
 import type { TemplatesContext } from '../src/context.js';
 import { createTemplatesModule } from '../src/index.js';
@@ -91,4 +92,15 @@ export async function inHandler<T>(tb: TemplatesBot, fn: (ctx: TemplatesContext)
   });
   if (!outcome.ok) throw outcome.error;
   return result!.value;
+}
+
+/**
+ * Makes every download that waits the module's 15 s timeout time out at once, as a stalled CDN response would.
+ * Restored by `vi.restoreAllMocks()`.
+ */
+export function stallDownloads(): void {
+  const timeout = AbortSignal.timeout.bind(AbortSignal);
+  vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) =>
+    ms === 15_000 ? AbortSignal.abort(new DOMException('The operation timed out.', 'TimeoutError')) : timeout(ms),
+  );
 }

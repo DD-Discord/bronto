@@ -65,12 +65,13 @@ Click **Edit** on the preview. The editor is a private message with a section pe
 
 - **Content**: the text.
 - **Body**: title, description, URL and color of the embed.
-- **Author**, **Footer**: name or text, URL, icon. The footer can show the time of posting, filled in whenever the
-  template is posted.
+- **Author**: name, the link on the name, icon.
+- **Footer**: text, icon, and the time of posting, filled in whenever the template is posted.
 - **Images**: the image and the thumbnail.
 - **Fields**: pick one to change it, move it (position) or remove it (clear name and value); **Add field** adds one,
   up to 25.
-- **Remove embed** removes the embed; a template always keeps something to show.
+- **Remove embed** removes the embed. It is refused while the template has no content, since a template always
+  keeps something to show.
 
 Images can be given as a URL or uploaded in the modal. An upload replaces a URL for the same image; clearing both
 removes the image. Only image files are accepted, within the bot's upload limit. Uploaded images are stored on the

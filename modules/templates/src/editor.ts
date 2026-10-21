@@ -105,7 +105,10 @@ export async function openEditor(ctx: ButtonContext): Promise<void> {
   await ctx.reply(editorView(ctx, template, await imagesOf(ctx, template.id)));
 }
 
-/** Drafts for [Try again], by a random key; kept as long as editor components are valid. */
+/**
+ * Drafts for [Try again], by a random key; kept as long as editor components are valid. Module-level, so shared by
+ * every instance of the module in the process: the components that use it are module-level definitions.
+ */
 const drafts = new Map<string, { guildId: string; draft: Draft; expiresAt: number }>();
 
 function keepDraft(guildId: string, draft: Draft): string {

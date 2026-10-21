@@ -1,4 +1,5 @@
 import { defineEntity, formatDuration } from '@bronto/core';
+import { escapeLinkText } from '@bronto/templates';
 import { stickies, type Sticky } from './db/schema.js';
 
 /** What the templates module tells about a template: its name and a link to its post. */
@@ -14,7 +15,7 @@ export interface TemplateInfo {
 export function templateField(sticky: Pick<Sticky, 'templateId'>, template?: TemplateInfo | null): string {
   if (template === undefined) return `\`${sticky.templateId}\``;
   if (template === null) return `Missing (\`${sticky.templateId}\`)`;
-  return `[${template.name}](${template.url})`;
+  return `[${escapeLinkText(template.name)}](${template.url})`;
 }
 
 export const stickyEntity = defineEntity({

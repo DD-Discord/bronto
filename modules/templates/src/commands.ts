@@ -8,8 +8,8 @@ const MAX_LISTED = 50;
 // Discord's limit for message content.
 const MAX_CONTENT = 2000;
 
-/** Escapes the characters that would end a Markdown link's text or target early. */
-function escapeLinkText(name: string): string {
+/** Escapes the characters that would end a Markdown link's text or target early, e.g. in a template name. */
+export function escapeLinkText(name: string): string {
   return name.replace(/[\\[\]()]/g, '\\$&');
 }
 

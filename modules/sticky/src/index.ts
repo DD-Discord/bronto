@@ -45,7 +45,12 @@ export function createStickyModule(): ModuleDefinition<StickyConfig> {
         const rows = await ctx.db.run(async (tx) => tx.select().from(stickies));
         for (const removed of index.replaceGuild(ctx.guildId, rows.map(entryOf))) reposter.cancel(removed.channelId);
         await reposter.resume(ctx);
-        await adoptLegacyStickies(ctx);
+        // Queued, not awaited: the guild's events and interactions wait for guildReady, and both steps call Discord
+        // per sticky. Stickies move one after another, then those whose template is gone are deleted.
+        void ctx.queue.run('adopt', async (task) => {
+          await adoptLegacyStickies(task);
+          await reposter.deleteWithoutTemplate(task);
+        });
       },
       guildStopped: (ctx) => {
         for (const removed of index.dropGuild(ctx.guildId)) reposter.cancel(removed.channelId);

@@ -1,4 +1,5 @@
 import { defineModule, on } from '@bronto/core';
+import type { TemplatesApi } from '@bronto/templates';
 import { ChannelType, Events } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
@@ -105,8 +106,12 @@ describe('reposting', () => {
 
   it('skips stickies whose template is missing and that have no stored copy', async () => {
     const sb = await start();
-    await insertSticky(t, discord, { channelId: CHANNEL, content: null, embeds: null });
+    const sticky = await insertSticky(t, discord, { channelId: CHANNEL, content: null, embeds: null });
+    // Start-up deletes stickies whose template is already gone, so the template goes missing only afterwards.
+    const api = sb.bot.runtimes.find((entry) => entry.name === 'templates')!.api as TemplatesApi;
+    const get = vi.spyOn(api, 'get').mockResolvedValue({ id: sticky.templateId, name: 'Rules', url: 'https://discord.com/channels/1/2' });
     await ready(sb);
+    get.mockRestore();
     await say(sb, message(CHANNEL));
     expect(discord.sent).toEqual([]);
     expect(sb.lines).toContainEqual(expect.objectContaining({ level: 20, msg: "Skipped a repost: the sticky's template doesn't exist", channelId: CHANNEL }));

@@ -1,7 +1,7 @@
 import { defineModule, on } from '@bronto/core';
 import { FakeDiscordHttp } from '@bronto/core/testing';
 import { ChannelType, Events } from 'discord.js';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { forums, templates } from '../src/db/schema.js';
 import { templatesEvents } from '../src/events.js';
@@ -17,6 +17,18 @@ const watcher = defineModule({
   name: 'watcher',
   dependsOn: [createTemplatesModule()],
   listeners: [on(templatesEvents.deleted, (_ctx, { id }) => void emitted.push(id))],
+});
+
+// Runs its guildReady after templates', so it shows when templates let the guild start.
+let probeReady = false;
+const probe = defineModule({
+  name: 'probe',
+  dependsOn: [createTemplatesModule()],
+  hooks: {
+    guildReady: () => {
+      probeReady = true;
+    },
+  },
 });
 
 const THREAD_A = '100000000000008001';
@@ -40,7 +52,13 @@ async function bootstrap() {
   t = await createTestDatabase();
   discord = new FakeDiscordHttp();
   emitted = [];
-  tb = await prepareTemplatesBot(t, discord, { extra: [{ packageName: '@test/watcher', definition: watcher, config: {} }] });
+  probeReady = false;
+  tb = await prepareTemplatesBot(t, discord, {
+    extra: [
+      { packageName: '@test/watcher', definition: watcher, config: {} },
+      { packageName: '@test/probe', definition: probe, config: {} },
+    ],
+  });
   await templatesDb(t).run(async (tx) => {
     await tx.insert(forums).values({ forumChannelId: FORUM });
   });
@@ -123,6 +141,25 @@ describe('deletions and renames', () => {
 });
 
 describe('reconcile at start-up', () => {
+  it('runs in the background, so a slow Discord does not hold the guild', async () => {
+    await bootstrap();
+    const held = Promise.withResolvers<void>();
+    discord.override('GET', `/channels/${THREAD_A}`, async () => {
+      await held.promise;
+      return { status: 404, json: { code: 10003, message: 'Unknown Channel' } };
+    });
+    try {
+      await tb.bot.start();
+      tb.native.ready();
+      await vi.waitFor(() => expect(probeReady).toBe(true));
+      expect(await rows()).toHaveLength(2);
+    } finally {
+      held.resolve();
+    }
+    await tb.bot.idle();
+    expect((await rows()).map((row) => row.threadId)).toEqual([THREAD_B]);
+  });
+
   it('deletes templates whose post is gone', async () => {
     await bootstrap();
     discord.channels.delete(THREAD_A);

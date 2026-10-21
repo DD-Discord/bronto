@@ -1,3 +1,6 @@
+/** How long a download from Discord's CDN may take; a timeout counts as a failed download. */
+export const DOWNLOAD_TIMEOUT_MS = 15_000;
+
 /** Refetch a link when it expires within this long. */
 export const REFRESH_MARGIN_MS = 3_600_000;
 

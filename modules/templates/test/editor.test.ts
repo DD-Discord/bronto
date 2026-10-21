@@ -2,7 +2,7 @@ import { defineModule, on } from '@bronto/core';
 import { fakeButton, fakeModal, fakeSelect, FakeDiscordHttp, type FakeInteraction } from '@bronto/core/testing';
 import { ChannelType, Events, MessageFlags, PermissionFlagsBits, type APIEmbed } from 'discord.js';
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { templatesApi } from '../src/api.js';
 import { render } from '../src/render.js';
@@ -10,7 +10,7 @@ import { refreshPreview } from '../src/save.js';
 import { forums, templateImages, templates } from '../src/db/schema.js';
 import { templatesEvents } from '../src/events.js';
 import { createTemplatesModule } from '../src/index.js';
-import { FORUM, GUILD, inHandler, prepareTemplatesBot, ready, templatesDb, USER, type TemplatesBot } from './harness.js';
+import { FORUM, GUILD, inHandler, prepareTemplatesBot, ready, stallDownloads, templatesDb, USER, type TemplatesBot } from './harness.js';
 
 let t: TestDatabase;
 let discord: FakeDiscordHttp;
@@ -302,6 +302,17 @@ describe('uploads', () => {
     const file = { ...(await uploadedImage()), size: 3 * 1024 * 1024 };
     const fake = await edit(row.threadId, 'images', { uploads: { image_upload: [file] } }, { attachmentSizeLimit: 2 * 1024 * 1024 });
     expect(textOf(payload(fake))).toContain('That file is larger than I can upload here (2 MB).');
+    expect((await stored(row.id)).embed).toEqual({ title: 'Welcome' });
+    expect(await t.database.admin.select().from(templateImages)).toHaveLength(0);
+  });
+
+  it('answers an image download that times out like a failed one', async () => {
+    const row = await makeTemplate();
+    const file = await uploadedImage();
+    stallDownloads();
+    const fake = await edit(row.threadId, 'images', { uploads: { image_upload: [file] } });
+    vi.restoreAllMocks();
+    expect(textOf(payload(fake))).toContain("I couldn't download that image.");
     expect((await stored(row.id)).embed).toEqual({ title: 'Welcome' });
     expect(await t.database.admin.select().from(templateImages)).toHaveLength(0);
   });

@@ -39,7 +39,11 @@ export function createTemplatesModule(): ModuleDefinition<Record<string, never>,
     components: [...previewComponents, ...editorComponents],
     api: (ctx) => templatesApi(ctx),
     hooks: {
-      guildReady: (ctx) => reconcile(ctx),
+      // Queued, not awaited: the guild's events and interactions wait for guildReady, and reconcile asks Discord once
+      // per template.
+      guildReady: (ctx) => {
+        void ctx.queue.run('reconcile', (task) => reconcile(task));
+      },
       // Drafts and uploads waiting for a redraw are kept in memory per guild.
       guildStopped: (ctx) => {
         dropDrafts(ctx.guildId);
@@ -53,4 +57,5 @@ export default createTemplatesModule();
 export type { TemplatesApi } from './api.js';
 export type { TemplateMessage } from './content.js';
 export type { ImageSlot, Template, TemplateImage } from './db/schema.js';
+export { escapeLinkText } from './commands.js';
 export { templatesEvents, templatesGates } from './events.js';

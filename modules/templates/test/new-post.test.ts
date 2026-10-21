@@ -1,9 +1,9 @@
 import { FakeDiscordHttp } from '@bronto/core/testing';
 import { ChannelType, Events, OverwriteType, PermissionFlagsBits } from 'discord.js';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { forums, templateImages, templates } from '../src/db/schema.js';
-import { FORUM, GUILD, prepareTemplatesBot, ready, templatesDb, USER, type TemplatesBot } from './harness.js';
+import { FORUM, GUILD, prepareTemplatesBot, ready, stallDownloads, templatesDb, USER, type TemplatesBot } from './harness.js';
 
 let t: TestDatabase;
 let discord: FakeDiscordHttp;
@@ -38,6 +38,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await tb.bot.stop();
   await t.drop();
 });
@@ -126,6 +127,18 @@ describe('new posts', () => {
     const threadId = await userPost(`https://discord.com/channels/${GUILD}/${TEXT}/${source}`);
     expect(await stored()).toHaveLength(0);
     expect(discord.channels.has(threadId)).toBe(true);
+    expect(discord.messages.get(lastMessageId(threadId))?.content).toBe(
+      "I couldn't turn this post into a template: I couldn't download an image from that message.",
+    );
+  });
+
+  it('answers an image download that times out like a failed one', async () => {
+    const source = id();
+    const file = discord.addFile(TEXT, { filename: 'pic.png', data: 'png bytes' });
+    discord.addMessage(TEXT, source, { embeds: [{ title: 'Slow', image: { url: file.url } }] });
+    stallDownloads();
+    const threadId = await userPost(`https://discord.com/channels/${GUILD}/${TEXT}/${source}`);
+    expect(await stored()).toHaveLength(0);
     expect(discord.messages.get(lastMessageId(threadId))?.content).toBe(
       "I couldn't turn this post into a template: I couldn't download an image from that message.",
     );
