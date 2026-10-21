@@ -1,4 +1,4 @@
-import type { Interaction } from 'discord.js';
+import { Collection, type Interaction } from 'discord.js';
 
 export type FakeResponseKind = 'reply' | 'deferReply' | 'update' | 'deferUpdate' | 'editReply' | 'followUp' | 'deleteReply' | 'showModal' | 'respond';
 
@@ -24,6 +24,9 @@ export type FakeCommandInput = Partial<FakeInteractionBase> & {
   options?: Record<string, unknown>;
 };
 
+/** An uploaded modal file; `id` defaults to its position. */
+export interface UploadedFile { id?: string; filename?: string; url?: string; size?: number; contentType?: string; [key: string]: unknown }
+
 type Kind = 'command' | 'autocomplete' | 'button' | 'modal' | 'select';
 
 interface Details {
@@ -34,6 +37,8 @@ interface Details {
   focused?: string;
   customId?: string;
   fields?: Record<string, string>;
+  uploads?: Record<string, UploadedFile[]>;
+  checkboxes?: Record<string, boolean>;
   values?: string[];
 }
 
@@ -57,7 +62,11 @@ export class FakeInteraction {
     get(name: string): Record<string, unknown> | null;
     getFocused(full: true): { name: string; type: number; value: string; focused: true };
   };
-  readonly fields: { getTextInputValue(customId: string): string };
+  readonly fields: {
+    getTextInputValue(customId: string): string;
+    getUploadedFiles(customId: string): Collection<string, UploadedFile> | null;
+    getCheckbox(customId: string): boolean;
+  };
   private readonly kind: Kind;
   private readonly rejectResponses: boolean;
   private readonly cached: boolean;
@@ -88,6 +97,17 @@ export class FakeInteraction {
     this.fields = {
       getTextInputValue: (customId) => {
         const value = fields[customId];
+        if (value === undefined) throw new Error(`No modal field ${customId}`);
+        return value;
+      },
+      getUploadedFiles: (customId) => {
+        const files = details.uploads?.[customId];
+        if (files === undefined) throw new Error(`No modal field ${customId}`);
+        if (files.length === 0) return null;
+        return new Collection(files.map((file, index) => [file.id ?? String(index), { id: String(index), ...file, name: file.filename }]));
+      },
+      getCheckbox: (customId) => {
+        const value = details.checkboxes?.[customId];
         if (value === undefined) throw new Error(`No modal field ${customId}`);
         return value;
       },
@@ -196,7 +216,12 @@ export function fakeButton(input: Partial<FakeInteractionBase> & { customId: str
 }
 
 export function fakeModal(
-  input: Partial<FakeInteractionBase> & { customId: string; fields?: Record<string, string> },
+  input: Partial<FakeInteractionBase> & {
+    customId: string;
+    fields?: Record<string, string>;
+    uploads?: Record<string, UploadedFile[]>;
+    checkboxes?: Record<string, boolean>;
+  },
 ): FakeInteraction {
   return new FakeInteraction('modal', input, input);
 }

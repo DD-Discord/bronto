@@ -3,27 +3,56 @@ import { Client, ClientUser, Events, type APIUser, type ClientApplication } from
 import type { FakeDiscordHttp } from './discord-http.js';
 import { fakeTransport, type RecordedRequest } from './rest.js';
 
-interface DownloadBlocker { disableNetConnect(): void; close(): Promise<void>; }
+interface Interceptor { reply(callback: (options: { path: string }) => unknown): { persist(): void } }
+interface DownloadBlocker {
+  disableNetConnect(): void;
+  close(): Promise<void>;
+  get(origin: string): { intercept(options: { path: (path: string) => boolean; method: string }): Interceptor };
+}
 interface UndiciControls {
   getGlobalDispatcher(): object;
   setGlobalDispatcher(dispatcher: object): void;
   MockAgent: new () => DownloadBlocker;
 }
 
-// Use the same Undici instance Discord.js uses for URL attachment downloads, without adding a dependency.
+// Use the same Undici instance Discord.js uses for URL attachment downloads, without adding a dependency. Its global
+// dispatcher is the one Node's global `fetch` uses too, so both are blocked and both reach the fake CDN.
 const undici = createRequire(import.meta.resolve('discord.js'))('undici') as UndiciControls;
-let downloads: { agent: DownloadBlocker; previous: object; users: number } | undefined;
+let downloads: { agent: DownloadBlocker; previous: object; users: number; sources: FakeDiscordHttp[] } | undefined;
 
-function blockDownloads(): () => Promise<void> {
+const CDN = 'https://cdn.discordapp.com';
+
+/** Answers `/attachments/<channel>/<id>/<name>?ex=…` from the stored files of the registered fakes. */
+function serveAttachment(sources: FakeDiscordHttp[], requestPath: string) {
+  const notFound = { statusCode: 404, data: 'This content is no longer available.' };
+  const url = new URL(requestPath, CDN);
+  const [, , channelId, id, name] = url.pathname.split('/');
+  const expires = Number.parseInt(url.searchParams.get('ex') ?? '', 16);
+  if (!(expires * 1000 > Date.now())) return notFound;
+  for (const http of sources) {
+    const file = http.files.get(id ?? '');
+    if (file && file.channelId === channelId && encodeURIComponent(file.filename) === name) {
+      return { statusCode: 200, data: file.data, responseOptions: { headers: { 'content-type': file.contentType } } };
+    }
+  }
+  return notFound;
+}
+
+function blockDownloads(http: FakeDiscordHttp): () => Promise<void> {
   if (!downloads || undici.getGlobalDispatcher() !== downloads.agent) {
     const agent = new undici.MockAgent();
     agent.disableNetConnect();
-    downloads = { agent, previous: undici.getGlobalDispatcher(), users: 0 };
+    const sources: FakeDiscordHttp[] = [];
+    agent.get(CDN).intercept({ path: path => path.startsWith('/attachments/'), method: 'GET' })
+      .reply(options => serveAttachment(sources, options.path)).persist();
+    downloads = { agent, previous: undici.getGlobalDispatcher(), users: 0, sources };
     undici.setGlobalDispatcher(agent);
   }
   const scope = downloads;
   scope.users += 1;
+  scope.sources.push(http);
   return async () => {
+    scope.sources.splice(scope.sources.indexOf(http), 1);
     scope.users -= 1;
     if (scope.users !== 0) return;
     if (undici.getGlobalDispatcher() === scope.agent) undici.setGlobalDispatcher(scope.previous);
@@ -46,7 +75,7 @@ export interface NativeTestClient {
 export async function createNativeTestClient(http: FakeDiscordHttp): Promise<NativeTestClient> {
   const transport = fakeTransport(http.answer);
   const client = new Client({ intents: [], rest: { ...transport.options, offset: 0, globalRequestsPerSecond: Infinity } }) as NativeTestClient['client'];
-  const releaseDownloads = blockDownloads();
+  const releaseDownloads = blockDownloads(http);
   const destroy = client.destroy.bind(client);
   let destroying: Promise<void> | undefined;
   client.destroy = () => destroying ??= (async () => {

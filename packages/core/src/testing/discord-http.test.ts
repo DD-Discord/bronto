@@ -1,6 +1,7 @@
-import { expect, it } from 'vitest';
-import { ChannelType } from 'discord.js';
+import { afterEach, expect, it, vi } from 'vitest';
+import { ChannelType, DiscordAPIError, type ForumChannel, type ThreadChannel } from 'discord.js';
 import { FakeDiscordHttp } from './discord-http.js';
+import { createNativeTestClient, type NativeTestClient } from './native-client.js';
 const GUILD = '100000000000000001';
 const CHANNEL = '100000000000000010';
 const OTHER = '100000000000000011';
@@ -37,4 +38,134 @@ it.each([
     .rejects.toThrow(`Unexpected Discord request: ${method} ${path}`);
   expect(http.webhooks.size).toBe(0);
   expect(http.messages.has(MESSAGE)).toBe(true);
+});
+
+const FORUM = '100000000000000020';
+const clients: NativeTestClient[] = [];
+afterEach(async () => { vi.useRealTimers(); for (const c of clients.splice(0)) await c.client.destroy(); });
+async function forumSetup(options: { community?: boolean } = {}) {
+  const http = new FakeDiscordHttp();
+  http.addGuild(GUILD, options);
+  http.addChannel(FORUM, { guildId: GUILD, type: ChannelType.GuildForum });
+  const c = await createNativeTestClient(http); clients.push(c);
+  const forum = await c.client.channels.fetch(FORUM) as ForumChannel;
+  return { ...c, http, forum };
+}
+const apiError = async (promise: Promise<unknown>) => {
+  const error = await promise.catch(e => e);
+  expect(error).toBeInstanceOf(DiscordAPIError);
+  return error as DiscordAPIError;
+};
+
+it('answers unknown channels with 10003 and deletes channels', async () => {
+  const { client, http } = await forumSetup();
+  const error = await apiError(client.channels.fetch('100000000000000404', { force: true }));
+  expect(error).toMatchObject({ status: 404, code: 10003, message: 'Unknown Channel' });
+  const forum = await client.channels.fetch(FORUM) as ForumChannel;
+  const post = await forum.threads.create({ name: 'Post', message: { content: 'Body' } });
+  await forum.delete();
+  expect(http.channels.has(FORUM)).toBe(false);
+  expect(http.channels.has(post.id)).toBe(false);
+  expect(http.messages.has(post.id)).toBe(false);
+  expect(http.deletedChannels).toEqual(expect.arrayContaining([FORUM, post.id]));
+  await apiError(client.channels.fetch(FORUM, { force: true }));
+});
+
+it('creates forums only in community guilds and lists guild channels', async () => {
+  const { client } = await forumSetup();
+  const guild = client.guilds.cache.get(GUILD)!;
+  const created = await guild.channels.create({ name: 'templates', type: ChannelType.GuildForum });
+  expect(created.type).toBe(ChannelType.GuildForum);
+  const channels = await guild.channels.fetch();
+  expect(channels.has(created.id)).toBe(true);
+  expect(guild.features).toContain('COMMUNITY');
+
+  const plain = await forumSetup({ community: false });
+  expect(plain.client.guilds.cache.get(GUILD)!.features).not.toContain('COMMUNITY');
+  const error = await apiError(plain.client.guilds.cache.get(GUILD)!.channels.create({ name: 'templates', type: ChannelType.GuildForum }));
+  expect(error).toMatchObject({ status: 400, code: 50024, message: 'Cannot execute action on this channel type' });
+  await plain.client.guilds.cache.get(GUILD)!.channels.create({ name: 'text', type: ChannelType.GuildText });
+});
+
+it('creates forum posts with a starter message that shares the thread id', async () => {
+  const { forum, http } = await forumSetup();
+  const post = await forum.threads.create({
+    name: 'Welcome', message: { content: 'Hello', embeds: [{ title: 'Embed' }] },
+  });
+  expect(post.parentId).toBe(FORUM);
+  expect(post.ownerId).toBe(http.botId);
+  expect(post.archived).toBe(false);
+  expect(post.locked).toBe(false);
+  expect(http.channels.get(post.id)).toMatchObject({ type: ChannelType.PublicThread, name: 'Welcome', parent_id: FORUM, owner_id: http.botId });
+  const starter = await post.fetchStarterMessage();
+  expect(starter?.id).toBe(post.id);
+  expect(starter?.content).toBe('Hello');
+  expect(starter?.embeds[0]?.title).toBe('Embed');
+});
+
+it('uploads files with a forum post, signs urls and re-signs them on every fetch', async () => {
+  vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-03-01T12:00:00Z') });
+  const { forum, http } = await forumSetup();
+  const post = await forum.threads.create({
+    name: 'Files',
+    message: { content: 'With file', files: [{ attachment: Buffer.from('png bytes'), name: 'pic.png' }] },
+  });
+  const first = (await post.fetchStarterMessage())!.attachments.first()!;
+  expect(first.name).toBe('pic.png');
+  expect(first.size).toBe(9);
+  const url = new URL(first.url);
+  expect(url.origin + url.pathname).toBe(`https://cdn.discordapp.com/attachments/${post.id}/${first.id}/pic.png`);
+  const expires = Math.floor(Date.now() / 1000) + 24 * 3600;
+  expect(url.searchParams.get('ex')).toBe(expires.toString(16));
+  expect(url.searchParams.get('is')).toBe(Math.floor(Date.now() / 1000).toString(16));
+  expect(url.searchParams.get('hm')).toMatch(/^[0-9a-f]{64}$/);
+  expect(http.files.get(first.id)).toMatchObject({ filename: 'pic.png', channelId: post.id });
+  expect(Buffer.from(http.files.get(first.id)!.data).toString()).toBe('png bytes');
+
+  vi.setSystemTime(new Date('2026-03-01T13:00:00Z'));
+  const again = (await post.messages.fetch({ message: post.id, force: true })).attachments.first()!;
+  const next = new URL(again.url);
+  expect(next.searchParams.get('ex')).toBe((Math.floor(Date.now() / 1000) + 24 * 3600).toString(16));
+  expect(next.searchParams.get('ex')).not.toBe(url.searchParams.get('ex'));
+  expect(next.searchParams.get('hm')).not.toBe(url.searchParams.get('hm'));
+});
+
+it('edits and archives posts through channel PATCH', async () => {
+  const { forum, http } = await forumSetup();
+  http.channels.set(FORUM, { ...http.channels.get(FORUM)!, available_tags: [{ id: '100000000000000777', name: 'Tag', moderated: false, emoji_id: null, emoji_name: null }] } as never);
+  const post = await forum.threads.create({ name: 'Old', message: { content: 'Body' } }) as ThreadChannel;
+  await post.setName('New');
+  await post.setLocked(true);
+  await post.setAppliedTags(['100000000000000777']);
+  expect(http.channels.get(post.id)).toMatchObject({ name: 'New', applied_tags: ['100000000000000777'], thread_metadata: { archived: false, locked: true } });
+  await post.setArchived(true);
+  expect(http.channels.get(post.id)).toMatchObject({ thread_metadata: { archived: true, locked: true } });
+  await post.setArchived(false);
+  expect(http.channels.get(post.id)).toMatchObject({ thread_metadata: { archived: false } });
+});
+
+it('rejects message edits in archived threads with 50083 and supports kept and new attachments', async () => {
+  const { forum, http } = await forumSetup();
+  const post = await forum.threads.create({
+    name: 'Edit',
+    message: { content: 'v1', files: [{ attachment: Buffer.from('one'), name: 'one.txt' }, { attachment: Buffer.from('two'), name: 'two.txt' }] },
+  });
+  const starter = (await post.fetchStarterMessage())!;
+  const [one, two] = [...starter.attachments.values()];
+  const edited = await starter.edit({
+    content: 'v2',
+    attachments: [one!],
+    files: [{ attachment: Buffer.from('three'), name: 'three.txt' }],
+  });
+  expect(edited.content).toBe('v2');
+  expect(edited.attachments.map(a => a.name)).toEqual(['one.txt', 'three.txt']);
+  expect(edited.attachments.first()!.id).toBe(one!.id);
+  expect(http.files.has(two!.id)).toBe(false);
+  const three = edited.attachments.last()!;
+  expect(Buffer.from(http.files.get(three.id)!.data).toString()).toBe('three');
+
+  await post.setArchived(true);
+  const error = await apiError(edited.edit({ content: 'v3' }));
+  expect(error).toMatchObject({ status: 400, code: 50083, message: 'Thread is archived' });
+  expect(http.messages.get(post.id)!.content).toBe('v2');
 });
