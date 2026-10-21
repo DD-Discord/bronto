@@ -18,7 +18,7 @@ import { IMAGE_SLOTS, templates, type ImageSlot, type TemplateImage } from './db
 import { openEditor } from './editor.js';
 import { templatesEvents, templatesGates } from './events.js';
 import { requireEditor, templateForThread } from './permissions.js';
-import { render, setSlot, slotUrl } from './render.js';
+import { clearSlot, render, setSlot, slotUrl } from './render.js';
 import { storeTemplate } from './save.js';
 import { exportJson, parseTemplateJson } from './transfer.js';
 
@@ -32,13 +32,6 @@ const ATTACHMENT_LINK = /^https:\/\/(?:cdn\.discordapp\.com|media\.discordapp\.n
 /** A preview button: signed for the template's thread, without arguments or expiry. */
 function previewButton(name: string, execute: ButtonDefinition['execute']): ButtonDefinition {
   return defineButton({ name, bind: { channel: true }, ephemeral: true, execute });
-}
-
-function clearSlot(embed: APIEmbed, slot: ImageSlot): void {
-  if (slot === 'image') delete embed.image;
-  else if (slot === 'thumbnail') delete embed.thumbnail;
-  else if (slot === 'author_icon' && embed.author) delete embed.author.icon_url;
-  else if (slot === 'footer_icon' && embed.footer) delete embed.footer.icon_url;
 }
 
 /**

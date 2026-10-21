@@ -57,7 +57,9 @@ export async function storeTemplate(
       .set({ content: next.content, embed, ...(next.showPostTime === undefined ? {} : { showPostTime: next.showPostTime }) })
       .where(eq(templates.id, current.id))
       .returning();
-    const removed = IMAGE_SLOTS.filter((slot) => slotUrl(embed ?? {}, slot)?.startsWith(UPLOAD_PREFIX) !== true);
+    // A slot that gets a new upload loses its old row too, so render never shows the old image for the new name.
+    const replaced = new Set(uploads.map((upload) => upload.slot));
+    const removed = IMAGE_SLOTS.filter((slot) => replaced.has(slot) || slotUrl(embed ?? {}, slot)?.startsWith(UPLOAD_PREFIX) !== true);
     await tx.delete(templateImages).where(and(eq(templateImages.templateId, current.id), inArray(templateImages.slot, removed)));
     return row!;
   });
@@ -70,6 +72,7 @@ export async function storeTemplate(
 
 /** Uploads waiting for the next preview redraw of a template; the redraw that starts takes them all. */
 interface Batch {
+  guildId: string;
   uploads: Map<ImageSlot, PendingUpload>;
   started: boolean;
   error: unknown;
@@ -77,19 +80,36 @@ interface Batch {
 
 const waiting = new Map<string, Batch>();
 
+/** The template's waiting batch, created when there is none. */
+function waitingBatch(guildId: string, templateId: string): Batch {
+  let batch = waiting.get(templateId);
+  if (batch === undefined) {
+    batch = { guildId, uploads: new Map(), started: false, error: null };
+    waiting.set(templateId, batch);
+  }
+  return batch;
+}
+
+/** Puts uploads of a failed redraw back for the next one; a newer upload for the same slot wins. */
+function putBack(guildId: string, templateId: string, uploads: Iterable<PendingUpload>): void {
+  const batch = waitingBatch(guildId, templateId);
+  for (const upload of uploads) if (!batch.uploads.has(upload.slot)) batch.uploads.set(upload.slot, upload);
+}
+
+/** Drops the uploads waiting for a redraw in the guild; for `guildStopped`. */
+export function dropWaitingUploads(guildId: string): void {
+  for (const [templateId, batch] of waiting) if (batch.guildId === guildId) waiting.delete(templateId);
+}
+
 /**
  * Redraws the preview from the stored template in the template's queue: a burst of saves collapses into one redraw
  * that reads the latest row. Uploads ride along in a batch that the next starting redraw takes, so a replaced queue
- * task never drops one, and redraws never overlap. Resolves with the redraw's error, or null.
+ * task never drops one, and redraws never overlap. When the redraw fails or doesn't run, its uploads wait for the next
+ * save's redraw. Resolves with the redraw's error, or null.
  */
 export async function refreshPreview(ctx: TemplatesContext, templateId: string, uploads: PendingUpload[] = []): Promise<unknown> {
-  let batch = waiting.get(templateId);
-  if (batch === undefined) {
-    batch = { uploads: new Map(), started: false, error: null };
-    waiting.set(templateId, batch);
-  }
-  for (const upload of uploads) batch.uploads.set(upload.slot, upload);
-  const mine = batch;
+  const mine = waitingBatch(ctx.guildId, templateId);
+  for (const upload of uploads) mine.uploads.set(upload.slot, upload);
   await ctx.queue.run(templateId, async (task) => {
     const taken = waiting.get(templateId);
     if (taken === undefined) return;
@@ -99,12 +119,12 @@ export async function refreshPreview(ctx: TemplatesContext, templateId: string, 
       await redraw(task as TemplatesContext, templateId, [...taken.uploads.values()]);
     } catch (error) {
       taken.error = error;
+      putBack(taken.guildId, templateId, taken.uploads.values());
       task.log.warn({ err: error, templateId }, 'Updating the post of a template failed');
     }
   });
   if (mine.started) return mine.error;
-  // The queue skipped the redraw: the bot is stopping or the module was switched off.
-  if (waiting.get(templateId) === mine) waiting.delete(templateId);
+  // The queue skipped the redraw (the bot is stopping or the module was switched off); the batch stays waiting.
   return new UserError("the update didn't run.");
 }
 

@@ -116,6 +116,11 @@ function keepDraft(guildId: string, draft: Draft): string {
   return key;
 }
 
+/** Drops the guild's drafts; for `guildStopped`. */
+export function dropDrafts(guildId: string): void {
+  for (const [key, entry] of drafts) if (entry.guildId === guildId) drafts.delete(key);
+}
+
 /** A V2 message with `text` and its buttons, so that a later `ctx.update` can turn it into the editor. */
 function prompt(text: string, button: ButtonBuilder): ReplyMessage {
   return {

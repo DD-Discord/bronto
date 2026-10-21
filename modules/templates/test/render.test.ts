@@ -1,11 +1,11 @@
 import { FakeDiscordHttp } from '@bronto/core/testing';
-import { ChannelType } from 'discord.js';
+import { ChannelType, type APIEmbed } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import type { TemplatesContext } from '../src/context.js';
 import { templateImages, templates, type ImageSlot } from '../src/db/schema.js';
 import { linkExpiry } from '../src/images.js';
-import { render } from '../src/render.js';
+import { render, setSlot } from '../src/render.js';
 import { FORUM, GUILD, prepareTemplatesBot, templatesDb, type TemplatesBot } from './harness.js';
 
 const THREAD = '100000000000000100';
@@ -45,6 +45,14 @@ interface Seed {
   images?: { slot: ImageSlot; filename: string; expiresAt: Date; stale?: boolean }[];
 }
 
+/** The seed's embed with each image's slot pointing at its file, as the editor stores uploads. */
+function embedWithReferences(options: Seed): APIEmbed | null {
+  if (options.embed === undefined || options.embed === null) return null;
+  const embed = structuredClone(options.embed) as APIEmbed;
+  for (const image of options.images ?? []) setSlot(embed, image.slot, `attachment://${image.filename}`);
+  return embed;
+}
+
 /** A template whose preview message in THREAD carries the given images; returns its id and the attachment ids. */
 async function seed(options: Seed = {}): Promise<{ id: string; attachments: Record<string, string> }> {
   const images = options.images ?? [];
@@ -56,7 +64,7 @@ async function seed(options: Seed = {}): Promise<{ id: string; attachments: Reco
       .values({
         name: 'welcome',
         content: 'Hello',
-        embed: (options.embed ?? null) as never,
+        embed: embedWithReferences(options) as never,
         showPostTime: options.showPostTime ?? false,
         threadId: THREAD,
         previewMessageId: PREVIEW,
@@ -154,6 +162,22 @@ describe('render', () => {
     });
     const message = discord.messages.get(PREVIEW)!;
     message.attachments = message.attachments.filter((attachment) => attachment.id !== attachments.image);
+    const rendered = await inHandler((ctx) => render(ctx, id));
+    expect(rendered!.embed).toEqual({ title: 'Hi' });
+    expect(tb.lines.some((line) => line.level === 40)).toBe(true);
+  });
+
+  it('leaves out an attachment:// slot without a stored upload and logs a warning', async () => {
+    const { id } = await seed({ embed: { title: 'Hi', image: { url: 'attachment://image.png' }, author: { name: 'Me', icon_url: 'attachment://author_icon.png' } } });
+    const rendered = await inHandler((ctx) => render(ctx, id));
+    expect(rendered!.embed).toEqual({ title: 'Hi', author: { name: 'Me' } });
+    expect(tb.lines.filter((line) => line.level === 40)).toHaveLength(2);
+  });
+
+  it('leaves out a slot whose stored upload is another file than the embed names', async () => {
+    const future = new Date(Date.now() + 5 * HOUR);
+    const { id } = await seed({ embed: { title: 'Hi' }, images: [{ slot: 'image', filename: 'image.png', expiresAt: future }] });
+    await t.database.admin.update(templates).set({ embed: { title: 'Hi', image: { url: 'attachment://image.jpg' } } });
     const rendered = await inHandler((ctx) => render(ctx, id));
     expect(rendered!.embed).toEqual({ title: 'Hi' });
     expect(tb.lines.some((line) => line.level === 40)).toBe(true);

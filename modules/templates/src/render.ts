@@ -2,10 +2,12 @@ import { and, eq } from 'drizzle-orm';
 import { DiscordAPIError, RESTJSONErrorCodes, type APIEmbed } from 'discord.js';
 import type { TemplatesContext } from './context.js';
 import type { TemplateMessage } from './content.js';
-import { templateImages, templates, type ImageSlot, type TemplateImage } from './db/schema.js';
+import { IMAGE_SLOTS, templateImages, templates, type ImageSlot, type TemplateImage } from './db/schema.js';
 import { linkExpiry, REFRESH_MARGIN_MS } from './images.js';
 
 export { REFRESH_MARGIN_MS } from './images.js';
+
+const UPLOAD_PREFIX = 'attachment://';
 
 /** The slot's URL in the embed, if any. */
 export function slotUrl(embed: APIEmbed, slot: ImageSlot): string | undefined {
@@ -18,6 +20,23 @@ export function slotUrl(embed: APIEmbed, slot: ImageSlot): string | undefined {
       return embed.author?.icon_url;
     case 'footer_icon':
       return embed.footer?.icon_url;
+  }
+}
+
+/** Removes the slot's image from the embed. */
+export function clearSlot(embed: APIEmbed, slot: ImageSlot): void {
+  if (slot === 'image') delete embed.image;
+  else if (slot === 'thumbnail') delete embed.thumbnail;
+  else if (slot === 'author_icon' && embed.author) delete embed.author.icon_url;
+  else if (slot === 'footer_icon' && embed.footer) delete embed.footer.icon_url;
+}
+
+/** The file name a Discord attachment link ends in; null for anything else. */
+function linkFileName(url: string): string | null {
+  try {
+    return decodeURIComponent(new URL(url).pathname.split('/').pop() ?? '') || null;
+  } catch {
+    return null;
   }
 }
 
@@ -109,11 +128,25 @@ export async function render(ctx: TemplatesContext, id: string): Promise<Templat
 
   const embed = template.embed === null ? null : structuredClone(template.embed);
   if (embed !== null) {
-    for (const [slot, url] of urls) {
-      if (!setSlot(embed, slot, url)) {
+    // An upload shows only where the embed names its file (`attachment://<name>`) and the stored link is that file;
+    // anything else (an upload still on its way, a gone attachment) is left out rather than passed on.
+    for (const slot of IMAGE_SLOTS) {
+      const reference = slotUrl(embed, slot);
+      const url = urls.get(slot);
+      if (reference?.startsWith(UPLOAD_PREFIX) !== true) {
+        if (url !== undefined) ctx.log.warn({ templateId: id, slot }, 'Template image is not referenced by its embed');
+        continue;
+      }
+      if (url === undefined || linkFileName(url) !== reference.slice(UPLOAD_PREFIX.length)) {
+        ctx.log.warn({ templateId: id, slot }, 'Template image has no stored upload; leaving it out');
+        clearSlot(embed, slot);
+      } else if (!setSlot(embed, slot, url)) {
         ctx.log.warn({ templateId: id, slot }, 'Template icon has no author name or footer text to attach to');
+        clearSlot(embed, slot);
       }
     }
+    if (embed.author !== undefined && !embed.author.name) delete embed.author;
+    if (embed.footer !== undefined && !embed.footer.text) delete embed.footer;
     if (template.showPostTime) embed.timestamp = new Date().toISOString();
   }
   return { content: template.content, embed };

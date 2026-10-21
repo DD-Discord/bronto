@@ -5,6 +5,8 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { templatesApi } from '../src/api.js';
+import { render } from '../src/render.js';
+import { refreshPreview } from '../src/save.js';
 import { forums, templateImages, templates } from '../src/db/schema.js';
 import { templatesEvents } from '../src/events.js';
 import { createTemplatesModule } from '../src/index.js';
@@ -431,5 +433,59 @@ describe('concurrency', () => {
     await tb.bot.idle();
     expect(await t.database.admin.select().from(templateImages)).toHaveLength(1);
     expect(previewOf(row.threadId).attachments.map((attachment: Json) => attachment.filename)).toEqual(['image.png']);
+  });
+});
+
+describe('redraws that fail or do not run', () => {
+  const setModule = (enabled: boolean) => tb.bot.lifecycle.setModuleEnabled(GUILD, 'templates', enabled, null);
+  const pending = () => [{ slot: 'image' as const, name: 'cat.png', data: Buffer.from('png bytes') }];
+
+  async function referenceUpload(id: string) {
+    await t.database.admin.update(templates).set({ embed: { title: 'Welcome', image: { url: 'attachment://image.png' } } }).where(eq(templates.id, id));
+  }
+
+  it('retries the upload of a failed redraw with the next save, and renders without it meanwhile', async () => {
+    const row = await makeTemplate();
+    const path = `/channels/${row.threadId}/messages/${row.previewMessageId}`;
+    discord.override('PATCH', path, () => ({ status: 403, json: { code: 50013, message: 'Missing Permissions' } }));
+    const failed = await edit(row.threadId, 'images', { uploads: { image_upload: [await uploadedImage()] } });
+    expect(payload(failed, 1).content).toMatch(/^Saved, but the post couldn't be updated/);
+    expect(await t.database.admin.select().from(templateImages)).toHaveLength(0);
+    expect((await inHandler(tb, (ctx) => render(ctx, row.id)))!.embed).toEqual({ title: 'Welcome' });
+
+    discord.clearOverride('PATCH', path);
+    await edit(row.threadId, 'content', { fields: { content: 'Next' } });
+    expect((await t.database.admin.select().from(templateImages)).map((image) => image.slot)).toEqual(['image']);
+    expect(previewOf(row.threadId).attachments.map((attachment: Json) => attachment.filename)).toEqual(['image.png']);
+    expect((await inHandler(tb, (ctx) => render(ctx, row.id)))!.embed!.image!.url).toMatch(/^https:\/\/cdn\.discordapp\.com\/attachments\/.*\/image\.png/);
+  });
+
+  it('keeps the uploads of a redraw the queue skipped for the next save', async () => {
+    const row = await makeTemplate();
+    await referenceUpload(row.id);
+    await setModule(false);
+    const error = await inHandler(tb, (ctx) => refreshPreview(ctx, row.id, pending()));
+    expect((error as Error).message).toBe("the update didn't run.");
+    await setModule(true);
+    await edit(row.threadId, 'content', { fields: { content: 'Next' } });
+    expect((await t.database.admin.select().from(templateImages)).map((image) => image.slot)).toEqual(['image']);
+  });
+
+  it('drops waiting uploads and drafts when the module stops in the guild', async () => {
+    const row = await makeTemplate();
+    const failed = await edit(row.threadId, 'body', { fields: { color: 'nope' } });
+    const retryId = customIdIn(payload(failed), 'templates:try-again:');
+    await referenceUpload(row.id);
+    await setModule(false);
+    await inHandler(tb, (ctx) => refreshPreview(ctx, row.id, pending()));
+    await setModule(true);
+    await setModule(false);
+    await setModule(true);
+
+    const retry = await click(row.threadId, retryId);
+    expect(payload(retry).content).toBe('That form has expired. Open the editor again.');
+    await edit(row.threadId, 'content', { fields: { content: 'Next' } });
+    expect(await t.database.admin.select().from(templateImages)).toHaveLength(0);
+    expect(previewOf(row.threadId).attachments).toEqual([]);
   });
 });
