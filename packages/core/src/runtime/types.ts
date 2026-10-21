@@ -3,6 +3,7 @@ import type { Logger } from 'pino';
 import type { ComponentDefinition } from '../interactions/components.js';
 import type { ScopedDb } from '../db/scoped.js';
 import type { EventDefinition } from './events.js';
+import type { GateDefinition, GateResult } from './gates.js';
 import type { ApiOf, ModuleDefinition } from './module.js';
 
 /**
@@ -38,6 +39,11 @@ export interface HandlerContext<TConfig = any> extends ModuleContext<TConfig> {
   readonly db: ScopedDb;
   /** Sends one of this module's events: after the current `db.run` transaction commits (dropped if it rolls back), or at once outside a transaction. */
   emit<P>(event: EventDefinition<P>, payload: P): void;
+  /**
+   * Asks the listeners of the other enabled modules whether the action may go ahead, in dependency order; the first
+   * denial stops the rest. A listener that throws or takes over 5 s denies. Only this module's gates; throws inside `db.run`.
+   */
+  check<P>(gate: GateDefinition<P>, payload: P): Promise<GateResult>;
   readonly queue: ModuleQueue;
   /**
    * A signed custom ID for one of this module's buttons or modals, bound to this guild. `target.userId` defaults to the
