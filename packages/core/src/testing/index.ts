@@ -21,3 +21,5 @@ export { fakeRest, type FakeRestAnswer, type RecordedRequest } from './rest.js';
 export { fakeTransport, type FakeHttpAnswer } from './rest.js';
 export { FakeDiscordHttp } from './discord-http.js';
 export { createNativeTestClient, type NativeTestClient } from './native-client.js';
+
+export { checkDocs } from './docs.js';

@@ -44,6 +44,8 @@ export interface ModuleDefinition<TConfig = any, TApi = unknown> {
   commands?: Record<string, CommandDefinition>;
   /** Buttons, modals and selects, routed by the custom-ID prefix `<module>:<name>`. */
   components?: ComponentDefinition[];
+  /** The module's user docs folder, e.g. `new URL('../docs/user/', import.meta.url)`. */
+  docs?: URL;
   /** Discord permissions the bot needs for this module; missing ones are logged when a guild is set up. */
   botPermissions?: bigint[];
   /**

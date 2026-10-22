@@ -3,4 +3,5 @@ export * from './db/index.js';
 export * from './interactions/index.js';
 export * from './runtime/index.js';
 export * from './crud/index.js';
+export * from './docs/index.js';
 export * from './webhooks/index.js';
