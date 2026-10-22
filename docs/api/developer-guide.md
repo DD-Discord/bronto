@@ -177,6 +177,23 @@ To load the module:
 Start the bot with `pnpm bronto start`. The log line "Bot started" lists the loaded modules, and `/modules list` shows
 them in each server.
 
+### User docs
+
+A module can ship help pages that members read in Discord with `/help`. Put them in `docs/user/` (one Markdown file per
+topic, `index.md` first) and point `defineModule` at the folder:
+
+```ts
+export default defineModule({
+  name: 'karma',
+  docs: new URL('../docs/user/', import.meta.url),
+  // ...
+});
+```
+
+Call `checkDocs(new URL('../docs/user/', import.meta.url), 'karma')` from `@bronto/core/testing` in a test so a broken
+page fails the build. A module without `docs` does not appear in `/help`. The file format, its limits and everything
+the check rejects are in [Writing user docs](writing-user-docs.md).
+
 ## 3. Settings
 
 A module's section of `config.yaml` is validated by a zod schema. The validated value is `ctx.config`:
@@ -414,7 +431,8 @@ opt.string({
 ```
 
 A third argument, `options`, holds the raw values of the command's other options as typed so far (the focused one
-included), for suggestions that depend on them. The router trims the list to Discord's limits: 25 choices, 100 characters per name, and no empty names.
+included), for suggestions that depend on them. The router trims the list to Discord's limits: 25 choices, 100
+characters per name, and no empty names.
 
 ### Answering
 
@@ -1123,7 +1141,8 @@ packages/
 │   │   ├── lifecycle.ts     server set-up, leave, switch, purge
 │   │   ├── legacy.ts        import-legacy context
 │   │   └── bot.ts           createBot: wires everything together
-│   ├── src/interactions/    commands, options, components, router, responder, command sync, /modules
+│   ├── src/interactions/    commands, options, components, router, responder, command sync, /modules, /help
+│   ├── src/docs/            user docs: parser, pagination and folder loader
 │   ├── src/crud/            defineEntity, crudSubcommands
 │   ├── src/webhooks/        native webhook selection, recovery and safe error helpers
 │   ├── src/testing/         native HTTP-backed clients, FakeClient, fake interactions, captureLog
@@ -1133,6 +1152,7 @@ packages/
     ├── src/commands.ts      start, purge, delete-guild, import-legacy
     ├── src/client.ts        discord.js client with the union of the modules' intents
     └── src/importer.ts      resolves module packages from the working directory
+docs/                        user pages of core (docs/user/), self-hosting (docs/admin/) and development (docs/api/)
 modules/sticky/              a production module (section 24)
 modules/templates/           a production module: message templates as forum posts, with an API, events and a gate
 modules/autodelete/          a production module: per-channel post rules, cooldowns, leave cleanup
@@ -1420,6 +1440,8 @@ changes them within seconds; global commands could take up to an hour.
 
 - **Environment:** the CLI loads `.env` from the working directory. Variables already set in the environment win.
   `LOG_LEVEL` sets the pino level.
+- **Running it:** [Running bronto](../admin/running.md) and [Running with Docker](../admin/docker.md) cover config and
+  deployment for administrators.
 - **Docker image:** it contains the whole workspace and runs the CLI with `tsx`. A deployment needs only `compose.yml`
   (from `compose.example.yml`), `config.yaml` and `.env`; Postgres and the app role are created on first start.
 - **Your own modules:** to ship modules that live outside this repository, build your own image from a workspace that
