@@ -22,6 +22,8 @@ export interface HelpIds {
   module: string;
   topic: string;
   go: (topic: string, page: number) => string;
+  /** A section's topic button; `slot` is the section's index on the page, which keeps each ID unique. */
+  open: (topic: string, slot: number) => string;
 }
 
 const text = (content: string) => ({ type: ComponentType.TextDisplay, content });
@@ -34,23 +36,26 @@ const button = (label: string, customId: string, disabled = false) => ({
   disabled,
 });
 
-/**
- * A section, or a text display when its topic button can't be shown: without `ids`, or when its custom ID is already
- * on the message (Discord rejects duplicate custom IDs).
- */
-function block(item: Block, ids: HelpIds | null, used: Set<string>): unknown {
+/** A section, or a text display for a section linking a topic when there are no `ids`. */
+function block(item: Block, ids: HelpIds | null, slot: number): unknown {
   if (item.kind === 'text') return text(item.markdown);
   let accessory;
   if ('url' in item.button) {
     const label = truncate(item.button.label, MAX_BUTTON_LABEL);
     accessory = { type: ComponentType.Button, style: ButtonStyle.Link, label, url: item.button.url };
   } else {
-    const id = ids?.go(item.button.topic, 0);
-    if (id === undefined || used.has(id)) return text(item.markdown);
-    used.add(id);
-    accessory = button(item.button.label, id);
+    if (ids === null) return text(item.markdown);
+    accessory = button(item.button.label, ids.open(item.button.topic, slot));
   }
   return { type: ComponentType.Section, components: [text(item.markdown)], accessory };
+}
+
+/** Core and the first other modules; the current module takes the last place when it would not be listed. */
+function selectModules(view: HelpView): HelpView['modules'] {
+  const listed = view.modules.slice(0, MAX_SELECT_OPTIONS);
+  if (listed.some(({ name }) => name === view.module)) return listed;
+  const current = view.modules.find(({ name }) => name === view.module);
+  return current === undefined ? listed : [...listed.slice(0, MAX_SELECT_OPTIONS - 1), current];
 }
 
 /** A Components V2 message with one container: the page, then with `ids` the selects and the page buttons. */
@@ -58,7 +63,6 @@ export function renderHelp(view: HelpView, ids: HelpIds | null): ReplyMessage {
   const topic = view.docs.topics[view.topic]!;
   const page = topic.pages[view.page] ?? [];
   const count = topic.pages.length;
-  const used = new Set<string>();
   const paging =
     ids !== null && count > 1
       ? row(
@@ -67,11 +71,11 @@ export function renderHelp(view: HelpView, ids: HelpIds | null): ReplyMessage {
           button('Next ▶', ids.go(topic.id, view.page + 1), view.page === count - 1),
         )
       : null;
-  for (const item of paging?.components ?? []) used.add((item as { custom_id: string }).custom_id);
-
-  const children: unknown[] = [text(`# ${topic.title}`), ...page.map((item) => block(item, ids, used))];
+  let sections = 0;
+  const blocks = page.map((item) => block(item, ids, item.kind === 'section' ? sections++ : -1));
+  const children: unknown[] = [text(`# ${topic.title}`), ...blocks];
   if (ids !== null) {
-    const modules = view.modules.slice(0, MAX_SELECT_OPTIONS).map(({ name, docs }) => {
+    const modules = selectModules(view).map(({ name, docs }) => {
       const summary = truncate(plainText(docs.summary), MAX_OPTION_TEXT);
       return {
         label: truncate(docs.topics[0]!.title, MAX_OPTION_TEXT),

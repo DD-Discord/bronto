@@ -126,8 +126,9 @@ function build(input: { navigation?: boolean; library?: Map<string, ModuleDocs> 
     await router.handle(fake.asInteraction());
     return (fake.responses[0]!.payload as { name: string; value: string }[]);
   };
-  const go = help.components.find((c) => c.name === 'go')!;
-  const sign = (args: string[]) => createCustomId(signer!, go, { guildId: 'g1', userId: 'u1', channelId: 'c1' }, args, Date.now());
+  const target = { guildId: 'g1', userId: 'u1', channelId: 'c1' };
+  const sign = (name: string, args: string[]) =>
+    createCustomId(signer!, help.components.find((c) => c.name === name)!, target, args, Date.now());
   return { help, disabled, ask, press, choose, suggest, sign };
 }
 
@@ -233,36 +234,47 @@ describe('/help', () => {
     expect(texts(payload)).toEqual(['# Bee', 'One']);
   });
 
-  it('shows one button per topic link, since Discord rejects duplicate custom IDs', async () => {
-    const twice = library();
-    twice.set('alpha', docs({
+  it('gives every section linking a topic its own working button', async () => {
+    const linked = library();
+    linked.set('alpha', docs({
       index: '# Alpha\n\nA.\n\n> [!section] [Open](b.md)\n> First\n\n> [!section] [Again](b.md)\n> Second',
-      b: '# Bee\n\nOne\n\n---\n\n> [!section] [Self](b.md)\n> Self link',
+      b: '# Bee\n\nOne\n\n> [!section] [Self](b.md)\n> Self link\n\n---\n\nTwo',
     }));
-    const { ask, press } = build({ library: twice });
+    const { ask, press } = build({ library: linked });
     const index = await ask({ module: 'alpha' });
-    expect(all(index).filter((c) => c.type === ComponentType.Section)).toHaveLength(1);
-    expect(texts(index)).toContain('Second');
-    const second = await press(button(await ask({ module: 'alpha', topic: 'b' }), 'Next ▶').custom_id!);
-    const ids = all(second).flatMap((c) => (c.custom_id === undefined ? [] : [c.custom_id]));
-    expect(new Set(ids).size).toBe(ids.length);
+    expect(all(index).filter((c) => c.type === ComponentType.Section)).toHaveLength(2);
+    for (const label of ['Open', 'Again']) {
+      expect(texts(await press(button(index, label).custom_id!))).toEqual(['# Bee', 'One', 'Self link']);
+    }
+    const topic = await ask({ module: 'alpha', topic: 'b' });
+    expect(texts(await press(button(topic, 'Self').custom_id!))).toEqual(['# Bee', 'One', 'Self link']);
+    for (const payload of [index, topic]) {
+      const ids = all(payload).flatMap((c) => (c.custom_id === undefined ? [] : [c.custom_id]));
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+  });
+
+  it('opens page 1 from a section button whose topic is gone', async () => {
+    const { press, sign } = build();
+    expect(texts(await press(sign('open', ['alpha', 'zz', '3'])))[0]).toBe('# Alpha');
+    expect(texts(await press(sign('open', ['alpha', 'b', '3'])))).toEqual(['# Bee', 'One']);
   });
 
   it("falls back to core's index for a disabled module", async () => {
     const { press, sign, disabled } = build();
     disabled.add('alpha');
-    expect(texts(await press(sign(['alpha', 'b', '1'])))).toEqual(['# Help', 'Core help.']);
+    expect(texts(await press(sign('go', ['alpha', 'b', '1'])))).toEqual(['# Help', 'Core help.']);
   });
 
   it("falls back to the module's index for a missing topic", async () => {
     const { press, sign } = build();
-    expect(texts(await press(sign(['alpha', 'zz', '0'])))[0]).toBe('# Alpha');
+    expect(texts(await press(sign('go', ['alpha', 'zz', '0'])))[0]).toBe('# Alpha');
   });
 
   it('falls back to the first page for a page out of range', async () => {
     const { press, sign } = build();
-    expect(texts(await press(sign(['alpha', 'b', '9'])))).toEqual(['# Bee', 'One']);
-    expect(texts(await press(sign(['alpha', 'b', '-1'])))).toEqual(['# Bee', 'One']);
+    expect(texts(await press(sign('go', ['alpha', 'b', '9'])))).toEqual(['# Bee', 'One']);
+    expect(texts(await press(sign('go', ['alpha', 'b', '-1'])))).toEqual(['# Bee', 'One']);
   });
 
   it('lists core and 24 modules in the select', async () => {
@@ -278,6 +290,24 @@ describe('/help', () => {
     expect(options[24]).toEqual({ label: 'Module m24', value: 'm24', description: 'About m24.', default: false });
     expect(await suggest('module', { module: '' })).toHaveLength(25);
     expect(await suggest('module', { module: 'm30' })).toEqual([{ name: 'Module m30', value: 'm30' }]);
+  });
+
+  it('preselects the current module in the select when it is beyond the first 24', async () => {
+    const many = library();
+    for (let i = 1; i <= 30; i++) many.set(`m${String(i).padStart(2, '0')}`, docs({ index: `# M${i}\n\nAbout.` }));
+    const { ask } = build({ library: many });
+    const options = select(await ask({ module: 'm30' }), 'Module').options!;
+    expect(options).toHaveLength(25);
+    expect(options[24]).toMatchObject({ value: 'm30', default: true });
+    expect(options.slice(0, 24).map((o) => o.value)).toEqual([...many.keys()].slice(0, 24));
+  });
+
+  it('puts core first wherever it is in the library', async () => {
+    const reordered = new Map([...library()].reverse());
+    const { ask, press, sign, disabled } = build({ library: reordered });
+    expect(select(await ask(), 'Module').options!.map((o) => o.value)).toEqual(['core', 'beta', 'alpha']);
+    disabled.add('alpha');
+    expect(texts(await press(sign('go', ['alpha', 'b', '0'])))).toEqual(['# Help', 'Core help.']);
   });
 
   it('renders without navigation', async () => {
@@ -297,10 +327,13 @@ describe('/help', () => {
     const module = 'a'.repeat(43);
     const topic = 't'.repeat(32);
     const big = library();
-    const index = `# Long\n\n> [!section] [Open](${topic}.md)\n> Text`;
+    const sections = Array.from({ length: 10 }, (_, i) => `> [!section] [Open ${i}](${topic}.md)\n> Text ${i}`);
+    const index = `# Long\n\n${sections.join('\n\n')}`;
     big.set(module, docs({ index, [topic]: '# Topic\n\nOne\n\n---\n\nTwo' }));
     const { ask } = build({ library: big });
-    for (const payload of [await ask({ module }), await ask({ module, topic })]) {
+    const first = await ask({ module });
+    expect(button(first, 'Open 9').custom_id!.startsWith(`core:open:${module}:${topic}:9:`)).toBe(true);
+    for (const payload of [first, await ask({ module, topic })]) {
       const ids = all(payload).flatMap((c) => (c.custom_id === undefined ? [] : [c.custom_id]));
       expect(ids.length).toBeGreaterThan(0);
       for (const id of ids) expect(id.length).toBeLessThanOrEqual(100);

@@ -25,13 +25,16 @@ const matches = (query: string, ...values: string[]) => {
 /** Core's `/help` command and the components that navigate its pages. */
 export function createHelp(options: HelpOptions): { command: CommandDefinition; components: ComponentDefinition[] } {
   const { library, enablement, navigation } = options;
-  if (!library.has(CORE)) throw new Error('The help library needs core\'s docs.');
+  const core = library.get(CORE);
+  if (core === undefined) throw new Error('The help library needs core\'s docs.');
 
-  /** Core and the modules with docs that are on in the guild, in library order. */
-  const visible = (guildId: string) =>
-    [...library]
-      .filter(([name]) => name === CORE || enablement.isEnabled(guildId, name))
-      .map(([name, docs]) => ({ name, docs }));
+  /** Core, then the modules with docs that are on in the guild, in library order. */
+  const visible = (guildId: string) => [
+    { name: CORE, docs: core },
+    ...[...library]
+      .filter(([name]) => name !== CORE && enablement.isEnabled(guildId, name))
+      .map(([name, docs]) => ({ name, docs })),
+  ];
 
   /**
    * The view for a module, topic and page. `strict` (the command) throws for an unknown module or topic; otherwise
@@ -75,7 +78,14 @@ export function createHelp(options: HelpOptions): { command: CommandDefinition; 
     execute: (ctx, [module = CORE, topic = 'index', page = '0']) =>
       ctx.update(render(ctx, resolve(ctx.guildId, module, topic, Number(page), false))),
   });
-  const components: ComponentDefinition[] = [moduleSelect, topicSelect, go];
+  // Section buttons: `slot` only keeps custom IDs unique when sections link the same topic.
+  const open = defineButton({
+    name: 'open',
+    defer: 'update',
+    execute: (ctx, [module = CORE, topic = 'index']) =>
+      ctx.update(render(ctx, resolve(ctx.guildId, module, topic, 0, false))),
+  });
+  const components: ComponentDefinition[] = [moduleSelect, topicSelect, go, open];
   for (const component of components) component.owner = CORE;
 
   function render(ctx: HandlerContext, view: HelpView) {
@@ -84,6 +94,7 @@ export function createHelp(options: HelpOptions): { command: CommandDefinition; 
           module: ctx.customId(moduleSelect),
           topic: ctx.customId(topicSelect, [view.module]),
           go: (topic, page) => ctx.customId(go, [view.module, topic, String(page)]),
+          open: (topic, slot) => ctx.customId(open, [view.module, topic, String(slot)]),
         }
       : null;
     return renderHelp(view, ids);
