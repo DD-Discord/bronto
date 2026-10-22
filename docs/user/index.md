@@ -1,6 +1,6 @@
 # Help
 
-Bronto is a Discord bot made of modules. Each module adds its own commands.
+This bot is made of modules. Each module adds its own commands.
 
 Use `/help` to read about the bot and its modules. Only you can see the answers.
 

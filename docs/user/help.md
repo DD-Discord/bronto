@@ -2,7 +2,7 @@
 
 `/help` shows help for the bot and for the modules your server has turned on.
 
-Without options, it opens this page. Add a `module` to open that module's start page. Add a `topic` as well to open one topic. Both options suggest names as you type.
+Without options, it opens the start page. Add a `module` to open that module's start page. Add a `topic` as well to open one topic. Both options suggest names as you type.
 
 Only you can see the answer. Nobody else in the channel gets a message.
 
@@ -20,4 +20,4 @@ Some pages have a button next to a short text. It opens a related topic or a web
 > **`/modules`**
 > How administrators turn modules on and off.
 
--# If the menus are missing, the bot has no signing secret set. Use the options of `/help` instead.
+-# If the menus are missing, use the options of `/help` instead.
