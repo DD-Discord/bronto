@@ -45,8 +45,9 @@ async function send<T extends { responses: Array<{ kind: string; payload: unknow
 
 describe('example notes module', () => {
   it('registers /notes with the generated and custom subcommands', () => {
-    const [, registered] = client.registered.get('g1') as Array<{ name: string; options: Array<{ name: string }> }>;
-    expect(registered?.name).toBe('notes');
+    const commands = client.registered.get('g1') as Array<{ name: string; options: Array<{ name: string }> }>;
+    const registered = commands.find((command) => command.name === 'notes');
+    expect(registered).toBeDefined();
     expect(registered?.options.map((option) => option.name)).toEqual(['create', 'edit', 'show', 'list', 'delete', 'post', 'edit-text']);
   });
 
