@@ -13,6 +13,7 @@ export function createAutodeleteModule(): ModuleDefinition<AutodeleteConfig> {
   const tracker = new Tracker({ index });
   return defineModule<AutodeleteConfig>({
     name: 'autodelete',
+    docs: new URL('../docs/user/', import.meta.url),
     // Server Members is a privileged intent.
     intents: [GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers],
     partials: [Partials.Message, Partials.GuildMember],
