@@ -26,7 +26,7 @@ export function loadDocs(folder: URL, module: string): { docs: ModuleDocs | null
 
   const ids = files.map((name) => name.slice(0, -3));
   if (!ids.includes('index')) problems.push({ file: 'index.md', line: null, message: 'the folder needs an index.md' });
-  if (ids.length > MAX_TOPICS) problems.push({ file: '', line: null, message: `a module has at most ${MAX_TOPICS} topics, found ${ids.length}` });
+  if (ids.length > MAX_TOPICS) problems.push({ file: 'index.md', line: null, message: `a module has at most ${MAX_TOPICS} topics, found ${ids.length}` });
 
   const topics: Topic[] = [];
   let summary = '';
@@ -40,7 +40,13 @@ export function loadDocs(folder: URL, module: string): { docs: ModuleDocs | null
       problems.push({ file, line: null, message: `module name and topic ID together may have at most ${MAX_ID_BUDGET} characters` });
       continue;
     }
-    const source = readFileSync(new URL(file, dir), 'utf8');
+    let source: string;
+    try {
+      source = readFileSync(new URL(file, dir), 'utf8');
+    } catch {
+      problems.push({ file, line: null, message: 'the file cannot be read' });
+      continue;
+    }
     const parsed = parseTopic(id, source);
     problems.push(...parsed.problems);
     topics.push(parsed.topic);

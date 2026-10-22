@@ -2,7 +2,7 @@
 
 ## Changing the text
 
-Edit the sticky's template. The sticky's post changes in place, with no repost.
+Edit the sticky's template. The sticky's post changes in place. If the post is gone, the sticky is posted again.
 
 When a template is deleted, the stickies that use it are deleted too. A template cannot be deleted while a sticky uses it: the delete is refused and names the channels.
 

@@ -1,12 +1,14 @@
 # Templates API
 
-For module developers whose module uses templates. `@bronto/templates` exports an API, two events and a gate. Add `templates` to your module's `dependsOn` first.
+For module developers whose module uses templates. `@bronto/templates` exports an API, two events and a gate. Add it to your module's `dependsOn` first.
 
 ```ts
 import templates from '@bronto/templates';
 
 const api = ctx.modules.get(templates);
 ```
+
+Declare it in your module definition with `dependsOn: [templates]`.
 
 Make API calls outside your own `ctx.db.run`. Each call runs in the guild of the calling handler.
 

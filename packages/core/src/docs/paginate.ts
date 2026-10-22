@@ -61,10 +61,13 @@ export function paginate(file: string, title: string, segments: Chunk[][]): { pa
         continue;
       }
       // Prefer a cut before the page's last heading so the heading stays with what follows it.
+      // An overflowing heading chunk is cut right before itself.
       let cut = current.length;
-      for (let j = current.length - 1; j > 0; j--) {
-        const candidate = current[j] as Chunk;
-        if (candidate.kind === 'text' && candidate.heading) { cut = j; break; }
+      if (!(chunk.kind === 'text' && chunk.heading)) {
+        for (let j = current.length - 1; j > 0; j--) {
+          const candidate = current[j] as Chunk;
+          if (candidate.kind === 'text' && candidate.heading) { cut = j; break; }
+        }
       }
       i = pageStart + cut - 1;
       current.length = cut;

@@ -21,12 +21,18 @@ describe('loadDocs', () => {
     ['rejects a folder without index.md', 'no-index', 'demo', /index\.md/],
     ['rejects a topic ID with capitals', 'capitals', 'demo', /Bad\.md.*\[a-z0-9-\]/],
     ['rejects a topic ID too long for the module name', 'long-id', 'a'.repeat(44), /75 characters/],
-    ['rejects more than 25 topics', 'too-many', 'demo', /at most 25/],
+    ['rejects more than 25 topics', 'too-many', 'demo', /^index\.md: a module has at most 25/m],
     ['rejects a section linking to a missing topic', 'missing-link', 'demo', /gone\.md/],
   ])('%s', (_name, folder, module, message) => {
     const { docs, problems } = loadDocs(fixture(folder), module);
     expect(docs).toBeNull();
     expect(problems.map((p) => `${p.file}: ${p.message}`).join('\n')).toMatch(message);
+  });
+
+  it('reports an unreadable file instead of throwing', () => {
+    const { docs, problems } = loadDocs(fixture('unreadable'), 'demo');
+    expect(docs).toBeNull();
+    expect(problems).toContainEqual({ file: 'bad.md', line: null, message: 'the file cannot be read' });
   });
 
   it('accepts a topic ID that fits the budget exactly', () => {

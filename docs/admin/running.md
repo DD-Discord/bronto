@@ -15,8 +15,9 @@
    The app role must not inherit a module role; the bot refuses to start if it does.
 2. Copy `config.example.yaml` to `config.yaml` and `.env.example` to `.env`, then fill in the values. The CLI reads
    `.env` from the current directory; variables already set in the environment win. Modules with buttons, selects or modals
-   need `interactions.secret` (at least 32 characters, e.g. from `openssl rand -base64 32`); changing it breaks every
-   button and modal already posted.
+   need `interactions.secret` (at least 32 characters, e.g. from `openssl rand -base64 32`), and so do the menus and
+   buttons of `/help`; without it `/help` shows pages only. Changing the secret breaks every button and modal already
+   posted. All keys of `config.yaml` are listed in [Configuration](config.md).
 3. Invite the bot with the `bot` and `applications.commands` scopes, then start it:
 
 ```bash

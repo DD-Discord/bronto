@@ -29,6 +29,13 @@ describe('paginate', () => {
     expect(pages[1]).toEqual([{ kind: 'text', markdown: `## H${'h'.repeat(1500)}\n\n${'b'.repeat(1000)}` }]);
   });
 
+  it('cuts right before an overflowing heading instead of an earlier one', () => {
+    const { pages } = run([[text('A'.repeat(500)), text('## H1\n' + 'x'.repeat(500), true), text('B'.repeat(500)), text('## H2\n' + 'y'.repeat(2500), true)]]);
+    expect(pages).toHaveLength(2);
+    expect(pages[0]).toEqual([{ kind: 'text', markdown: `${'A'.repeat(500)}\n\n## H1\n${'x'.repeat(500)}\n\n${'B'.repeat(500)}` }]);
+    expect(pages[1]).toEqual([{ kind: 'text', markdown: `## H2\n${'y'.repeat(2500)}` }]);
+  });
+
   it('splits at a paragraph without a heading', () => {
     const p = 'p'.repeat(1500);
     const { pages } = run([[text(p), text(p), text(p)]]);

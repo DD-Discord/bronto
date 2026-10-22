@@ -11,8 +11,8 @@ picks the modules it loads in its `config.yaml`.
 ## Documentation
 
 - **Users:** members read the help pages in Discord with `/help`. The pages of core are in [`docs/user`](docs/user).
-- **Administrators:** [Running bronto](docs/admin/running.md) covers the database, `config.yaml`, the CLI commands and
-  how to start the bot; [Running with Docker](docs/admin/docker.md) the container setup.
+- **Administrators:** [Running bronto](docs/admin/running.md) covers the database, the CLI commands and
+  how to start the bot; [Configuration](docs/admin/config.md) lists every `config.yaml` key; [Running with Docker](docs/admin/docker.md) the container setup.
 - **Developers:** the [developer guide](docs/api/developer-guide.md) walks through building a module step by step and
   explains how the core works inside; [Writing user docs](docs/api/writing-user-docs.md) describes the help page format.
 

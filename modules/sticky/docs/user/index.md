@@ -2,7 +2,7 @@
 
 Keeps a message at the bottom of a channel or thread, so new messages never bury it.
 
-Whenever someone posts, the sticky is deleted and posted again below the new message. Moderators manage stickies with `/sticky` and need the Manage Messages permission.
+Whenever someone posts, the sticky is deleted and posted again below the new message. Moderators manage stickies with `/sticky` and need the Manage Messages permission by default.
 
 > [!section] [Open](create.md)
 > **`/sticky create`**
