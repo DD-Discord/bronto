@@ -37,3 +37,8 @@ export function afterCommit(deliver: () => void): void {
   if (pending === null || !pending.open) deliver();
   else pending.deliveries.push(deliver);
 }
+
+/** Whether the current code runs inside an open `ctx.db.run` transaction. */
+export function inTransaction(): boolean {
+  return storage.getStore()?.pendingEvents?.open === true;
+}

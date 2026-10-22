@@ -4,6 +4,7 @@ import { assertModuleName } from '../db/names.js';
 import { checkCommand, type CommandDefinition } from '../interactions/commands.js';
 import type { ComponentDefinition } from '../interactions/components.js';
 import type { EventDefinition, Listener } from './events.js';
+import type { GateDefinition } from './gates.js';
 import type { LegacyImporter } from './legacy.js';
 import type { HandlerContext, ModuleContext } from './types.js';
 
@@ -36,10 +37,12 @@ export interface ModuleDefinition<TConfig = any, TApi = unknown> {
     migrations: URL;
   };
   events?: Record<string, EventDefinition<any>>;
+  /** Gates other modules can be asked through `ctx.check`; only the owner checks them. */
+  gates?: Record<string, GateDefinition<any>>;
   listeners?: Listener[];
   /** Top-level slash commands keyed by name; registered in a guild while the module is enabled there. */
   commands?: Record<string, CommandDefinition>;
-  /** Buttons and modals, routed by the custom-ID prefix `<module>:<name>`. */
+  /** Buttons, modals and selects, routed by the custom-ID prefix `<module>:<name>`. */
   components?: ComponentDefinition[];
   /** Discord permissions the bot needs for this module; missing ones are logged when a guild is set up. */
   botPermissions?: bigint[];
@@ -68,10 +71,16 @@ export function defineModule<TConfig = Record<string, never>, TApi = undefined>(
     }
     event.owner = definition.name;
   }
+  for (const gate of Object.values(definition.gates ?? {})) {
+    if (gate.owner !== null && gate.owner !== definition.name) {
+      throw new Error(`Gate "${gate.name}" already belongs to module "${gate.owner}".`);
+    }
+    gate.owner = definition.name;
+  }
   for (const [name, command] of Object.entries(definition.commands ?? {})) checkCommand(name, command);
   const componentNames = new Set<string>();
   for (const component of definition.components ?? []) {
-    const label = component.kind === 'button' ? 'Button' : 'Modal';
+    const label = { button: 'Button', modal: 'Modal', select: 'Select' }[component.kind];
     const key = `${component.kind}:${component.name}`;
     if (componentNames.has(key)) throw new Error(`${label} "${component.name}" is defined twice in module "${definition.name}".`);
     componentNames.add(key);

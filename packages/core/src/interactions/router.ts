@@ -4,6 +4,7 @@ import type {
   ChatInputCommandInteraction,
   Interaction,
   ModalSubmitInteraction,
+  StringSelectMenuInteraction,
 } from 'discord.js';
 import type { Logger } from 'pino';
 import { ConfigError } from '../config/errors.js';
@@ -12,8 +13,14 @@ import type { Dispatcher } from '../runtime/dispatcher.js';
 import type { ModuleEnablement } from '../runtime/enablement.js';
 import type { HandlerContext } from '../runtime/types.js';
 import { checkCommand, commandToJson, findHandler, subcommandPath, type CommandDefinition } from './commands.js';
-import { checkCustomId, parseCustomId, type ComponentDefinition, type CustomIdCheck } from './components.js';
-import { interactionContext, type ButtonContext, type CommandContext, type ModalContext } from './context.js';
+import {
+  checkCustomId,
+  parseCustomId,
+  type ComponentDefer,
+  type ComponentDefinition,
+  type CustomIdCheck,
+} from './components.js';
+import { interactionContext, type ButtonContext, type CommandContext, type ModalContext, type SelectContext } from './context.js';
 import { isUserError } from './errors.js';
 import { truncate } from './format.js';
 import { readOptions, type Choice } from './options.js';
@@ -57,9 +64,12 @@ interface Owned<T> {
   value: T;
 }
 
-type ComponentInteraction = ButtonInteraction<'cached'> | ModalSubmitInteraction<'cached'>;
+type ComponentInteraction =
+  | ButtonInteraction<'cached'>
+  | ModalSubmitInteraction<'cached'>
+  | StringSelectMenuInteraction<'cached'>;
 
-/** Routes commands, autocomplete, buttons and modals to the module that owns them. */
+/** Routes commands, autocomplete, buttons, selects and modals to the module that owns them. */
 export class InteractionRouter {
   private readonly commands = new Map<string, Owned<CommandDefinition>>();
   private readonly components = new Map<string, Owned<ComponentDefinition>>();
@@ -123,7 +133,7 @@ export class InteractionRouter {
     }
     if (interaction.isChatInputCommand()) return this.command(interaction);
     if (interaction.isAutocomplete()) return this.autocomplete(interaction);
-    if (interaction.isButton() || interaction.isModalSubmit()) return this.component(interaction);
+    if (interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) return this.component(interaction);
   }
 
   private async command(interaction: ChatInputCommandInteraction<'cached'>): Promise<void> {
@@ -170,12 +180,12 @@ export class InteractionRouter {
   }
 
   private async component(interaction: ComponentInteraction): Promise<void> {
-    const kind = interaction.isButton() ? 'button' : 'modal';
+    const kind = interaction.isButton() ? 'button' : interaction.isStringSelectMenu() ? 'select' : 'modal';
     const parsed = parseCustomId(interaction.customId);
     const entry = parsed === null ? undefined : this.components.get(componentKey(parsed.module, kind, parsed.name));
     const responder = new Responder(interaction as ResponseTarget, entry?.value.ephemeral ?? false);
     const label = `${kind}:${parsed?.name ?? interaction.customId}`;
-    const stopTimer = this.startDeferTimer(responder, label);
+    const stopTimer = this.startDeferTimer(responder, label, entry?.value.defer);
     if (!(await this.ready(interaction.guildId))) return this.answer(responder.fail(NOT_READY), label, stopTimer);
     if (entry === undefined || parsed === null) return this.answer(responder.fail(COMPONENT_GONE), label, stopTimer);
     if (!this.enabled(entry.source, interaction.guildId)) {
@@ -199,6 +209,20 @@ export class InteractionRouter {
           ...base,
           interaction: interaction as ButtonInteraction<'cached'>,
           showModal: (modal) => responder.showModal(modal),
+          update: (message) => responder.update(message),
+          deferUpdate: () => responder.deferUpdate(),
+        };
+        return component.execute(context, check.args);
+      }
+      if (component.kind === 'select') {
+        const chosen = interaction as StringSelectMenuInteraction<'cached'>;
+        const context: SelectContext = {
+          ...base,
+          interaction: chosen,
+          values: chosen.values,
+          showModal: (modal) => responder.showModal(modal),
+          update: (message) => responder.update(message),
+          deferUpdate: () => responder.deferUpdate(),
         };
         return component.execute(context, check.args);
       }
@@ -207,6 +231,8 @@ export class InteractionRouter {
         ...base,
         interaction: submitted,
         field: (customId) => submitted.fields.getTextInputValue(customId),
+        update: (message) => responder.update(message),
+        deferUpdate: () => responder.deferUpdate(),
       };
       return component.execute(context, check.args);
     });
@@ -235,9 +261,9 @@ export class InteractionRouter {
   }
 
   /** Starts the defer clock when handling begins, so waiting for the guild gate counts against Discord's 3 s window. */
-  private startDeferTimer(responder: Responder, label: string): () => void {
+  private startDeferTimer(responder: Responder, label: string, mode: ComponentDefer = 'reply'): () => void {
     const timer = setTimeout(() => {
-      responder.defer().catch((error: unknown) => {
+      (mode === 'update' ? responder.deferUpdate() : responder.defer()).catch((error: unknown) => {
         this.log.warn({ err: error, handler: label }, 'Answering an interaction failed');
       });
     }, this.deferAfterMs);

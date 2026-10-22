@@ -94,3 +94,30 @@ it('blocks native URL downloads and restores the previous dispatcher after the l
     undici.setGlobalDispatcher(previous);
   }
 });
+
+it('serves stored attachments from the fake CDN to global fetch and keeps every other host blocked', async () => {
+  const { http, client } = await setup();
+  const channel = await client.channels.fetch(CHANNEL);
+  if (!channel?.isSendable()) throw new Error('Missing test channel');
+  const sent = await channel.send({ content: 'File', files: [{ attachment: Buffer.from('file bytes'), name: 'my file.txt' }] });
+  const attachment = sent.attachments.first()!;
+  const response = await fetch(attachment.url);
+  expect(response.status).toBe(200);
+  expect(response.headers.get('content-type')).toBe('text/plain');
+  expect(await response.text()).toBe('file bytes');
+  expect((await fetch(`https://cdn.discordapp.com/attachments/${CHANNEL}/${attachment.id}/other.txt`)).status).toBe(404);
+  const seeded = http.addFile(CHANNEL, { filename: 'seed.bin', data: Buffer.from([1, 2, 3]) });
+  expect(new Uint8Array(await (await fetch(seeded.url)).arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+  await expect(fetch('https://example.com')).rejects.toThrow();
+  await expect(fetch('https://cdn.discordapp.com/other/path')).rejects.toThrow();
+});
+
+it('refuses expired CDN urls', async () => {
+  const { client } = await setup();
+  const channel = await client.channels.fetch(CHANNEL);
+  if (!channel?.isSendable()) throw new Error('Missing test channel');
+  const sent = await channel.send({ files: [{ attachment: Buffer.from('x'), name: 'x.txt' }] });
+  const url = new URL(sent.attachments.first()!.url);
+  url.searchParams.set('ex', '1');
+  expect((await fetch(url)).status).toBe(404);
+});

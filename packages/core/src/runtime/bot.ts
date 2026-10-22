@@ -73,7 +73,7 @@ export function createBot(options: BotOptions): Bot {
   const log = options.log.child({}, { serializers: { err: serializeError } });
   const secret = config.interactions.secret;
   if (secret === undefined && modules.some((module) => (module.definition.components ?? []).length > 0)) {
-    throw new ConfigError(['interactions.secret: required because a module defines buttons or modals']);
+    throw new ConfigError(['interactions.secret: required because a module defines buttons, selects or modals']);
   }
   const signer = secret === undefined ? null : new ComponentSigner(secret);
   const queue = new KeyedQueue((key, error) => log.error({ err: error, key }, 'Queued task failed'));
@@ -249,6 +249,15 @@ export function createBot(options: BotOptions): Bot {
       listen(event, (...args: unknown[]) => {
         dispatcher.handleDiscord(event, args).catch((error: unknown) => {
           log.error({ err: error }, `Dispatching ${event} failed`);
+        });
+      });
+    }
+    // discord.js emits every packet as 'raw'; the listener is only added when a module needs one.
+    if (dispatcher.gatewayEvents().length > 0) {
+      listen(Events.Raw, (packet: { t: string | null; d: unknown }) => {
+        if (packet.t === null) return;
+        dispatcher.handleGateway({ t: packet.t, d: packet.d }).catch((error: unknown) => {
+          log.error({ err: error }, `Dispatching gateway packet ${packet.t} failed`);
         });
       });
     }

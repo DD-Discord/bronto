@@ -26,6 +26,11 @@ const widgets = defineEntity({
   key: 'id',
   displayName: { singular: 'Widget', plural: 'Widgets' },
   formatShort: (widget) => `${widget.label} (${widget.count})`,
+  // Async and reading the command's context, like a reply that looks something up.
+  formatFull: async (widget, base, ctx) => {
+    await Promise.resolve();
+    return base().addFields({ name: 'Guild', value: ctx.guildId });
+  },
 });
 
 const widgetCommand = defineCommand({
@@ -171,6 +176,7 @@ describe('create', () => {
     expect(payloads).toHaveLength(1);
     expect(payloads[0]!.content).toBe('**Widget created.**');
     expect(payloads[0]!.embeds![0]!.data.description).toBe('Blue (1)');
+    expect(payloads[0]!.embeds![0]!.data.fields).toEqual([{ name: 'Guild', value: 'g1' }]);
     expect(payloads[0]!.flags).toBeDefined();
     expect(calls).toEqual(['prepare:w1:new:1', 'create:w1']);
     const [row] = await rows();
@@ -221,6 +227,7 @@ describe('edit', () => {
   it('changes only the options that were passed', async () => {
     const payloads = await say('widget', 'edit', { id: 'w1', count: 5 });
     expect(payloads[0]!.content).toBe('**Widget updated.**');
+    expect(payloads[0]!.embeds![0]!.data.fields).toEqual([{ name: 'Guild', value: 'g1' }]);
     expect(calls).toEqual(['prepare:w1:Blue:5', 'edit:w1']);
     expect((await rows())[0]).toMatchObject({ label: 'Blue', count: 5, updatedBy: 'u5' });
   });
@@ -246,6 +253,7 @@ describe('show, list and delete', () => {
     await say('widget', 'create', { id: 'w1', label: 'Blue' });
     expect((await say('widget', 'show', { id: 'w1' }))[0]!.embeds![0]!.data.title).toBe('Widget');
     expect((await say('widget', 'show', {}, 'w1'))[0]!.embeds![0]!.data.description).toBe('Blue (1)');
+    expect((await say('widget', 'show', { id: 'w1' }))[0]!.embeds![0]!.data.fields).toEqual([{ name: 'Guild', value: 'g1' }]);
   });
 
   it('names missing records, including those of other guilds', async () => {

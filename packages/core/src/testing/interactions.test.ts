@@ -44,4 +44,24 @@ describe('fake interactions', () => {
     if (!modal.isModalSubmit()) throw new Error('unreachable');
     expect(modal.fields.getTextInputValue('body')).toBe('hello');
   });
+
+  it('reads uploaded files and checkboxes from a modal', async () => {
+    const file = { id: '1', filename: 'a.png', url: 'https://cdn.discordapp.com/attachments/1/1/a.png' };
+    const modal = fakeModal({
+      customId: 'x', fields: {}, uploads: { image: [file], empty: [] }, checkboxes: { agree: true, other: false },
+    }).asInteraction();
+    if (!modal.isModalSubmit()) throw new Error('unreachable');
+    expect(modal.fields.getUploadedFiles('image')?.first()).toMatchObject(file);
+    expect(modal.fields.getUploadedFiles('image')?.get('1')?.name).toBe('a.png');
+    expect(modal.fields.getUploadedFiles('empty')).toBeNull();
+    expect(modal.fields.getCheckbox('agree')).toBe(true);
+    expect(modal.fields.getCheckbox('other')).toBe(false);
+    expect(() => modal.fields.getUploadedFiles('missing')).toThrow('No modal field missing');
+    expect(() => modal.fields.getCheckbox('missing')).toThrow('No modal field missing');
+  });
+
+  it('carries the upload size limit, 10 MiB unless given', () => {
+    expect(fakeModal({ customId: 'x' }).attachmentSizeLimit).toBe(10 * 1024 * 1024);
+    expect(fakeModal({ customId: 'x', attachmentSizeLimit: 1024 }).attachmentSizeLimit).toBe(1024);
+  });
 });

@@ -61,7 +61,7 @@ const textForm = defineModal({
     const body = ctx.field('body');
     const [note] = await ctx.db.run(async (tx) => tx.update(notes).set({ body }).where(eq(notes.id, id ?? '')).returning());
     if (note === undefined) throw new UserError('There is no such note.');
-    await ctx.reply({ content: '**Note updated.**', embeds: [noteEntity.formatFull(note)] });
+    await ctx.reply({ content: '**Note updated.**', embeds: [await noteEntity.formatFull(note, ctx)] });
   },
 });
 

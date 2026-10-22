@@ -1,4 +1,4 @@
-import { Collection, Events, Guild, type Client } from 'discord.js';
+import { Collection, Events, GatewayDispatchEvents, Guild, type Client } from 'discord.js';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { upsertGuild } from '../src/db/guilds.js';
@@ -8,7 +8,8 @@ import { guilds } from '../src/db/schema.js';
 import { createModuleRuntimes, type ModuleRuntime } from '../src/runtime/context.js';
 import { Dispatcher, guildIdOf, type HandlerResult } from '../src/runtime/dispatcher.js';
 import { ModuleEnablement } from '../src/runtime/enablement.js';
-import { defineEvent, on } from '../src/runtime/events.js';
+import { defineEvent, gatewayEvent, on } from '../src/runtime/events.js';
+import { defineGate, gate, GATE_TIMEOUT_MS, type GateResult, type GateVerdict } from '../src/runtime/gates.js';
 import { defineModule } from '../src/runtime/module.js';
 import { KeyedQueue } from '../src/runtime/queue.js';
 import type { HandlerContext } from '../src/runtime/types.js';
@@ -25,6 +26,7 @@ interface Seen {
   detail: unknown;
 }
 
+const threadDelete = gatewayEvent(GatewayDispatchEvents.ThreadDelete);
 const counted = defineEvent<{ n: number }>('counted');
 const signer = new ComponentSigner('s'.repeat(32));
 const tap = defineButton({ name: 'tap', execute: () => undefined });
@@ -38,6 +40,9 @@ const widgets = defineModule({
   events: { counted },
   components: [tap, own],
   listeners: [
+    on(threadDelete, (ctx, data) => {
+      seen.push({ module: 'widgets', guildId: ctx.guildId, actorId: ctx.actorId, detail: data.id });
+    }),
     on(Events.MessageCreate, async (ctx, message) => {
       seen.push({ module: 'widgets', guildId: ctx.guildId, actorId: ctx.actorId, detail: message.id });
       if (message.content === 'fail') throw new Error('widgets failed');
@@ -51,6 +56,9 @@ const widgets = defineModule({
 const beta = defineModule({
   name: 'beta',
   listeners: [
+    on(threadDelete, (ctx, data) => {
+      seen.push({ module: 'beta', guildId: ctx.guildId, actorId: ctx.actorId, detail: data.id });
+    }),
     on(Events.MessageCreate, (ctx, message) => {
       seen.push({ module: 'beta', guildId: ctx.guildId, actorId: ctx.actorId, detail: message.id });
     }),
@@ -427,6 +435,53 @@ describe('Dispatcher', () => {
   });
 });
 
+describe('raw gateway events', () => {
+  const packet = (guildId: string | undefined) => ({
+    t: 'THREAD_DELETE',
+    d: { id: 't1', guild_id: guildId, parent_id: 'f1', type: 11 },
+  });
+
+  it('lists the raw packet types modules listen to', () => {
+    expect(dispatcher.gatewayEvents()).toEqual(['THREAD_DELETE']);
+  });
+
+  it('routes a raw THREAD_DELETE to listeners of enabled modules by guild_id', async () => {
+    await dispatcher.handleGateway(packet('g1'));
+    expect(seen).toEqual([
+      { module: 'widgets', guildId: 'g1', actorId: null, detail: 't1' },
+      { module: 'beta', guildId: 'g1', actorId: null, detail: 't1' },
+    ]);
+  });
+
+  it('ignores packets without guild_id', async () => {
+    await dispatcher.handleGateway(packet(undefined));
+    expect(seen).toEqual([]);
+  });
+
+  it('skips modules disabled in the guild', async () => {
+    await enablement.set('g2', 'widgets', false);
+    await dispatcher.handleGateway(packet('g2'));
+    expect(seen.map((entry) => entry.module)).toEqual(['beta']);
+  });
+
+  it('ignores event names no module listens to', async () => {
+    await dispatcher.handleGateway({ t: 'CHANNEL_DELETE', d: { id: 'c1', guild_id: 'g1' } });
+    expect(seen).toEqual([]);
+  });
+
+  it('drops packets of guilds the gate rejects', async () => {
+    const gated = new Dispatcher({
+      runtimes,
+      database: t.database,
+      enablement,
+      queue: new KeyedQueue(() => undefined),
+      guildGate: async () => false,
+    });
+    await gated.handleGateway(packet('g1'));
+    expect(seen).toEqual([]);
+  });
+});
+
 describe('ctx.customId', () => {
   it('signs components of its own module for the run guild and actor', async () => {
     const signing = new Dispatcher({ runtimes, database: t.database, enablement, queue: new KeyedQueue(() => undefined), signer, now: () => 0 });
@@ -578,5 +633,190 @@ describe('guildIdOf', () => {
   it('reads the guild of the first item of a Collection', () => {
     expect(guildIdOf(new Collection([['m1', { guildId: 'g6' }]]))).toBe('g6');
     expect(guildIdOf(new Collection())).toBeNull();
+  });
+});
+
+describe('gates', () => {
+  const deleting = defineGate<{ id: string }>('deleting');
+  const asked: string[] = [];
+  let behaviour: Record<string, (payload: { id: string }) => Promise<GateVerdict | void> | GateVerdict | void>;
+  const listener = (name: string) =>
+    gate(deleting, async (ctx, payload) => {
+      asked.push(name);
+      return behaviour[name]?.(payload);
+    });
+  const owner = defineModule({ name: 'widgets', db: { schema: widgetsSchema, migrations: widgetsMigrations }, gates: { deleting } });
+  const first = defineModule({ name: 'gate_first', dependsOn: [owner], listeners: [listener('gate_first')] });
+  const second = defineModule({ name: 'gate_second', dependsOn: [owner, first], listeners: [listener('gate_second')] });
+  let gateRuntimes: ModuleRuntime[];
+  let gateEnablement: ModuleEnablement;
+  let gateDispatcher: Dispatcher;
+  const check = (guildId = 'g1') =>
+    gateDispatcher.runHandler(gateRuntimes[0]!, guildId, 'u1', 'test', async (ctx) => {
+      result = await ctx.check(deleting, { id: 't1' });
+    });
+  let result: GateResult | undefined;
+
+  beforeAll(() => {
+    gateEnablement = new ModuleEnablement(t.database.admin);
+    gateRuntimes = createModuleRuntimes(
+      [owner, first, second].map((definition) => ({ packageName: `@test/${definition.name}`, definition, config: {} })),
+      { client: {} as Client, database: t.database, log: captureLog().log },
+    );
+    gateDispatcher = new Dispatcher({
+      runtimes: gateRuntimes,
+      database: t.database,
+      enablement: gateEnablement,
+      queue: new KeyedQueue(() => undefined),
+    });
+  });
+
+  beforeEach(() => {
+    asked.length = 0;
+    behaviour = {};
+    result = undefined;
+  });
+
+  it('allows when no listener denies', async () => {
+    expect((await check()).ok).toBe(true);
+    expect(result).toEqual({ allowed: true });
+    expect(asked).toEqual(['gate_first', 'gate_second']);
+  });
+
+  it('allows when nothing listens', async () => {
+    const lone = defineGate<null>('lone');
+    const quiet = defineModule({ name: 'gate_quiet', gates: { lone } });
+    const [rt] = createModuleRuntimes([{ packageName: '@test/q', definition: quiet, config: {} }], {
+      client: {} as Client,
+      database: t.database,
+      log: captureLog().log,
+    });
+    const d = new Dispatcher({ runtimes: [rt!], database: t.database, enablement: gateEnablement, queue: new KeyedQueue(() => undefined) });
+    let answer: GateResult | undefined;
+    await d.runHandler(rt!, 'g1', null, 'test', async (ctx) => {
+      answer = await ctx.check(lone, null);
+    });
+    expect(answer).toEqual({ allowed: true });
+  });
+
+  it('passes the payload and the first denial stops later listeners', async () => {
+    behaviour.gate_first = (payload) => ({ deny: `in use by ${payload.id}` });
+    await check();
+    expect(result).toEqual({ allowed: false, reasons: ['in use by t1'] });
+    expect(asked).toEqual(['gate_first']);
+  });
+
+  it('runs listeners with the caller guild and actor', async () => {
+    let seenBy: Seen | undefined;
+    const probe = defineModule({
+      name: 'gate_probe',
+      dependsOn: [owner],
+      listeners: [
+        gate(deleting, (ctx) => {
+          seenBy = { module: 'gate_probe', guildId: ctx.guildId, actorId: ctx.actorId, detail: null };
+        }),
+      ],
+    });
+    const rts = createModuleRuntimes(
+      [owner, probe].map((definition) => ({ packageName: `@test/${definition.name}`, definition, config: {} })),
+      { client: {} as Client, database: t.database, log: captureLog().log },
+    );
+    const d = new Dispatcher({ runtimes: rts, database: t.database, enablement: gateEnablement, queue: new KeyedQueue(() => undefined) });
+    await d.runHandler(rts[0]!, 'g2', 'u9', 'test', (ctx) => ctx.check(deleting, { id: 'x' }));
+    expect(seenBy).toEqual({ module: 'gate_probe', guildId: 'g2', actorId: 'u9', detail: null });
+  });
+
+  it('a throwing listener denies with "<module> failed to answer"', async () => {
+    behaviour.gate_first = () => {
+      throw new Error('boom');
+    };
+    await check();
+    expect(result).toEqual({ allowed: false, reasons: ['gate_first failed to answer'] });
+    expect(asked).toEqual(['gate_first']);
+  });
+
+  it.each([[''], [42], [null], [{ reason: 'no' }]])('a verdict with deny %j denies with "<module> gave an invalid answer"', async (deny) => {
+    behaviour.gate_first = () => ({ deny }) as unknown as GateVerdict;
+    await check();
+    expect(result).toEqual({ allowed: false, reasons: ['gate_first gave an invalid answer'] });
+    expect(asked).toEqual(['gate_first']);
+  });
+
+  it.each([[false], [true], [null], ['no'], [0], [{}], [{ reason: 'no' }]])(
+    'a verdict %j denies with "<module> gave an invalid answer"',
+    async (verdict) => {
+      behaviour.gate_first = () => verdict as unknown as GateVerdict;
+      await check();
+      expect(result).toEqual({ allowed: false, reasons: ['gate_first gave an invalid answer'] });
+      expect(asked).toEqual(['gate_first']);
+    },
+  );
+
+  it('lets an API method check its own gate for the calling handler', async () => {
+    const releasing = defineGate<{ id: string }>('releasing');
+    const keeper = defineModule({
+      name: 'gate_keeper',
+      gates: { releasing },
+      api: (ctx) => ({ release: (id: string) => ctx.check(releasing, { id }) }),
+    });
+    const holder = defineModule({
+      name: 'gate_holder',
+      dependsOn: [keeper],
+      listeners: [gate(releasing, (ctx, payload) => ({ deny: `${payload.id} held for ${ctx.actorId}` }))],
+    });
+    const user = defineModule({ name: 'gate_user', dependsOn: [keeper] });
+    const rts = createModuleRuntimes(
+      [keeper, holder, user].map((definition) => ({ packageName: `@test/${definition.name}`, definition, config: {} })),
+      { client: {} as Client, database: t.database, log: captureLog().log },
+    );
+    const d = new Dispatcher({ runtimes: rts, database: t.database, enablement: gateEnablement, queue: new KeyedQueue(() => undefined) });
+    let answer: GateResult | undefined;
+    const run = await d.runHandler(rts[2]!, 'g1', 'u7', 'test', async (ctx) => {
+      answer = await ctx.modules.get(keeper).release('t9');
+    });
+    expect(run).toEqual({ ok: true });
+    expect(answer).toEqual({ allowed: false, reasons: ['t9 held for u7'] });
+  });
+
+  it('a listener over 5 s denies with "<module> did not answer in time"', async () => {
+    vi.useFakeTimers();
+    try {
+      behaviour.gate_first = () => new Promise(() => undefined);
+      const done = check();
+      await vi.advanceTimersByTimeAsync(GATE_TIMEOUT_MS + 1);
+      await done;
+      expect(result).toEqual({ allowed: false, reasons: ['gate_first did not answer in time'] });
+      expect(asked).toEqual(['gate_first']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('skips modules disabled in the guild', async () => {
+    await gateEnablement.set('g2', 'gate_first', false);
+    behaviour.gate_first = () => ({ deny: 'no' });
+    await check('g2');
+    expect(result).toEqual({ allowed: true });
+    expect(asked).toEqual(['gate_second']);
+  });
+
+  it('check inside ctx.db.run throws', async () => {
+    const run = await gateDispatcher.runHandler(gateRuntimes[0]!, 'g1', null, 'test', (ctx) =>
+      ctx.db.run(async () => {
+        await ctx.check(deleting, { id: 't1' });
+      }),
+    );
+    expect(run.ok).toBe(false);
+    expect((run as { error: Error }).error.message).toMatch(/inside ctx\.db\.run/);
+    expect(asked).toEqual([]);
+  });
+
+  it('a module can only check its own gates', async () => {
+    const run = await gateDispatcher.runHandler(gateRuntimes[1]!, 'g1', null, 'test', async (ctx) => {
+      await ctx.check(deleting, { id: 't1' });
+    });
+    expect(run.ok).toBe(false);
+    expect((run as { error: Error }).error.message).toMatch(/cannot check widgets\.deleting/);
+    expect(asked).toEqual([]);
   });
 });

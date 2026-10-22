@@ -1,4 +1,4 @@
-import type { ButtonInteraction, ChatInputCommandInteraction, ModalSubmitInteraction } from 'discord.js';
+import type { ButtonInteraction, ChatInputCommandInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from 'discord.js';
 import type { HandlerContext } from '../runtime/types.js';
 import type { ModalPayload, Reply, Responder } from './responder.js';
 
@@ -18,12 +18,28 @@ export interface CommandContext<TConfig = any> extends InteractionContext<TConfi
   showModal(modal: ModalPayload): Promise<void>;
 }
 
-export interface ButtonContext<TConfig = any> extends InteractionContext<TConfig> {
+/** Component interactions can replace the message their component sits on. */
+export interface UpdatableContext {
+  /** Replaces the component's message; the first answer, or the one after `deferUpdate`. */
+  update(message: Reply): Promise<void>;
+  /** Acknowledges without changing the message yet. Components slower than 2 s are deferred automatically. */
+  deferUpdate(): Promise<void>;
+}
+
+export interface ButtonContext<TConfig = any> extends InteractionContext<TConfig>, UpdatableContext {
   readonly interaction: ButtonInteraction<'cached'>;
   showModal(modal: ModalPayload): Promise<void>;
 }
 
-export interface ModalContext<TConfig = any> extends InteractionContext<TConfig> {
+export interface SelectContext<TConfig = any> extends InteractionContext<TConfig>, UpdatableContext {
+  readonly interaction: StringSelectMenuInteraction<'cached'>;
+  /** The options the user chose. */
+  readonly values: string[];
+  showModal(modal: ModalPayload): Promise<void>;
+}
+
+/** `update` and `deferUpdate` work only for modals submitted from a component's message. */
+export interface ModalContext<TConfig = any> extends InteractionContext<TConfig>, UpdatableContext {
   readonly interaction: ModalSubmitInteraction<'cached'>;
   /** The value of a text input in the submitted modal. */
   field(customId: string): string;

@@ -13,10 +13,14 @@ export const stickies = guildTable(stickySchema, 'stickies', {
   webhookId: text('webhook_id').notNull(),
   /** Secret; never displayed. */
   webhookToken: text('webhook_token').notNull(),
-  templateChannelId: text('template_channel_id').notNull(),
-  templateMessageId: text('template_message_id').notNull(),
-  content: text('content').notNull().default(''),
-  embeds: jsonb('embeds').$type<APIEmbed[]>().notNull().default([]),
+  /** The template it posts, from the templates module; no foreign key, since modules don't share tables. */
+  templateId: text('template_id').notNull(),
+  /** Location of the message a sticky copied before it used templates; unused. */
+  templateChannelId: text('template_channel_id'),
+  templateMessageId: text('template_message_id'),
+  /** The copied message of a sticky from before templates; null once it uses its template only. */
+  content: text('content'),
+  embeds: jsonb('embeds').$type<APIEmbed[]>(),
   ignoreBots: boolean('ignore_bots').notNull().default(true),
   silent: boolean('silent').notNull().default(true),
   debounceMs: integer('debounce_ms').notNull().default(0),

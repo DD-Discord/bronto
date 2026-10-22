@@ -7,9 +7,18 @@ import {
   type LoadedModule,
   type ScopedDb,
 } from '@bronto/core';
-import { captureLog, createNativeTestClient, type RecordedRequest, type NativeTestClient, type LogLine } from '@bronto/core/testing';
+import {
+  captureLog,
+  createNativeTestClient,
+  TEST_INTERACTION_SECRET,
+  type RecordedRequest,
+  type NativeTestClient,
+  type LogLine,
+} from '@bronto/core/testing';
+import templates, { createTemplatesModule, type TemplateMessage } from '@bronto/templates';
+import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { ChannelType, Events, type Client } from 'discord.js';
+import { ChannelType } from 'discord.js';
 import type { TestDatabase } from '../../../packages/core/test/test-db.js';
 import { stickyConfigSchema, type StickyConfig } from '../src/config.js';
 import { stickies, stickyState, type Sticky } from '../src/db/schema.js';
@@ -22,8 +31,6 @@ export const OTHER_GUILD = '100000000000000002';
 export const CHANNEL = '100000000000000010';
 export const THREAD = '100000000000000011';
 export const QUIET_CHANNEL = '100000000000000012';
-export const TEMPLATE_CHANNEL = '100000000000000020';
-export const TEMPLATE_MESSAGE = '100000000000000021';
 export const USER = '100000000000000099';
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -34,6 +41,11 @@ export function stickyModule(config: Partial<StickyConfig> = {}): LoadedModule {
     definition: createStickyModule(),
     config: stickyConfigSchema.parse(config),
   };
+}
+
+/** Sticky depends on templates, so every sticky bot loads it. */
+export function templatesModule(): LoadedModule {
+  return { packageName: '@bronto/templates', definition: createTemplatesModule(), config: {} };
 }
 
 export interface StickyBot {
@@ -50,15 +62,15 @@ export function stickyDb(t: TestDatabase, guildId = GUILD): ScopedDb {
   return createScopedDb(t.database.app, guildId, moduleRoleName(t.database.appRole, 'sticky'));
 }
 
-/** A bot with the sticky module: database migrated and GUILD registered, not yet ready. */
+/** A bot with the sticky and templates modules: database migrated and GUILD (a community server) registered, not yet ready. */
 export async function prepareStickyBot(
   t: TestDatabase,
   discord: FakeDiscordHttp,
   options: { config?: Partial<StickyConfig>; extra?: LoadedModule[] } = {},
 ): Promise<StickyBot> {
-  discord.addGuild(GUILD);
+  discord.addGuild(GUILD, { community: true });
   discord.addGuild(OTHER_GUILD);
-  for (const id of [CHANNEL, QUIET_CHANNEL, TEMPLATE_CHANNEL]) {
+  for (const id of [CHANNEL, QUIET_CHANNEL]) {
     if (!discord.channels.has(id)) discord.addChannel(id, { guildId: GUILD, type: ChannelType.GuildText });
   }
   if (!discord.channels.has(THREAD)) discord.addChannel(THREAD, { guildId: GUILD, type: ChannelType.PublicThread, parentId: CHANNEL });
@@ -66,8 +78,13 @@ export async function prepareStickyBot(
   const { client, requests } = native;
   const { log, lines } = captureLog();
   const bot = createBot({
-    config: { discord: { token: 'token' }, database: { appUrl: t.appUrl, adminUrl: t.adminUrl }, modules: {}, interactions: {} },
-    modules: [stickyModule(options.config), ...(options.extra ?? [])],
+    config: {
+      discord: { token: 'token' },
+      database: { appUrl: t.appUrl, adminUrl: t.adminUrl },
+      modules: {},
+      interactions: { secret: TEST_INTERACTION_SECRET },
+    },
+    modules: [templatesModule(), stickyModule(options.config), ...(options.extra ?? [])],
     database: t.database,
     client,
     log,
@@ -84,7 +101,28 @@ export async function ready({ bot, native }: StickyBot): Promise<void> {
   await bot.idle();
 }
 
-/** Stores a sticky of GUILD; without webhook values it gets a new webhook on its (parent) channel. */
+/**
+ * Creates a template of GUILD through the templates API, as sticky's handlers reach it; the bot must be ready.
+ * Returns its ID.
+ */
+export async function createTemplate(
+  sb: StickyBot,
+  name: string,
+  message: TemplateMessage = { content: 'Read the rules.', embed: { title: 'Rules' } },
+): Promise<string> {
+  const runtime = sb.bot.runtimes.find((entry) => entry.name === 'sticky')!;
+  let id: string | undefined;
+  const outcome = await sb.bot.dispatcher.runHandler(runtime, GUILD, null, 'test', async (ctx) => {
+    id = (await ctx.modules.get(templates).create({ name, ...message })).id;
+  });
+  if (!outcome.ok) throw outcome.error;
+  return id!;
+}
+
+/**
+ * Stores a sticky of GUILD with a stored copy of its message (content defaults to 'Read the rules.'); without webhook
+ * values it gets a new webhook on its (parent) channel.
+ */
 export async function insertSticky(
   t: TestDatabase,
   discord: FakeDiscordHttp,
@@ -98,9 +136,9 @@ export async function insertSticky(
     tx
       .insert(stickies)
       .values({
-        templateChannelId: TEMPLATE_CHANNEL,
-        templateMessageId: TEMPLATE_MESSAGE,
+        templateId: randomUUID(),
         content: 'Read the rules.',
+        embeds: [],
         ...values,
         webhookId: webhook.id,
         webhookToken: webhook.token,

@@ -1,5 +1,5 @@
-import { Collection, Events, Guild } from 'discord.js';
-import { afterCommit, runInScope } from '../db/context.js';
+import { Collection, Events, Guild, type GatewayDispatchEvents } from 'discord.js';
+import { afterCommit, inTransaction, runInScope } from '../db/context.js';
 import { createCustomId } from '../interactions/components.js';
 import type { ComponentSigner } from '../interactions/signing.js';
 import type { Database } from '../db/database.js';
@@ -8,11 +8,14 @@ import type { ModuleRuntime } from './context.js';
 import type { ModuleEnablement } from './enablement.js';
 import { outsideHandlerError, runInHandlerScope, type HandlerScope } from './handler-scope.js';
 import { eventLabel, type DiscordEventName, type EventDefinition, type Listener } from './events.js';
+import { GATE_TIMEOUT_MS, gateLabel, type GateDefinition, type GateResult } from './gates.js';
 import type { KeyedQueue } from './queue.js';
 import type { HandlerContext } from './types.js';
 
 type DiscordListener = Extract<Listener, { kind: 'discord' }>;
+type GatewayListener = Extract<Listener, { kind: 'gateway' }>;
 type ModuleListener = Extract<Listener, { kind: 'module' }>;
+type GateListener = Extract<Listener, { kind: 'gate' }>;
 
 // These events mean the guild is gone or going; gating them would set the guild up again.
 const UNGATED_EVENTS = new Set<DiscordEventName>([Events.GuildDelete, Events.GuildUnavailable]);
@@ -63,7 +66,9 @@ export class Dispatcher {
   private readonly signer: ComponentSigner | null;
   private readonly now: () => number;
   private readonly discordListeners = new Map<DiscordEventName, Array<{ runtime: ModuleRuntime; listener: DiscordListener }>>();
+  private readonly gatewayListeners = new Map<string, Array<{ runtime: ModuleRuntime; listener: GatewayListener }>>();
   private readonly moduleListeners = new Map<EventDefinition<unknown>, Array<{ runtime: ModuleRuntime; listener: ModuleListener }>>();
+  private readonly gateListeners = new Map<GateDefinition<unknown>, Array<{ runtime: ModuleRuntime; listener: GateListener }>>();
   private readonly inFlight = new Set<Promise<unknown>>();
   private stopped = false;
 
@@ -80,6 +85,14 @@ export class Dispatcher {
           const entries = this.discordListeners.get(listener.event) ?? [];
           entries.push({ runtime, listener });
           this.discordListeners.set(listener.event, entries);
+        } else if (listener.kind === 'gateway') {
+          const entries = this.gatewayListeners.get(listener.event) ?? [];
+          entries.push({ runtime, listener });
+          this.gatewayListeners.set(listener.event, entries);
+        } else if (listener.kind === 'gate') {
+          const entries = this.gateListeners.get(listener.gate) ?? [];
+          entries.push({ runtime, listener });
+          this.gateListeners.set(listener.gate, entries);
         } else {
           const entries = this.moduleListeners.get(listener.event) ?? [];
           entries.push({ runtime, listener });
@@ -102,6 +115,21 @@ export class Dispatcher {
     const guildId = guildIdOf(args[0]) ?? guildIdOf(args[1]);
     if (guildId === null) return Promise.resolve();
     return this.track(this.runDiscord(event, args, guildId));
+  }
+
+  /** Raw gateway packet types at least one module listens to. */
+  gatewayEvents(): GatewayDispatchEvents[] {
+    return [...this.gatewayListeners.keys()] as GatewayDispatchEvents[];
+  }
+
+  /** Runs the listeners of enabled modules for a raw gateway packet of a guild; packets without `guild_id` are ignored. */
+  handleGateway(packet: { t: string; d: unknown }): Promise<void> {
+    const entries = this.gatewayListeners.get(packet.t);
+    if (entries === undefined) return Promise.resolve();
+    const data = packet.d as { guild_id?: unknown } | null;
+    const guildId = typeof data?.guild_id === 'string' ? data.guild_id : null;
+    if (guildId === null) return Promise.resolve();
+    return this.track(this.runGateway(packet.t, entries, packet.d, guildId));
   }
 
   /** Hands an event to every listening module enabled in the guild, without waiting for them. */
@@ -199,6 +227,20 @@ export class Dispatcher {
         }
         afterCommit(() => this.deliver(event, payload, guildId, actorId));
       },
+      check: (gate, payload) => {
+        if (gate.owner !== runtime.name) {
+          throw new Error(`Module "${runtime.name}" cannot check ${gateLabel(gate)}; modules check only their own gates.`);
+        }
+        if (state.finished) {
+          throw new Error(
+            `Module "${runtime.name}" checked ${gateLabel(gate)} after its handler finished; check inside the handler or a queued task.`,
+          );
+        }
+        if (inTransaction()) {
+          throw new Error(`Module "${runtime.name}" checked ${gateLabel(gate)} inside ctx.db.run; check before opening the transaction.`);
+        }
+        return this.track(this.runGate(gate, payload, guildId, actorId));
+      },
       customId: (component, args = [], target = {}) => {
         if (component.owner === null) {
           throw new Error(`Component "${component.name}" is not part of a module yet; list it in defineModule.`);
@@ -226,6 +268,51 @@ export class Dispatcher {
           ),
       },
     };
+  }
+
+  /** Asks the gate's listeners one after another; denials, errors and timeouts stop at the first. */
+  private async runGate(gate: GateDefinition<unknown>, payload: unknown, guildId: string, actorId: string | null): Promise<GateResult> {
+    for (const { runtime, listener } of this.gateListeners.get(gate) ?? []) {
+      if (!this.enablement.isEnabled(guildId, runtime.name)) continue;
+      let verdict: unknown;
+      const run = this.runHandler(runtime, guildId, actorId, `gate:${gateLabel(gate)}`, async (ctx) => {
+        verdict = await listener.handler(ctx, payload);
+      });
+      let timer: NodeJS.Timeout | undefined;
+      const timeout = new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), GATE_TIMEOUT_MS);
+      });
+      const outcome = await Promise.race([run, timeout]).finally(() => clearTimeout(timer));
+      if (outcome === 'timeout') {
+        runtime.context.log.warn({ guildId, handler: `gate:${gateLabel(gate)}` }, 'Gate listener timed out');
+        return { allowed: false, reasons: [`${runtime.name} did not answer in time`] };
+      }
+      if (!outcome.ok) return { allowed: false, reasons: [`${runtime.name} failed to answer`] };
+      // Only no answer allows; `{ deny: '<reason>' }` denies with the reason, anything else is an invalid answer
+      // (fail closed).
+      if (verdict === undefined) continue;
+      if (typeof verdict === 'object' && verdict !== null && 'deny' in verdict) {
+        const { deny } = verdict;
+        if (typeof deny === 'string' && deny !== '') return { allowed: false, reasons: [deny] };
+      }
+      return { allowed: false, reasons: [`${runtime.name} gave an invalid answer`] };
+    }
+    return { allowed: true };
+  }
+
+  private async runGateway(
+    event: string,
+    entries: Array<{ runtime: ModuleRuntime; listener: GatewayListener }>,
+    data: unknown,
+    guildId: string,
+  ): Promise<void> {
+    if (this.guildGate !== undefined && !(await this.guildGate(guildId))) return;
+    const runs = entries
+      .filter(({ runtime }) => this.enablement.isEnabled(guildId, runtime.name))
+      .map(({ runtime, listener }) =>
+        this.runHandler(runtime, guildId, null, `gateway:${event}`, (ctx) => listener.handler(ctx, data)),
+      );
+    await Promise.all(runs);
   }
 
   private async runDiscord(event: DiscordEventName, args: unknown[], guildId: string): Promise<void> {

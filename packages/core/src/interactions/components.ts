@@ -1,4 +1,4 @@
-import type { ButtonContext, ModalContext } from './context.js';
+import type { ButtonContext, ModalContext, SelectContext } from './context.js';
 import type { ComponentSigner, SignatureInput } from './signing.js';
 
 const MAX_CUSTOM_ID = 100;
@@ -11,11 +11,15 @@ interface ComponentBase {
   owner: string | null;
   /** Replies and automatic defers are visible only to the user unless a reply says otherwise. */
   readonly ephemeral?: boolean;
+  /** What the automatic defer does: `'reply'` shows "thinking…", `'update'` acknowledges and leaves the message as is. */
+  readonly defer: ComponentDefer;
   /** Whom its custom IDs are signed for besides the server; checked against the interaction that uses them. */
   readonly bind: ComponentBinding;
   /** How long its custom IDs stay valid, or null for no limit. */
   readonly expiresAfterMs: number | null;
 }
+
+export type ComponentDefer = 'reply' | 'update';
 
 export interface ComponentBinding {
   readonly user: boolean;
@@ -41,7 +45,12 @@ export interface ModalDefinition extends ComponentBase {
   execute(ctx: ModalContext, args: string[]): unknown;
 }
 
-export type ComponentDefinition = ButtonDefinition | ModalDefinition;
+export interface SelectDefinition extends ComponentBase {
+  readonly kind: 'select';
+  execute(ctx: SelectContext, args: string[]): unknown;
+}
+
+export type ComponentDefinition = ButtonDefinition | ModalDefinition | SelectDefinition;
 
 function base(
   name: string,
@@ -63,10 +72,11 @@ export function defineButton(input: {
   bind?: { user?: boolean; channel?: boolean };
   expiresAfterMs?: number;
   ephemeral?: boolean;
+  defer?: ComponentDefer;
   execute: ButtonDefinition['execute'];
 }): ButtonDefinition {
   const bind = { user: input.bind?.user ?? false, channel: input.bind?.channel ?? false };
-  return { ...base(input.name, bind, input.expiresAfterMs), kind: 'button', ephemeral: input.ephemeral, execute: input.execute };
+  return { ...base(input.name, bind, input.expiresAfterMs), kind: 'button', ephemeral: input.ephemeral, defer: input.defer ?? 'reply', execute: input.execute };
 }
 
 export function defineModal(input: {
@@ -75,13 +85,27 @@ export function defineModal(input: {
   bind?: { channel?: boolean };
   expiresAfterMs?: number;
   ephemeral?: boolean;
+  defer?: ComponentDefer;
   execute: ModalDefinition['execute'];
 }): ModalDefinition {
   if ((input.bind as { user?: unknown } | undefined)?.user === false) {
     throw new Error(`Modal "${input.name}" is always bound to its user.`);
   }
   const bind = { user: true, channel: input.bind?.channel ?? false };
-  return { ...base(input.name, bind, input.expiresAfterMs), kind: 'modal', ephemeral: input.ephemeral, execute: input.execute };
+  return { ...base(input.name, bind, input.expiresAfterMs), kind: 'modal', ephemeral: input.ephemeral, defer: input.defer ?? 'reply', execute: input.execute };
+}
+
+export function defineSelect(input: {
+  name: string;
+  /** Also binds IDs to the user and/or channel they are signed for; both off by default. */
+  bind?: { user?: boolean; channel?: boolean };
+  expiresAfterMs?: number;
+  ephemeral?: boolean;
+  defer?: ComponentDefer;
+  execute: SelectDefinition['execute'];
+}): SelectDefinition {
+  const bind = { user: input.bind?.user ?? false, channel: input.bind?.channel ?? false };
+  return { ...base(input.name, bind, input.expiresAfterMs), kind: 'select', ephemeral: input.ephemeral, defer: input.defer ?? 'reply', execute: input.execute };
 }
 
 /**

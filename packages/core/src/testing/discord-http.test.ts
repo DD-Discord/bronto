@@ -1,6 +1,7 @@
-import { expect, it } from 'vitest';
-import { ChannelType } from 'discord.js';
+import { afterEach, expect, it, vi } from 'vitest';
+import { ChannelType, PermissionFlagsBits, DiscordAPIError, type ForumChannel, type ThreadChannel } from 'discord.js';
 import { FakeDiscordHttp } from './discord-http.js';
+import { createNativeTestClient, type NativeTestClient } from './native-client.js';
 const GUILD = '100000000000000001';
 const CHANNEL = '100000000000000010';
 const OTHER = '100000000000000011';
@@ -20,6 +21,21 @@ it('keeps fixture authorization and resource errors realistic', async () => {
   expect(await request('GET', `/channels/${CHANNEL}`)).toMatchObject({ status: 403, json: { code: 50001 } });
 });
 
+it('edits webhook messages through their webhook only', async () => {
+  const http = new FakeDiscordHttp();
+  http.addGuild(GUILD); http.addChannel(CHANNEL, { guildId: GUILD, type: ChannelType.GuildText });
+  const webhook = http.addWebhook(CHANNEL);
+  const other = http.addWebhook(CHANNEL);
+  const request = (method: string, path: string, body?: unknown) => http.answer({ method, path, query: '', body, authorized: false });
+  const sent = await request('POST', `/webhooks/${webhook.id}/${webhook.token}`, { content: 'v1' });
+  const id = (sent.json as { id: string }).id;
+  expect(await request('PATCH', `/webhooks/${other.id}/${other.token}/messages/${id}`, { content: 'nope' })).toMatchObject({ status: 404, json: { code: 10008 } });
+  expect(await request('PATCH', `/webhooks/${webhook.id}/${webhook.token}/messages/${id}`, { content: 'v2', embeds: [{ title: 'T' }] }))
+    .toMatchObject({ status: 200, json: { content: 'v2', embeds: [{ title: 'T' }] } });
+  expect(http.edited).toEqual([id]);
+  expect(await request('PATCH', `/webhooks/${webhook.id}/${webhook.token}/messages/${MESSAGE}`, { content: 'v3' })).toMatchObject({ status: 404, json: { code: 10008 } });
+});
+
 // Accepting an unimplemented subresource can hide an unexpected SDK request.
 it.each([
   ['GET', `/channels/${CHANNEL}/messages/${MESSAGE}/unexpected`],
@@ -37,4 +53,184 @@ it.each([
     .rejects.toThrow(`Unexpected Discord request: ${method} ${path}`);
   expect(http.webhooks.size).toBe(0);
   expect(http.messages.has(MESSAGE)).toBe(true);
+});
+
+const FORUM = '100000000000000020';
+const clients: NativeTestClient[] = [];
+afterEach(async () => { vi.useRealTimers(); for (const c of clients.splice(0)) await c.client.destroy(); });
+async function forumSetup(options: { community?: boolean } = {}) {
+  const http = new FakeDiscordHttp();
+  http.addGuild(GUILD, options);
+  http.addChannel(FORUM, { guildId: GUILD, type: ChannelType.GuildForum });
+  const c = await createNativeTestClient(http); clients.push(c);
+  const forum = await c.client.channels.fetch(FORUM) as ForumChannel;
+  return { ...c, http, forum };
+}
+const apiError = async (promise: Promise<unknown>) => {
+  const error = await promise.catch(e => e);
+  expect(error).toBeInstanceOf(DiscordAPIError);
+  return error as DiscordAPIError;
+};
+
+it('answers unknown channels with 10003 and deletes channels', async () => {
+  const { client, http } = await forumSetup();
+  const error = await apiError(client.channels.fetch('100000000000000404', { force: true }));
+  expect(error).toMatchObject({ status: 404, code: 10003, message: 'Unknown Channel' });
+  const forum = await client.channels.fetch(FORUM) as ForumChannel;
+  const post = await forum.threads.create({ name: 'Post', message: { content: 'Body' } });
+  await forum.delete();
+  expect(http.channels.has(FORUM)).toBe(false);
+  expect(http.channels.has(post.id)).toBe(false);
+  expect(http.messages.has(post.id)).toBe(false);
+  expect(http.deletedChannels).toEqual(expect.arrayContaining([FORUM, post.id]));
+  await apiError(client.channels.fetch(FORUM, { force: true }));
+});
+
+it('creates forums only in community guilds and lists guild channels', async () => {
+  const { client } = await forumSetup();
+  const guild = client.guilds.cache.get(GUILD)!;
+  const created = await guild.channels.create({ name: 'templates', type: ChannelType.GuildForum });
+  expect(created.type).toBe(ChannelType.GuildForum);
+  const channels = await guild.channels.fetch();
+  expect(channels.has(created.id)).toBe(true);
+  expect(guild.features).toContain('COMMUNITY');
+
+  const plain = await forumSetup({ community: false });
+  expect(plain.client.guilds.cache.get(GUILD)!.features).not.toContain('COMMUNITY');
+  const error = await apiError(plain.client.guilds.cache.get(GUILD)!.channels.create({ name: 'templates', type: ChannelType.GuildForum }));
+  expect(error).toMatchObject({ status: 400, code: 50024, message: 'Cannot execute action on this channel type' });
+  await plain.client.guilds.cache.get(GUILD)!.channels.create({ name: 'text', type: ChannelType.GuildText });
+});
+
+it('creates forum posts with a starter message that shares the thread id', async () => {
+  const { forum, http } = await forumSetup();
+  const post = await forum.threads.create({
+    name: 'Welcome', message: { content: 'Hello', embeds: [{ title: 'Embed' }] },
+  });
+  expect(post.parentId).toBe(FORUM);
+  expect(post.ownerId).toBe(http.botId);
+  expect(post.archived).toBe(false);
+  expect(post.locked).toBe(false);
+  expect(http.channels.get(post.id)).toMatchObject({ type: ChannelType.PublicThread, name: 'Welcome', parent_id: FORUM, owner_id: http.botId });
+  const starter = await post.fetchStarterMessage();
+  expect(starter?.id).toBe(post.id);
+  expect(starter?.content).toBe('Hello');
+  expect(starter?.embeds[0]?.title).toBe('Embed');
+});
+
+it('uploads files with a forum post, signs urls and re-signs them on every fetch', async () => {
+  vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-03-01T12:00:00Z') });
+  const { forum, http } = await forumSetup();
+  const post = await forum.threads.create({
+    name: 'Files',
+    message: { content: 'With file', files: [{ attachment: Buffer.from('png bytes'), name: 'pic.png' }] },
+  });
+  const first = (await post.fetchStarterMessage())!.attachments.first()!;
+  expect(first.name).toBe('pic.png');
+  expect(first.size).toBe(9);
+  const url = new URL(first.url);
+  expect(url.origin + url.pathname).toBe(`https://cdn.discordapp.com/attachments/${post.id}/${first.id}/pic.png`);
+  const expires = Math.floor(Date.now() / 1000) + 24 * 3600;
+  expect(url.searchParams.get('ex')).toBe(expires.toString(16));
+  expect(url.searchParams.get('is')).toBe(Math.floor(Date.now() / 1000).toString(16));
+  expect(url.searchParams.get('hm')).toMatch(/^[0-9a-f]{64}$/);
+  expect(http.files.get(first.id)).toMatchObject({ filename: 'pic.png', channelId: post.id });
+  expect(Buffer.from(http.files.get(first.id)!.data).toString()).toBe('png bytes');
+
+  vi.setSystemTime(new Date('2026-03-01T13:00:00Z'));
+  const again = (await post.messages.fetch({ message: post.id, force: true })).attachments.first()!;
+  const next = new URL(again.url);
+  expect(next.searchParams.get('ex')).toBe((Math.floor(Date.now() / 1000) + 24 * 3600).toString(16));
+  expect(next.searchParams.get('ex')).not.toBe(url.searchParams.get('ex'));
+  expect(next.searchParams.get('hm')).not.toBe(url.searchParams.get('hm'));
+});
+
+it('moves attachments an embed shows into the embed, as Discord does', async () => {
+  const { forum, http } = await forumSetup();
+  const post = await forum.threads.create({
+    name: 'Embedded',
+    message: {
+      embeds: [{ title: 'T', image: { url: 'attachment://pic.png' }, footer: { text: 'F', icon_url: 'attachment://icon.png' } }],
+      files: [{ attachment: Buffer.from('pic'), name: 'pic.png' }, { attachment: Buffer.from('icon'), name: 'icon.png' }, { attachment: Buffer.from('x'), name: 'loose.txt' }],
+    },
+  });
+  const starter = (await post.fetchStarterMessage())!;
+  expect(starter.attachments.map((a) => a.name)).toEqual(['loose.txt']);
+  const pic = [...http.files.entries()].find(([, file]) => file.filename === 'pic.png')![0];
+  expect(starter.embeds[0]!.image!.url).toMatch(new RegExp(`^https://cdn\\.discordapp\\.com/attachments/${post.id}/${pic}/pic\\.png\\?ex=`));
+  expect(starter.embeds[0]!.footer!.iconURL).toMatch(/\/icon\.png\?ex=/);
+
+  // An edit keeps an embedded attachment by id and can still reference it by name.
+  const edited = await starter.edit({ embeds: [{ title: 'T2', image: { url: 'attachment://pic.png' } }], attachments: [{ id: pic } as never] });
+  expect(edited.embeds[0]!.image!.url).toContain(`/${pic}/pic.png?ex=`);
+  expect(edited.attachments.size).toBe(0);
+  expect(http.files.has(pic)).toBe(true);
+});
+
+it('edits and archives posts through channel PATCH', async () => {
+  const { forum, http } = await forumSetup();
+  http.channels.set(FORUM, { ...http.channels.get(FORUM)!, available_tags: [{ id: '100000000000000777', name: 'Tag', moderated: false, emoji_id: null, emoji_name: null }] } as never);
+  const post = await forum.threads.create({ name: 'Old', message: { content: 'Body' } }) as ThreadChannel;
+  await post.setName('New');
+  await post.setLocked(true);
+  await post.setAppliedTags(['100000000000000777']);
+  expect(http.channels.get(post.id)).toMatchObject({ name: 'New', applied_tags: ['100000000000000777'], thread_metadata: { archived: false, locked: true } });
+  await post.setArchived(true);
+  expect(http.channels.get(post.id)).toMatchObject({ thread_metadata: { archived: true, locked: true } });
+  await post.setArchived(false);
+  expect(http.channels.get(post.id)).toMatchObject({ thread_metadata: { archived: false } });
+});
+
+it('rejects message edits in archived threads with 50083 and supports kept and new attachments', async () => {
+  const { forum, http } = await forumSetup();
+  const post = await forum.threads.create({
+    name: 'Edit',
+    message: { content: 'v1', files: [{ attachment: Buffer.from('one'), name: 'one.txt' }, { attachment: Buffer.from('two'), name: 'two.txt' }] },
+  });
+  const starter = (await post.fetchStarterMessage())!;
+  const [one, two] = [...starter.attachments.values()];
+  const edited = await starter.edit({
+    content: 'v2',
+    attachments: [one!],
+    files: [{ attachment: Buffer.from('three'), name: 'three.txt' }],
+  });
+  expect(edited.content).toBe('v2');
+  expect(edited.attachments.map(a => a.name)).toEqual(['one.txt', 'three.txt']);
+  expect(edited.attachments.first()!.id).toBe(one!.id);
+  expect(http.files.has(two!.id)).toBe(false);
+  const three = edited.attachments.last()!;
+  expect(Buffer.from(http.files.get(three.id)!.data).toString()).toBe('three');
+
+  await post.setArchived(true);
+  const error = await apiError(edited.edit({ content: 'v3' }));
+  expect(error).toMatchObject({ status: 400, code: 50083, message: 'Thread is archived' });
+  expect(http.messages.get(post.id)!.content).toBe('v2');
+});
+
+it('serves guild members with their roles, and computes permissions from roles and overwrites', async () => {
+  const http = new FakeDiscordHttp();
+  const MEMBER = '100000000000000201';
+  const ROLE = '100000000000000301';
+  http.addGuild(GUILD);
+  http.addRole(GUILD, { id: ROLE, permissions: 0n });
+  http.addMember(GUILD, MEMBER, { roles: [ROLE] });
+  http.addChannel(CHANNEL, { guildId: GUILD, type: ChannelType.GuildText });
+  http.addChannel(OTHER, {
+    guildId: GUILD,
+    type: ChannelType.GuildText,
+    permissionOverwrites: [{ id: GUILD, type: 0, deny: String(PermissionFlagsBits.ViewChannel), allow: '0' }],
+  });
+  const { client } = await createNativeTestClient(http);
+  try {
+    const guild = await client.guilds.fetch({ guild: GUILD, force: true });
+    const member = await guild.members.fetch(MEMBER);
+    expect([...member.roles.cache.keys()].sort()).toEqual([GUILD, ROLE].sort());
+    const visible = await client.channels.fetch(CHANNEL);
+    const hidden = await client.channels.fetch(OTHER);
+    expect(visible && 'permissionsFor' in visible && visible.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel)).toBe(true);
+    expect(hidden && 'permissionsFor' in hidden && hidden.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel)).toBe(false);
+    await expect(guild.members.fetch('100000000000000202')).rejects.toMatchObject({ status: 404, code: 10007 });
+  } finally {
+    await client.destroy();
+  }
 });

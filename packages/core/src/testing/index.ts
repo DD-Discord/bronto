@@ -5,10 +5,12 @@ export {
   fakeButton,
   fakeCommand,
   fakeModal,
+  fakeSelect,
   type FakeCommandInput,
   type FakeInteractionBase,
   type FakeResponse,
   type FakeResponseKind,
+  type UploadedFile,
 } from './interactions.js';
 export { captureLog, type LogLine } from './log.js';
 

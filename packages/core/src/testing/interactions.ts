@@ -1,6 +1,6 @@
-import type { Interaction } from 'discord.js';
+import { Collection, PermissionsBitField, type Interaction } from 'discord.js';
 
-export type FakeResponseKind = 'reply' | 'deferReply' | 'editReply' | 'followUp' | 'deleteReply' | 'showModal' | 'respond';
+export type FakeResponseKind = 'reply' | 'deferReply' | 'update' | 'deferUpdate' | 'editReply' | 'followUp' | 'deleteReply' | 'showModal' | 'respond';
 
 export interface FakeResponse {
   kind: FakeResponseKind;
@@ -15,6 +15,10 @@ export interface FakeInteractionBase {
   rejectResponses: boolean;
   /** Whether the guild is in the client's cache; true by default. False fakes a guild the bot has not loaded yet. */
   cached: boolean;
+  /** The member's permissions in the interaction's channel; every permission by default. */
+  permissions: bigint;
+  /** The largest file in bytes the bot may upload in the interaction's context; 10 MiB by default. */
+  attachmentSizeLimit: number;
 }
 
 export type FakeCommandInput = Partial<FakeInteractionBase> & {
@@ -24,7 +28,10 @@ export type FakeCommandInput = Partial<FakeInteractionBase> & {
   options?: Record<string, unknown>;
 };
 
-type Kind = 'command' | 'autocomplete' | 'button' | 'modal';
+/** An uploaded modal file; `id` defaults to its position. */
+export interface UploadedFile { id?: string; filename?: string; url?: string; size?: number; contentType?: string; [key: string]: unknown }
+
+type Kind = 'command' | 'autocomplete' | 'button' | 'modal' | 'select';
 
 interface Details {
   command?: string;
@@ -34,6 +41,9 @@ interface Details {
   focused?: string;
   customId?: string;
   fields?: Record<string, string>;
+  uploads?: Record<string, UploadedFile[]>;
+  checkboxes?: Record<string, boolean>;
+  values?: string[];
 }
 
 /**
@@ -47,6 +57,9 @@ export class FakeInteraction {
   readonly user: { id: string };
   readonly commandName: string | undefined;
   readonly customId: string | undefined;
+  readonly values: string[];
+  readonly memberPermissions: PermissionsBitField;
+  readonly attachmentSizeLimit: number;
   replied = false;
   deferred = false;
   readonly options: {
@@ -55,7 +68,11 @@ export class FakeInteraction {
     get(name: string): Record<string, unknown> | null;
     getFocused(full: true): { name: string; type: number; value: string; focused: true };
   };
-  readonly fields: { getTextInputValue(customId: string): string };
+  readonly fields: {
+    getTextInputValue(customId: string): string;
+    getUploadedFiles(customId: string): Collection<string, UploadedFile> | null;
+    getCheckbox(customId: string): boolean;
+  };
   private readonly kind: Kind;
   private readonly rejectResponses: boolean;
   private readonly cached: boolean;
@@ -67,8 +84,11 @@ export class FakeInteraction {
     this.user = { id: base.userId ?? 'u1' };
     this.rejectResponses = base.rejectResponses ?? false;
     this.cached = base.cached ?? true;
+    this.memberPermissions = new PermissionsBitField(base.permissions ?? PermissionsBitField.All);
+    this.attachmentSizeLimit = base.attachmentSizeLimit ?? 10 * 1024 * 1024;
     this.commandName = details.command;
     this.customId = details.customId;
+    this.values = details.values ?? [];
     const values = details.options ?? {};
     this.options = {
       getSubcommand: () => details.subcommand ?? null,
@@ -85,6 +105,17 @@ export class FakeInteraction {
     this.fields = {
       getTextInputValue: (customId) => {
         const value = fields[customId];
+        if (value === undefined) throw new Error(`No modal field ${customId}`);
+        return value;
+      },
+      getUploadedFiles: (customId) => {
+        const files = details.uploads?.[customId];
+        if (files === undefined) throw new Error(`No modal field ${customId}`);
+        if (files.length === 0) return null;
+        return new Collection(files.map((file, index) => [file.id ?? String(index), { id: String(index), ...file, name: file.filename }]));
+      },
+      getCheckbox: (customId) => {
+        const value = details.checkboxes?.[customId];
         if (value === undefined) throw new Error(`No modal field ${customId}`);
         return value;
       },
@@ -119,6 +150,10 @@ export class FakeInteraction {
     return this.kind === 'modal';
   }
 
+  isStringSelectMenu(): boolean {
+    return this.kind === 'select';
+  }
+
   isRepliable(): boolean {
     return this.kind !== 'autocomplete';
   }
@@ -131,6 +166,18 @@ export class FakeInteraction {
 
   deferReply(payload: unknown): Promise<void> {
     return this.record('deferReply', payload, () => {
+      this.deferred = true;
+    });
+  }
+
+  update(payload: unknown): Promise<void> {
+    return this.record('update', payload, () => {
+      this.replied = true;
+    });
+  }
+
+  deferUpdate(): Promise<void> {
+    return this.record('deferUpdate', undefined, () => {
       this.deferred = true;
     });
   }
@@ -177,7 +224,16 @@ export function fakeButton(input: Partial<FakeInteractionBase> & { customId: str
 }
 
 export function fakeModal(
-  input: Partial<FakeInteractionBase> & { customId: string; fields?: Record<string, string> },
+  input: Partial<FakeInteractionBase> & {
+    customId: string;
+    fields?: Record<string, string>;
+    uploads?: Record<string, UploadedFile[]>;
+    checkboxes?: Record<string, boolean>;
+  },
 ): FakeInteraction {
   return new FakeInteraction('modal', input, input);
+}
+
+export function fakeSelect(input: Partial<FakeInteractionBase> & { customId: string; values: string[] }): FakeInteraction {
+  return new FakeInteraction('select', input, input);
 }
