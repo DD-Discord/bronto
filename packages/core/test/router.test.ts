@@ -34,6 +34,8 @@ import { createTestDatabase, setUpSchema, type TestDatabase } from './test-db.js
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const ran: string[] = [];
 
+let seenOptions: unknown;
+
 const demoCommand = defineCommand({
   description: 'Demo',
   subcommands: {
@@ -104,6 +106,20 @@ const demoCommand = defineCommand({
               { name: 'n'.repeat(150), value: 'long-name' },
               ...Array.from({ length: 30 }, (_, i) => ({ name: `${query}-${i}`, value: `v${i}` })),
             ];
+          },
+        }),
+      },
+      execute: () => undefined,
+    }),
+    scoped: defineSubcommand({
+      description: 'Suggests from another option',
+      options: {
+        module: opt.string({ description: 'Module' }),
+        topic: opt.string({
+          description: 'Topic',
+          autocomplete: (_ctx, _query, options) => {
+            seenOptions = options;
+            return [];
           },
         }),
       },
@@ -380,6 +396,15 @@ describe('InteractionRouter autocomplete', () => {
     expect(choices[0]).toEqual({ name: `${'n'.repeat(99)}…`, value: 'long-name' });
     expect(choices[0]!.name).toHaveLength(100);
     expect(choices[1]).toEqual({ name: 'ab-0', value: 'v0' });
+  });
+
+  it('passes the other option values to autocomplete', async () => {
+    seenOptions = undefined;
+    await run(
+      makeRouter(),
+      fakeAutocomplete({ command: 'demo', subcommand: 'scoped', focused: 'topic', options: { module: 'sticky', topic: 'cr' } }),
+    );
+    expect(seenOptions).toEqual({ module: 'sticky', topic: 'cr' });
   });
 
   it('names choices without a name after their value and drops those without either', async () => {

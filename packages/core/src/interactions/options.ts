@@ -19,8 +19,14 @@ export interface Choice<V extends string | number = string | number> {
   value: V;
 }
 
-/** Suggests values while the user types; runs as a handler of the command's module. */
-export type Autocomplete = (ctx: HandlerContext, query: string) => Choice[] | Promise<Choice[]>;
+/** Raw values of a handler's options as typed so far, by option name; unset options are absent or `undefined`. */
+export type AutocompleteOptions = Readonly<Record<string, string | number | boolean | undefined>>;
+
+/**
+ * Suggests values while the user types; runs as a handler of the command's module. `options` holds the raw values of
+ * the handler's options, the focused one included.
+ */
+export type Autocomplete = (ctx: HandlerContext, query: string, options: AutocompleteOptions) => Choice[] | Promise<Choice[]>;
 
 export interface OptionDefinition<TValue, TRequired extends boolean = boolean> {
   readonly kind: OptionKind;

@@ -413,7 +413,8 @@ opt.string({
 });
 ```
 
-The router trims the list to Discord's limits: 25 choices, 100 characters per name, and no empty names.
+A third argument, `options`, holds the raw values of the command's other options as typed so far (the focused one
+included), for suggestions that depend on them. The router trims the list to Discord's limits: 25 choices, 100 characters per name, and no empty names.
 
 ### Answering
 

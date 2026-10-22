@@ -67,11 +67,11 @@ describe('entity data access', () => {
     const suggest = entityAutocomplete(widgets);
     let choices: unknown;
     await dispatcher.runHandler(runtimes[0]!, 'g1', 'u1', 'test', async (ctx) => {
-      choices = await suggest(ctx, 'AP');
+      choices = await suggest(ctx, 'AP', {});
     });
     expect(choices).toEqual([{ name: 'Apple', value: 'a' }]);
     await dispatcher.runHandler(runtimes[0]!, 'g1', 'u1', 'test', async (ctx) => {
-      choices = await suggest(ctx, '');
+      choices = await suggest(ctx, '', {});
     });
     expect(choices).toEqual([
       { name: 'Apple', value: 'a' },

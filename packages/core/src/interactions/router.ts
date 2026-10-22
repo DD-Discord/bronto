@@ -171,10 +171,12 @@ export class InteractionRouter {
     if (entry === undefined || suggest === undefined || !(await this.ready(interaction.guildId)) || !this.enabled(entry.source, interaction.guildId)) {
       return this.respond(interaction, []);
     }
+    const values: Record<string, string | number | boolean | undefined> = {};
+    for (const name of Object.keys(options)) values[name] = interaction.options.get(name)?.value;
     let choices: Choice[] = [];
     const label = `/${[interaction.commandName, subcommandPath(group, subcommand)].filter((part) => part !== '').join(' ')} ${focused.name}`;
     const result = await this.dispatcher.runHandler(entry.source.runtime, interaction.guildId, interaction.user.id, label, async (ctx) => {
-      choices = await suggest(ctx, String(focused.value));
+      choices = await suggest(ctx, String(focused.value), values);
     }, { expectedError: isUserError });
     await this.respond(interaction, result.ok ? choices : []);
   }
