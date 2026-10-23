@@ -156,6 +156,13 @@ describe('/help', () => {
     expect(select(payload, 'Topic').options!.find((o) => o.default)?.value).toBe('index');
   });
 
+  it('labels the start topic Overview in the topic select', async () => {
+    const payload = await build().ask({ module: 'alpha' });
+    expect(select(payload, 'Module').options!.find((o) => o.default)?.label).toBe('Alpha');
+    expect(select(payload, 'Topic').options!.map((o) => o.label)).toEqual(['Overview', 'Bee']);
+    expect(texts(payload)[0]).toBe('# Alpha');
+  });
+
   it('answers /help module:alpha topic:b with the first page of b', async () => {
     const { ask } = build();
     const payload = await ask({ module: 'alpha', topic: 'b' });
@@ -191,12 +198,13 @@ describe('/help', () => {
   it('autocompletes topics of the chosen module', async () => {
     const { suggest } = build();
     expect(await suggest('topic', { module: 'alpha', topic: '' })).toEqual([
-      { name: 'Alpha', value: 'index' },
+      { name: 'Overview', value: 'index' },
       { name: 'Bee', value: 'b' },
     ]);
+    expect(await suggest('topic', { module: 'alpha', topic: 'over' })).toEqual([{ name: 'Overview', value: 'index' }]);
     expect(await suggest('topic', { module: 'alpha', topic: 'be' })).toEqual([{ name: 'Bee', value: 'b' }]);
     expect(await suggest('topic', { topic: '' })).toEqual([
-      { name: 'Help', value: 'index' },
+      { name: 'Overview', value: 'index' },
       { name: 'Modules', value: 'modules' },
     ]);
     expect(await suggest('topic', { module: 'gamma', topic: '' })).toEqual([]);

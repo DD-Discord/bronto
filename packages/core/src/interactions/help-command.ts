@@ -4,7 +4,7 @@ import type { ModuleEnablement } from '../runtime/enablement.js';
 import { defineCommand, type CommandDefinition } from './commands.js';
 import { defineButton, defineSelect, type ComponentDefinition } from './components.js';
 import { UserError } from './errors.js';
-import { renderHelp, type HelpIds, type HelpView } from './help-render.js';
+import { renderHelp, topicLabel, type HelpIds, type HelpView } from './help-render.js';
 import { opt, type Choice } from './options.js';
 
 const CORE = 'core';
@@ -117,8 +117,8 @@ export function createHelp(options: HelpOptions): { command: CommandDefinition; 
           const name = typeof module === 'string' && module !== '' ? module : CORE;
           const docs = visible(ctx.guildId).find((candidate) => candidate.name === name)?.docs;
           return (docs?.topics ?? [])
-            .filter((topic) => matches(query, topic.id, topic.title))
-            .map((topic): Choice => ({ name: topic.title, value: topic.id }));
+            .filter((topic) => matches(query, topic.id, topicLabel(topic)))
+            .map((topic): Choice => ({ name: topicLabel(topic), value: topic.id }));
         },
       }),
     },

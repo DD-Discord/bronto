@@ -35,7 +35,8 @@ A file is a topic. The topic ID is the file name without `.md`.
 ### Title
 
 The first line of every file is `# Title`. It is shown at the top of every page of the topic and as the topic's label in
-the topic select. The title of `index.md` is also the module's label in the module select.
+the topic select. The title of `index.md` is the module's label in the module select; in the topic select, `index.md` is
+always labelled "Overview".
 
 ### Summary
 

@@ -1,11 +1,16 @@
 import { ButtonStyle, ComponentType, MessageFlags } from 'discord.js';
-import type { Block, ModuleDocs } from '../docs/types.js';
+import type { Block, ModuleDocs, Topic } from '../docs/types.js';
 import { plainText, truncate } from './format.js';
 import type { ReplyMessage } from './responder.js';
 
 const MAX_SELECT_OPTIONS = 25;
 const MAX_OPTION_TEXT = 100;
 const MAX_BUTTON_LABEL = 80;
+
+/** A topic's label in the topic select and autocomplete; the start topic shares its title with the module. */
+export function topicLabel(topic: Topic): string {
+  return topic.id === 'index' ? 'Overview' : topic.title;
+}
 
 /** One page of one module's docs; `topic` indexes `docs.topics`, `page` is 0-based. */
 export interface HelpView {
@@ -85,7 +90,7 @@ export function renderHelp(view: HelpView, ids: HelpIds | null): ReplyMessage {
       };
     });
     const topics = view.docs.topics.map((candidate) => ({
-      label: truncate(candidate.title, MAX_OPTION_TEXT),
+      label: truncate(topicLabel(candidate), MAX_OPTION_TEXT),
       value: candidate.id,
       default: candidate.id === topic.id,
     }));
