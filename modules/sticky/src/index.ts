@@ -1,6 +1,6 @@
-import { defineModule, gate, on, type ModuleDefinition } from '@bronto/core';
+import { defineModule, gate, gatewayEvent, on, type ModuleDefinition } from '@bronto/core';
 import templates, { templatesEvents, templatesGates } from '@bronto/templates';
-import { Events, GatewayIntentBits, PermissionFlagsBits } from 'discord.js';
+import { Events, GatewayDispatchEvents, GatewayIntentBits, PermissionFlagsBits } from 'discord.js';
 import { asc, eq } from 'drizzle-orm';
 import { createStickyCommand } from './commands.js';
 import { stickyConfigSchema, type StickyConfig } from './config.js';
@@ -34,6 +34,9 @@ export function createStickyModule(): ModuleDefinition<StickyConfig, StickyApi> 
     ],
     listeners: [
       on(Events.MessageCreate, (ctx, message) => reposter.onMessage(ctx, message)),
+      on(Events.ChannelDelete, (ctx, channel) => reposter.onChannelGone(ctx, channel.id)),
+      // Raw packet: discord.js emits ThreadDelete only for cached threads.
+      on(gatewayEvent(GatewayDispatchEvents.ThreadDelete), (ctx, data) => reposter.onChannelGone(ctx, data.id)),
       on(templatesEvents.updated, (ctx, { id }) => reposter.refreshTemplate(ctx, id)),
       on(templatesEvents.deleted, (ctx, { id }) => reposter.deleteForTemplate(ctx, id)),
       gate(templatesGates.deleting, async (ctx, { id }) => {

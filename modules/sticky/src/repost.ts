@@ -4,7 +4,7 @@ import {
   DiscordAPIError, RESTJSONErrorCodes, MessageFlags,
   type APIActionRowComponent, type APIComponentInMessageActionRow, type APIEmbed,
 } from 'discord.js';
-import { and, asc, eq, isNotNull, isNull, ne } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull, ne, or } from 'drizzle-orm';
 import type { StickyConfig } from './config.js';
 import { stickies, stickyState, type Sticky } from './db/schema.js';
 import { stickyAsks, stickyEvents } from './events.js';
@@ -201,6 +201,35 @@ export class Reposter {
     ctx.emit(stickyEvents.deleted, { channelId: record.channelId });
   }
 
+  /**
+   * Forgets the stickies of a deleted channel or thread, and of the threads of a deleted channel. Discord is not
+   * asked to delete the posts. A deleted thread leaves its parent's webhook behind, which goes unless shared; a
+   * deleted channel takes its webhooks with it.
+   */
+  async onChannelGone(ctx: StickyContext, channelId: string): Promise<void> {
+    const rows = await ctx.db.run(async (tx) =>
+      tx.select().from(stickies).where(or(eq(stickies.channelId, channelId), eq(stickies.parentChannelId, channelId))),
+    );
+    for (const record of rows) {
+      this.index.delete(record.channelId);
+      this.cancel(record.channelId);
+      await ctx.queue.run(record.channelId, async (task) => {
+        await task.db.run(async (tx) => {
+          await tx.delete(stickies).where(eq(stickies.channelId, record.channelId));
+        });
+        if (record.channelId === channelId && record.parentChannelId !== null) {
+          try {
+            await this.deleteWebhookUnlessShared(task, record, record.channelId);
+          } catch (error) {
+            task.log.warn({ err: error, channelId: record.channelId }, "Deleting a deleted thread's sticky webhook failed");
+          }
+        }
+      });
+      ctx.log.info({ channelId: record.channelId }, 'Deleted the sticky of a deleted channel');
+      ctx.emit(stickyEvents.deleted, { channelId: record.channelId });
+    }
+  }
+
   /** Re-arms the guild's pending debounces after start-up or a switch back on; overdue ones post right away. */
   async resume(ctx: StickyContext): Promise<void> {
     const pending = await ctx.db.run(async (tx) =>
@@ -277,12 +306,12 @@ export class Reposter {
     if (components.length > 0 && await this.isForeign(ctx, sticky)) return this.repost(ctx, channelId);
     try {
       const webhook = await resolveWebhook(ctx.client, { id: sticky.webhookId, token: sticky.webhookToken });
-      await withWebhookErrors(sticky.webhookToken, () => webhook.editMessage(lastMessageId, {
+      await this.withoutRejectedRows(ctx, channelId, components, (rows) => withWebhookErrors(sticky.webhookToken, () => webhook.editMessage(lastMessageId, {
         content: message.content, embeds: message.embeds,
-        components, withComponents: true,
+        components: rows, withComponents: true,
         threadId: sticky.parentChannelId === null ? undefined : sticky.channelId,
         allowedMentions: { parse: [] },
-      }));
+      })));
     } catch (error) {
       if (!(error instanceof UnknownMessageError) && !(error instanceof UnknownWebhookError)) throw error;
       await this.repost(ctx, channelId);
@@ -301,6 +330,20 @@ export class Reposter {
     return rows.slice(0, MAX_ROWS);
   }
 
+  /**
+   * Runs a send or edit with the rows; when Discord rejects the payload (Invalid Form Body) while rows were sent, the
+   * rows are at fault, so it runs once more without them and the sticky stays.
+   */
+  private async withoutRejectedRows<T>(ctx: StickyContext, channelId: string, rows: Row[], run: (rows: Row[]) => Promise<T>): Promise<T> {
+    try {
+      return await run(rows);
+    } catch (error) {
+      if (rows.length === 0 || !(error instanceof DiscordAPIError) || error.code !== RESTJSONErrorCodes.InvalidFormBodyOrContentType) throw error;
+      ctx.log.warn({ channelId, err: error }, 'Sticky rows were rejected; posted without them');
+      return run([]);
+    }
+  }
+
   private async post(ctx: StickyContext, sticky: Sticky, message: StickyMessage, components: Row[], lastMessageId: string | null, resolved?: IncomingWebhook): Promise<void> {
     const webhook = resolved ?? await resolveWebhook(ctx.client, { id: sticky.webhookId, token: sticky.webhookToken });
     const threadId = sticky.parentChannelId === null ? undefined : sticky.channelId;
@@ -314,11 +357,12 @@ export class Reposter {
         }
       }
     }
-    const sent = await withWebhookErrors(sticky.webhookToken, () => webhook.send({
-      content: message.content || undefined, embeds: message.embeds, components, withComponents: true, threadId,
+    const send = (rows: Row[]) => withWebhookErrors(sticky.webhookToken, () => webhook.send({
+      content: message.content || undefined, embeds: message.embeds, components: rows, withComponents: true, threadId,
       flags: sticky.silent ? MessageFlags.SuppressNotifications : undefined,
       username: ctx.config.webhookName, avatarURL: ctx.config.webhookAvatar, allowedMentions: { parse: [] },
     }));
+    const sent = await this.withoutRejectedRows(ctx, sticky.channelId, components, send);
     const messageId = sent.id;
     try {
       await ctx.db.run(async (tx) => {

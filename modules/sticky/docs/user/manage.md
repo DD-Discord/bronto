@@ -12,6 +12,8 @@
 
 `/sticky delete channel` deletes a sticky and its post. The webhook it posted through is deleted as well, unless another sticky shares it.
 
+When the channel or thread of a sticky is deleted, its sticky is deleted with it.
+
 ## Leaving the server
 
 When the bot leaves a server, its sticky data is kept for 30 days and then deleted. Messages already posted stay in the channels.

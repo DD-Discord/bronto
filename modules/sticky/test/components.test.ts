@@ -1,11 +1,11 @@
 import { answer, defineModule, on, type HandlerContext } from '@bronto/core';
 import { fakeCommand, FakeDiscordHttp } from '@bronto/core/testing';
 import { templatesEvents } from '@bronto/templates';
-import { ComponentType, Events, type APIActionRowComponent, type APIComponentInMessageActionRow } from 'discord.js';
+import { ChannelType, ComponentType, Events, type APIActionRowComponent, type APIComponentInMessageActionRow } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import sticky, { stickyAsks, stickyEvents, type StickyApi } from '../src/index.js';
-import { CHANNEL, createTemplate, GUILD, insertSticky, message, prepareStickyBot, QUIET_CHANNEL, ready, USER, type StickyBot } from './harness.js';
+import { CHANNEL, createTemplate, GUILD, insertSticky, message, prepareStickyBot, QUIET_CHANNEL, ready, stickyRows, THREAD, USER, type StickyBot } from './harness.js';
 
 type Row = APIActionRowComponent<APIComponentInMessageActionRow>;
 
@@ -103,6 +103,61 @@ describe('components collector', () => {
     expect(patches).toHaveLength(1);
     expect(patches[0]).toMatchObject({ body: { content: 'New rules', components: [row('one')] } });
     expect(patches[0]!.query).toContain('with_components=true');
+  });
+});
+
+describe('rows Discord rejects', () => {
+  const noId: Row = { type: ComponentType.ActionRow, components: [{ type: ComponentType.Button, style: 1, label: 'x' } as never] };
+
+  it('skips an answer with more than five buttons per row', async () => {
+    answerWith = () => [{ type: ComponentType.ActionRow, components: ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => row(id).components[0]!) }];
+    await start([], async () => void (await insertSticky(t, discord, { channelId: CHANNEL })));
+    await say(CHANNEL);
+    expect(webhookRequests('POST')).toHaveLength(1);
+    expect(webhookRequests('POST')[0]).toMatchObject({ body: { components: [] } });
+  });
+
+  it('skips an answer holding a select', async () => {
+    answerWith = () => [{ type: ComponentType.ActionRow, components: [{ type: ComponentType.StringSelect, custom_id: 's', options: [] } as never] }];
+    await start([], async () => void (await insertSticky(t, discord, { channelId: CHANNEL })));
+    await say(CHANNEL);
+    expect(webhookRequests('POST')[0]).toMatchObject({ body: { components: [] } });
+  });
+
+  it('posts again without rows when Discord rejects them', async () => {
+    answerWith = () => [noId];
+    await start([], async () => void (await insertSticky(t, discord, { channelId: CHANNEL })));
+    await say(CHANNEL);
+    const posts = webhookRequests('POST');
+    expect(posts).toHaveLength(2);
+    expect(posts[0]).toMatchObject({ body: { components: [noId] } });
+    expect(posts[1]).toMatchObject({ body: { components: [] } });
+    expect(discord.sent).toHaveLength(1);
+    const warning = sb.lines.find((line) => line.msg === 'Sticky rows were rejected; posted without them');
+    expect(warning).toMatchObject({ level: 40, channelId: CHANNEL });
+  });
+
+  it('leaves one live post after a rejected repost', async () => {
+    answerWith = () => [];
+    await start([], async () => void (await insertSticky(t, discord, { channelId: CHANNEL })));
+    await say(CHANNEL);
+    answerWith = () => [noId];
+    await say(CHANNEL);
+    expect([...discord.messages.values()].filter((m) => m.webhook_id !== undefined)).toHaveLength(1);
+  });
+
+  it('edits without rows when Discord rejects them', async () => {
+    answerWith = () => [];
+    await start([], async () => void (await insertSticky(t, discord, { channelId: CHANNEL })));
+    await say(CHANNEL);
+    answerWith = () => [noId];
+    const runtime = sb.bot.runtimes.find((entry) => entry.name === 'sticky_buttons')!;
+    await sb.bot.dispatcher.runHandler(runtime, GUILD, null, 'test', async (ctx) => ctx.modules.get(sticky).refresh(CHANNEL));
+    await sb.bot.idle();
+    const patches = webhookRequests('PATCH');
+    expect(patches).toHaveLength(2);
+    expect(patches[1]).toMatchObject({ body: { components: [] } });
+    expect(sb.lines.some((line) => line.msg === 'Sticky rows were rejected; posted without them')).toBe(true);
   });
 });
 
@@ -230,5 +285,72 @@ describe('deleted event', () => {
     await command('create', CHANNEL, { template: await createTemplate(sb, 'Rules') });
     await command('delete', CHANNEL, {});
     expect(seen).toEqual([CHANNEL]);
+  });
+});
+
+describe('deleted channels', () => {
+  const seen: string[] = [];
+  beforeEach(() => void (seen.length = 0));
+  const listener = () => on(stickyEvents.deleted, (_ctx, { channelId }) => void seen.push(channelId));
+  const rawThreadDelete = (id: string, parentId = CHANNEL) =>
+    sb.client.emit(Events.Raw, { op: 0, t: 'THREAD_DELETE', d: { id, guild_id: GUILD, parent_id: parentId, type: 11 }, s: 1 }, 0);
+
+  it('removes the sticky of a deleted channel', async () => {
+    let webhook = '';
+    await start([listener()], async () => void (webhook = (await insertSticky(t, discord, { channelId: CHANNEL })).webhookId));
+    await say(CHANNEL);
+    const channel = await sb.client.channels.fetch(CHANNEL);
+    sb.client.emit(Events.ChannelDelete, channel as never);
+    await sb.bot.idle();
+    expect(await stickyRows(t)).toHaveLength(0);
+    expect(seen).toEqual([CHANNEL]);
+    expect(sb.requests.some((r) => r.method === 'DELETE')).toBe(false);
+    // The channel's webhooks go with it; the module doesn't call Discord.
+    expect(discord.webhooks.has(webhook)).toBe(true);
+    const before = webhookRequests('POST').length;
+    await say(CHANNEL);
+    expect(webhookRequests('POST')).toHaveLength(before);
+  });
+
+  it('removes the sticky of a deleted thread and its webhook', async () => {
+    const row = discord.addWebhook(CHANNEL);
+    await start([listener()], async () => void (await insertSticky(t, discord, { channelId: THREAD, parentChannelId: CHANNEL, webhookId: row.id, webhookToken: row.token })));
+    rawThreadDelete(THREAD);
+    await sb.bot.idle();
+    expect(await stickyRows(t)).toHaveLength(0);
+    expect(seen).toEqual([THREAD]);
+    expect(discord.webhooks.has(row.id)).toBe(false);
+  });
+
+  it('keeps a webhook another sticky shares', async () => {
+    const shared = discord.addWebhook(CHANNEL);
+    await start([listener()], async () => {
+      await insertSticky(t, discord, { channelId: THREAD, parentChannelId: CHANNEL, webhookId: shared.id, webhookToken: shared.token });
+      await insertSticky(t, discord, { channelId: CHANNEL, webhookId: shared.id, webhookToken: shared.token });
+    });
+    rawThreadDelete(THREAD);
+    await sb.bot.idle();
+    expect((await stickyRows(t)).map((s) => s.channelId)).toEqual([CHANNEL]);
+    expect(discord.webhooks.has(shared.id)).toBe(true);
+  });
+
+  it('removes the stickies of threads whose parent was deleted', async () => {
+    await start([listener()], async () => void (await insertSticky(t, discord, { channelId: THREAD, parentChannelId: CHANNEL })));
+    const channel = await sb.client.channels.fetch(CHANNEL);
+    sb.client.emit(Events.ChannelDelete, channel as never);
+    await sb.bot.idle();
+    expect(await stickyRows(t)).toHaveLength(0);
+    expect(seen).toEqual([THREAD]);
+  });
+
+  it('ignores unrelated channels and threads', async () => {
+    await start([listener()], async () => void (await insertSticky(t, discord, { channelId: CHANNEL })));
+    discord.addChannel('100000000000008200', { guildId: GUILD, type: ChannelType.GuildText });
+    const other = await sb.client.channels.fetch('100000000000008200');
+    sb.client.emit(Events.ChannelDelete, other as never);
+    rawThreadDelete('100000000000008201', '100000000000008200');
+    await sb.bot.idle();
+    expect(await stickyRows(t)).toHaveLength(1);
+    expect(seen).toEqual([]);
   });
 });
