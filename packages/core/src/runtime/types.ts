@@ -18,6 +18,8 @@ export interface ModuleQueue {
 export interface ModuleApis {
   /** The API of a module listed in this module's dependsOn. */
   get<M extends ModuleDefinition<any, any>>(definition: M): ApiOf<M>;
+  /** API of a module listed in optionalDependsOn; null when it isn't loaded or is off in the calling handler's guild. */
+  optional<M extends ModuleDefinition<any, any>>(definition: M): ApiOf<M> | null;
 }
 
 /** What a module can use outside a guild: start hooks and API construction. */

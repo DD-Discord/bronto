@@ -4,6 +4,7 @@ import { ConfigError } from '../config/errors.js';
 import type { Database } from '../db/database.js';
 import { moduleRoleName } from '../db/module-roles.js';
 import { currentHandlerScope, outsideHandlerError } from './handler-scope.js';
+import type { ModuleEnablement } from './enablement.js';
 import type { LoadedModule } from './loader.js';
 import type { ApiOf, ModuleDefinition } from './module.js';
 import type { HandlerContext, ModuleContext } from './types.js';
@@ -13,6 +14,8 @@ export interface RuntimeServices {
   client: Client;
   database: Database;
   log: Logger;
+  /** Per-guild module switches; absent, every module counts as enabled. */
+  enablement?: ModuleEnablement;
 }
 
 /** A loaded module together with its context and built API. */
@@ -54,6 +57,7 @@ function createRuntime(
 ): ModuleRuntime {
   const name = loaded.definition.name;
   const dependencies = new Set((loaded.definition.dependsOn ?? []).map((dependency) => dependency.name));
+  const optionals = new Set((loaded.definition.optionalDependsOn ?? []).map((dependency) => dependency.name));
   const context: ModuleContext = {
     module: name,
     log: services.log.child({ module: name }),
@@ -68,6 +72,18 @@ function createRuntime(
         if (target === undefined || target.api === undefined) {
           throw new Error(`Module "${definition.name}" has no API.`);
         }
+        return target.api as ApiOf<M>;
+      },
+      optional<M extends ModuleDefinition<any, any>>(definition: M): ApiOf<M> | null {
+        if (!optionals.has(definition.name)) {
+          throw new Error(`Module "${name}" must list "${definition.name}" in optionalDependsOn to use it optionally.`);
+        }
+        const scope = currentHandlerScope();
+        if (scope === null) throw outsideHandlerError();
+        const target = byName.get(definition.name);
+        if (target === undefined) return null;
+        if (services.enablement?.isEnabled(scope.contextFor(target).guildId, target.name) === false) return null;
+        if (target.api === undefined) throw new Error(`Module "${definition.name}" has no API.`);
         return target.api as ApiOf<M>;
       },
     },
@@ -129,6 +145,9 @@ export function createCoreRuntime(services: RuntimeServices): ModuleRuntime {
       client: services.client,
       modules: {
         get(dependency) {
+          throw new Error(`Core does not use module APIs (asked for "${dependency.name}").`);
+        },
+        optional(dependency) {
           throw new Error(`Core does not use module APIs (asked for "${dependency.name}").`);
         },
       },

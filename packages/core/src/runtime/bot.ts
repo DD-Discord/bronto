@@ -99,7 +99,7 @@ export function createBot(options: BotOptions): Bot {
   const signer = secret === undefined ? null : new ComponentSigner(secret);
   const queue = new KeyedQueue((key, error) => log.error({ err: error, key }, 'Queued task failed'));
   const enablement = new ModuleEnablement(database.admin);
-  const runtimes = createModuleRuntimes(modules, { client, database, log });
+  const runtimes = createModuleRuntimes(modules, { client, database, log, enablement });
   // Resolves once the start hooks finished (or the bot stopped); guild work waits for it.
   let markStarted!: () => void;
   const started = new Promise<void>((resolve) => {
