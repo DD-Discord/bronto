@@ -56,14 +56,17 @@ async function uploadedText(ctx: ModalContext): Promise<string | null> {
 }
 
 /**
- * The imported fields with IDs that are safe to use: one that was removed from this form before gets a new ID, so
- * old answers never turn up under it again.
+ * The imported fields with IDs that are safe to use: one that was removed from this form before, or that changes its
+ * type, gets a new ID, so old answers never turn up under it again.
  */
 function usableIds(imported: Field[], current: Form): Field[] {
   const used = new Set([...imported.map((field) => field.id), ...current.fields.map((field) => field.id), ...current.removedFieldIds]);
   const removed = new Set(current.removedFieldIds);
+  const types = new Map(current.fields.map((field) => [field.id, field.type]));
   return imported.map((field) => {
-    if (!removed.has(field.id)) return field;
+    // A field whose type changes is a new field: answers of the old type never turn up under it.
+    const retyped = types.has(field.id) && types.get(field.id) !== field.type;
+    if (!removed.has(field.id) && !retyped) return field;
     const id = newFieldId(used);
     used.add(id);
     return { ...field, id };

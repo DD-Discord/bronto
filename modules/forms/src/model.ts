@@ -8,6 +8,8 @@ export const PAGE_SIZE = 5;
 export type FieldType = 'short' | 'long' | 'select' | 'radio' | 'checkboxes' | 'file';
 
 const MAX_LABEL = 45;
+/** Form names fit a modal title. */
+export const MAX_NAME = 45;
 const MAX_DESCRIPTION = 100;
 const MAX_TEXT = 4000;
 const MAX_OPTIONS = 25;
@@ -74,7 +76,10 @@ const fileField = z.strictObject({
   ...base,
   type: z.literal('file'),
   maxFiles: z.number().int().min(1).max(MAX_FILES),
-  fileTypes: z.array(fileType).max(MAX_FILE_TYPES),
+  fileTypes: z
+    .array(fileType)
+    .max(MAX_FILE_TYPES)
+    .refine((list) => new Set(list.map((type) => type.toLowerCase())).size === list.length, 'file types must be unique'),
 });
 
 export const fieldSchema = z
@@ -100,7 +105,7 @@ export type Field = z.infer<typeof fieldSchema>;
 const MAX_PING_TOTAL = 25;
 
 const settingsSchema = z.strictObject({
-  name: z.string().min(1).max(MAX_LABEL),
+  name: z.string().min(1).max(MAX_NAME),
   active: z.boolean(),
   channelId: snowflake.nullable(),
   pingUserIds: z.array(snowflake).max(MAX_PINGS),
@@ -129,6 +134,12 @@ export const formJsonSchema = z
       seen.add(field.id);
     });
   });
+
+/** The name trimmed and cut to `MAX_NAME`, without leaving half of a surrogate pair. */
+export function formName(name: string): string {
+  const cut = name.trim().slice(0, MAX_NAME).trimEnd();
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
+}
 
 /** Splits fields into modal pages of `PAGE_SIZE`, keeping their order. */
 export function pages(fields: Field[]): Field[][] {

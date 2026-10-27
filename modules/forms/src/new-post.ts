@@ -9,23 +9,15 @@ import { eq } from 'drizzle-orm';
 import type { FormsContext } from './context.js';
 import { forms, type Form } from './db/schema.js';
 import { ensureForum, storedForumId } from './forum.js';
+import { formName } from './model.js';
 import { updatePreview } from './preview.js';
-
-// Discord's limit for thread names.
-const MAX_TITLE = 100;
-
-/** The name cut to a post title's length, without leaving half of a surrogate pair. */
-function postTitle(name: string): string {
-  const title = name.trim().slice(0, MAX_TITLE);
-  return /[\uD800-\uDBFF]$/.test(title) ? title.slice(0, -1) : title;
-}
 
 /**
  * Creates a form: its post in the forms forum first, then the row, then the preview. The buttons are signed for the
  * thread, so the starter message is a placeholder until the thread exists. If anything fails, the post is deleted.
  */
 export async function createFormPost(ctx: FormsContext, input: { name: string; tags?: string[] }): Promise<Form> {
-  const name = postTitle(input.name);
+  const name = formName(input.name);
   if (name === '') throw new UserError('A form needs a name.');
   const forumId = await ensureForum(ctx);
   const forum = await ctx.client.channels.fetch(forumId);
@@ -68,8 +60,8 @@ async function reply(ctx: FormsContext, thread: AnyThreadChannel, text: string):
 }
 
 /**
- * Turns a new post in the forms forum into a form owned by the bot, named after the post, and deletes the member's
- * post. Problems are answered in the post, which stays.
+ * Turns a new post in the forms forum into a form owned by the bot, named after the post (cut to `MAX_NAME`), and
+ * deletes the member's post. Problems are answered in the post, which stays.
  */
 export async function onThreadCreate(ctx: FormsContext, thread: AnyThreadChannel, newlyCreated: boolean): Promise<void> {
   if (!newlyCreated || thread.ownerId === ctx.client.user?.id) return;

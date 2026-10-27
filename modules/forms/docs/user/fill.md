@@ -2,13 +2,15 @@
 
 Press the button. A pop-up shows the form's first five fields. Fill it in and submit.
 
-A form with more fields continues over several pages. After each page you see **Page 1 of 3 saved.** with **Continue** and **Cancel** buttons. **Continue** opens the next pop-up. The last page submits the form.
+A form with more fields continues over several pages. After each page you see **Page 1 of 3 saved.** with **Continue (2/3)** and **Cancel** buttons. **Continue** opens the next pop-up. The last page submits the form.
 
 ## Drafts
 
 Your answers to finished pages are saved as a draft. Press the form's button again to continue where you stopped. A draft lasts 24 hours from the last saved page; after that it is deleted with any files you uploaded, and you start over.
 
 **Cancel** deletes the draft and its files at once.
+
+When a page with a file upload is shown again, the files you uploaded before are named above the upload and kept. Upload new files only to replace them.
 
 ## Answers and files
 
@@ -19,6 +21,8 @@ Your answers to finished pages are saved as a draft. Press the form's button aga
 ## When you cannot open a form
 
 You are told if the form is closed (not active), if it has no fields or no channel for submissions yet, if only certain roles may fill it in, or if you already submitted a form that allows one submission per member.
+
+If that happens when you send the last page, your draft is kept and you get **Cancel** to delete it. A file that is too large for this server gets **Try again**, which shows its page so you can upload a smaller one.
 
 ## After submitting
 

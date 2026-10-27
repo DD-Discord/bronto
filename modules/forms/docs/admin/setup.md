@@ -2,7 +2,7 @@
 
 - Load `@bronto/templates` as well; forms depend on it. Load `@bronto/sticky` too if form buttons should go on
   stickies; without it, buttons go on template messages only.
-- Enable the **Message Content** intent for your application in the Discord developer portal, as for templates.
+- Templates needs the **Message Content** intent (see its setup); forms itself needs no privileged intent.
 - Forum channels need a **Community** server. Turn on Community in Server Settings first; `/forms init` refuses on
   other servers.
 - Give the bot these permissions (a server-wide role covers it):
@@ -11,7 +11,7 @@
   |---|---|
   | View Channel, Read Message History | reading new posts, refetching uploaded files |
   | Send Messages, Send Messages in Threads | creating posts and posting submissions |
-  | Manage Threads | deleting your post after the bot moves it |
+  | Manage Threads | deleting your post after the bot moves it; locking the `drafts` post, reopening it when archived and posting in it while locked |
   | Manage Channels | `/forms init` |
   | Attach Files, Embed Links | submissions with files |
 

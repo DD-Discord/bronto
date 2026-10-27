@@ -2,7 +2,9 @@ import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { GatewayIntentBits } from 'discord.js';
 import { EDITOR_TTL_MS } from '../src/binding.js';
+import { createFormsModule } from '../src/index.js';
 import { editorComponents } from '../src/editor.js';
 import { fillComponents } from '../src/fill.js';
 import { discardPostButton, retryPostButton } from '../src/submit.js';
@@ -19,6 +21,10 @@ describe('module loading', () => {
     const entry = JSON.stringify(new URL('../src/index.ts', import.meta.url).href);
     // execFileSync throws on a non-zero exit code.
     execFileSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', `await import(${entry})`], { cwd: ROOT, stdio: 'pipe' });
+  });
+
+  it('asks for no Message Content intent', () => {
+    expect(createFormsModule().intents).not.toContain(GatewayIntentBits.MessageContent);
   });
 
   it('has no import cycles in src', () => {

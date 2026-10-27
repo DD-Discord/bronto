@@ -167,6 +167,25 @@ describe('forum posts', () => {
     expect((await storedForms())[0]!.name).toBe('Poetry slam');
   });
 
+  it('cuts the name of a long post to 45 characters', async () => {
+    await userPost('x'.repeat(60));
+    const [row] = await storedForms();
+    expect(row!.name).toBe('x'.repeat(45));
+    expect(discord.channels.get(row!.threadId)).toMatchObject({ name: 'x'.repeat(45) });
+  });
+
+  it('cuts a renamed post to 45 characters and redraws the preview', async () => {
+    await userPost('Story contest');
+    const [row] = await storedForms();
+    const before = (await fb.client.channels.fetch(row!.threadId)) as never as { name: string };
+    const after = Object.assign(Object.create(Object.getPrototypeOf(before)), before, { name: `Poetry slam ${'y'.repeat(60)}` });
+    fb.client.emit(Events.ThreadUpdate, before as never, after as never);
+    await fb.bot.idle();
+    const name = `Poetry slam ${'y'.repeat(33)}`;
+    expect((await storedForms())[0]!.name).toBe(name);
+    expect(texts(discord.messages.get(row!.previewMessageId)!.components).join('\n')).toContain(`## ${name}`);
+  });
+
   it('deletes the form when its post is deleted', async () => {
     await userPost('Story contest');
     const [row] = await storedForms();

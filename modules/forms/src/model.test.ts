@@ -69,6 +69,7 @@ describe('fieldSchema', () => {
     ['maxFiles 11', { id: 'aaaaaaa1', type: 'file', label: 'Up', required: true, maxFiles: 11, fileTypes: [] }],
     ['maxFiles 0', { id: 'aaaaaaa1', type: 'file', label: 'Up', required: true, maxFiles: 0, fileTypes: [] }],
     ['a file type without a dot', { id: 'aaaaaaa1', type: 'file', label: 'Up', required: true, maxFiles: 1, fileTypes: ['pdf'] }],
+    ['file types repeated in another case', { id: 'aaaaaaa1', type: 'file', label: 'Up', required: true, maxFiles: 1, fileTypes: ['.pdf', '.PDF'] }],
     ['11 file types', { id: 'aaaaaaa1', type: 'file', label: 'Up', required: true, maxFiles: 1, fileTypes: Array.from({ length: 11 }, (_, i) => `.e${i}`) }],
     ['an invalid id', short('NOT-VALID')],
     ['an unknown type', { id: 'aaaaaaa1', type: 'date', label: 'When', required: true }],

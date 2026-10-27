@@ -4,7 +4,9 @@ import type { FormsContext } from './context.js';
 import { drafts, forms, forums, openers, type Form } from './db/schema.js';
 import { releaseFiles } from './drafts.js';
 import { channelExists, storedForumId } from './forum.js';
+import { formName } from './model.js';
 import { cleanupOpeners } from './openers.js';
+import { updatePreview } from './preview.js';
 
 type Gone = Pick<Form, 'id' | 'name' | 'threadId'>;
 
@@ -67,14 +69,23 @@ export async function onChannelDelete(ctx: FormsContext, channel: Channel | Part
   await forgetForum(ctx, channel.id);
 }
 
-/** A renamed post renames its form. */
+/** A renamed post renames its form, cut to `MAX_NAME`, and redraws its preview. */
 export async function onThreadUpdate(ctx: FormsContext, _old: AnyThreadChannel, thread: AnyThreadChannel): Promise<void> {
-  await ctx.db.run(async (tx) => {
-    await tx
+  const name = formName(thread.name);
+  if (name === '') return;
+  const [row] = await ctx.db.run(async (tx) =>
+    tx
       .update(forms)
-      .set({ name: thread.name })
-      .where(and(eq(forms.threadId, thread.id), ne(forms.name, thread.name)));
-  });
+      .set({ name })
+      .where(and(eq(forms.threadId, thread.id), ne(forms.name, name)))
+      .returning(),
+  );
+  if (row === undefined) return;
+  try {
+    await updatePreview(ctx, row);
+  } catch (error) {
+    ctx.log.warn({ err: error, formId: row.id, threadId: thread.id }, 'Updating the preview of a renamed form failed');
+  }
 }
 
 /**

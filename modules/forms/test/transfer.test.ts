@@ -100,6 +100,18 @@ describe('export and import', () => {
     expect(row.removedFieldIds).toContain('aaaaaaa2');
   });
 
+  it('gives a field whose type an import changes a new ID and records the old one as removed', async () => {
+    const form = await configured('Story contest');
+    const changed = fields.map((field) => (field.id === 'aaaaaaa1' ? { id: 'aaaaaaa1', type: 'long', label: 'Name', required: true } : field));
+    const json = JSON.stringify({ version: 1, settings: { name: 'Story contest', active: true, channelId: TEXT, pingUserIds: [], pingRoleIds: [], allowedRoleIds: [], oncePerMember: false }, fields: changed });
+    await importText(form, json);
+    const row = await storedForm(t, form.id);
+    expect(row.fields[0]).toMatchObject({ type: 'long', label: 'Name' });
+    expect(row.fields[0]!.id).not.toBe('aaaaaaa1');
+    expect(row.fields.slice(1).map((field) => field.id)).toEqual(['aaaaaaa2', 'aaaaaaa3']);
+    expect(row.removedFieldIds).toEqual(['aaaaaaa1']);
+  });
+
   it('records the fields an import replaces as removed', async () => {
     const form = await configured('Story contest');
     const bare = JSON.stringify({ version: 1, settings: { name: 'Story contest', active: false, channelId: null, pingUserIds: [], pingRoleIds: [], allowedRoleIds: [], oncePerMember: true }, fields: [] });

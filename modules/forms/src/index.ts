@@ -37,7 +37,7 @@ export function createFormsModule(): ModuleDefinition<Record<string, never>, und
     docs: new URL('../docs/user/', import.meta.url),
     dependsOn: [templates],
     optionalDependsOn: [sticky],
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
     db: { schema, migrations: new URL('../drizzle/', import.meta.url) },
     botPermissions: [
       PermissionFlagsBits.ViewChannel,

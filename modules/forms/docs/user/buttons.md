@@ -20,7 +20,7 @@ A button for an inactive form is shown greyed out. Switch the form on in **Setti
 
 ## Looking at and removing buttons
 
-`/forms buttons` takes a channel and lists its form buttons: label, form and whether it is on the sticky or on a message. A menu below the list removes one. Removing the last button on a message that forms posted deletes that message.
+`/forms buttons` takes a channel and lists its form buttons: label, form and whether it is on the sticky or on a message. A menu below the list removes one. Removing the last button on a message that forms posted deletes that message. Like all of `/forms`, it needs Administrator by default.
 
 ## What removes buttons
 

@@ -17,13 +17,12 @@ import {
 } from 'discord.js';
 import type { FormsContext } from './context.js';
 import type { Form } from './db/schema.js';
-import type { FormSettings } from './model.js';
+import { MAX_NAME, type FormSettings } from './model.js';
 import { actingMember, formById, formForThread, requireEditor } from './permissions.js';
 import { editorBinding } from './binding.js';
 import { registerRetry, retryReply, TryAgainError, type Draft, type SettingsInput } from './retry.js';
 import { changeForm, savedMessage } from './save.js';
 
-const MAX_NAME = 45;
 // Discord's limit for the values of one select.
 const MAX_SELECTED = 25;
 const CHANNEL_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread] as const;
