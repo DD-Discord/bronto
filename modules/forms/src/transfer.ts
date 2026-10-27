@@ -11,8 +11,9 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
+import { eq } from 'drizzle-orm';
 import type { FormsContext } from './context.js';
-import type { Form } from './db/schema.js';
+import { openers, type Form } from './db/schema.js';
 import { forgetForm } from './lifecycle.js';
 import { exportForm, importForm, newFieldId, type Field, type FormSettings } from './model.js';
 import { actingMember, formById, formForThread, requireEditor } from './permissions.js';
@@ -112,6 +113,10 @@ export async function openImport(ctx: ButtonContext): Promise<void> {
   );
 }
 
+/** Why the form can't be deleted: its openers must go first. */
+const blockedMessage = (form: Form, channels: string[]) =>
+  `Can't delete "${form.name}" while it has openers. Remove them in ${channels.map((id) => `<#${id}>`).join(' ')} first.`;
+
 async function deleteThread(ctx: FormsContext, threadId: string): Promise<void> {
   try {
     const thread = await ctx.client.channels.fetch(threadId);
@@ -129,7 +134,12 @@ export const deleteConfirmButton = defineButton({
   execute: async (ctx, args) => {
     requireEditor(ctx);
     const form = await formById(ctx, args[0] ?? '');
-    if (!(await forgetForm(ctx, form))) throw new UserError('This form no longer exists.');
+    const result = await forgetForm(ctx, form, { refuseWithOpeners: true });
+    if (typeof result === 'object') {
+      await ctx.update({ content: blockedMessage(form, result.blockedBy), components: [] });
+      return;
+    }
+    if (!result) throw new UserError('This form no longer exists.');
     // The interaction lives in the post, so it is answered before the post goes away.
     await ctx.update({ content: 'Form deleted.', components: [] });
     try {
@@ -145,9 +155,11 @@ export const deleteConfirmButton = defineButton({
 export async function askDelete(ctx: ButtonContext): Promise<void> {
   requireEditor(ctx);
   const form = await formForThread(ctx, ctx.channelId!);
+  const held = await ctx.db.run(async (tx) => tx.selectDistinct({ channelId: openers.channelId }).from(openers).where(eq(openers.formId, form.id)).orderBy(openers.channelId));
+  if (held.length > 0) throw new UserError(blockedMessage(form, held.map((row) => row.channelId)));
   const confirm = new ButtonBuilder().setCustomId(ctx.customId(deleteConfirmButton, [form.id])).setLabel('Delete').setStyle(ButtonStyle.Danger);
   await ctx.reply({
-    content: `Delete "${form.name}" and its post? Its submissions and form buttons are deleted too. This can't be undone.`,
+    content: `Delete "${form.name}" and its post? Its submissions are deleted too. This can't be undone.`,
     components: [new ActionRowBuilder<ButtonBuilder>().addComponents(confirm)],
   });
 }

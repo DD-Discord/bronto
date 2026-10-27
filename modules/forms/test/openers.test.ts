@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { forms, openers, type Form } from '../src/db/schema.js';
 import { allComponents, buttonId, click, makeForm, payload, selectOf, storeForum, toJson, textOf, type Json } from './ui.js';
-import { formsDb, GUILD, inHandler, prepareFormsBot, ready, USER, type FormsBot } from './harness.js';
+import { formsDb, FORUM, GUILD, inHandler, prepareFormsBot, ready, USER, type FormsBot } from './harness.js';
 
 const TEXT = '100000000000000070';
 const OTHER = '100000000000000071';
@@ -381,7 +381,7 @@ describe('open button', () => {
 });
 
 describe('deleting a form', () => {
-  it('deletes its opener messages and refreshes stickies before saying so', async () => {
+  it('deletes its opener messages and refreshes stickies when its post is deleted in Discord', async () => {
     await start(true);
     const form = await activeForm();
     await makeSticky();
@@ -389,14 +389,10 @@ describe('deleting a form', () => {
     await post({ form: form.id, label: 'On sticky' });
     await say(TEXT);
     expect(lastStickyButtons()).toHaveLength(1);
-    const { clickPreview } = await import('./ui.js');
-    const ask = await clickPreview(fb!, discord, form.threadId, 'Delete');
-    expect(String(payload(ask).content)).toContain('buttons');
-    const done = await click(fb!, form.threadId, buttonId(payload(ask), 'Delete'));
-    expect(JSON.stringify(payload(done))).toContain('Form deleted.');
+    fb!.client.emit(Events.Raw, { op: 0, t: 'THREAD_DELETE', d: { id: form.threadId, guild_id: GUILD, parent_id: FORUM, type: 11 }, s: 1 }, 0);
+    await fb!.bot.idle();
     expect(messagesIn(TEXT).filter((message) => message.content === 'Join the contest.')).toEqual([]);
     expect(await openerRows()).toEqual([]);
-    expect(discord.channels.has(form.threadId)).toBe(false);
     const edits = fb!.requests.filter((request) => request.method === 'PATCH' && request.path.startsWith('/webhooks/'));
     expect(edits.length).toBeGreaterThan(0);
     expect(allComponents((edits.at(-1)!.body as { components: Json[] }).components).filter((c) => c.type === 2)).toEqual([]);

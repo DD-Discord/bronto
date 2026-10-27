@@ -13,17 +13,23 @@ function announce(ctx: FormsContext, gone: Gone[]): void {
 
 /**
  * Deletes the form's row under a lock (its drafts and submissions go with it) and logs it, then removes its opener
- * messages and sticky buttons from Discord. False when the form was already gone.
+ * messages and sticky buttons from Discord. False when the form was already gone. With `refuseWithOpeners`, a form that
+ * has openers is kept and the channels of its openers are returned instead.
  */
-export async function forgetForm(ctx: FormsContext, form: Gone): Promise<boolean> {
+export async function forgetForm(ctx: FormsContext, form: Gone, options: { refuseWithOpeners?: boolean } = {}): Promise<boolean | { blockedBy: string[] }> {
   const removed = await ctx.db.run(async (tx) => {
     const [row] = await tx.select().from(forms).where(eq(forms.id, form.id)).for('update');
     if (row === undefined) return null;
+    if (options.refuseWithOpeners === true) {
+      const held = await tx.select({ channelId: openers.channelId }).from(openers).where(eq(openers.formId, form.id));
+      if (held.length > 0) return { blocked: [...new Set(held.map((opener) => opener.channelId))].sort(), row, gone: [] };
+    }
     const gone = await tx.delete(openers).where(eq(openers.formId, form.id)).returning();
     await tx.delete(forms).where(eq(forms.id, form.id));
-    return { row, gone };
+    return { row, gone, blocked: undefined };
   });
   if (removed === null) return false;
+  if (removed.blocked !== undefined) return { blockedBy: removed.blocked };
   announce(ctx, [removed.row]);
   await cleanupOpeners(ctx, removed.gone);
   return true;
