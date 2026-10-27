@@ -196,6 +196,7 @@ describe('reposting', () => {
       client: sb.client,
       config: { webhookName: 'Sticky' },
       log: { warn: () => undefined, info: () => undefined, error: (...args: unknown[]) => void errors.push(args) },
+      ask: async () => [],
       emit: () => undefined,
       // No template: the stored copy is posted.
       modules: { get: () => ({ render: async () => null }) },

@@ -1,11 +1,16 @@
 import { ensureWebhook, resolveWebhook, withWebhookErrors, UnknownMessageError, UnknownWebhookError, type IncomingWebhook, type HandlerContext } from '@bronto/core';
 import templates from '@bronto/templates';
-import { DiscordAPIError, RESTJSONErrorCodes, MessageFlags, type APIEmbed } from 'discord.js';
+import {
+  DiscordAPIError, RESTJSONErrorCodes, MessageFlags,
+  type APIActionRowComponent, type APIComponentInMessageActionRow, type APIEmbed,
+} from 'discord.js';
 import { and, asc, eq, isNotNull, isNull, ne } from 'drizzle-orm';
 import type { StickyConfig } from './config.js';
 import { stickies, stickyState, type Sticky } from './db/schema.js';
-import { stickyEvents } from './events.js';
+import { stickyAsks, stickyEvents } from './events.js';
 import type { StickyIndex } from './sticky-index.js';
+
+type Row = APIActionRowComponent<APIComponentInMessageActionRow>;
 
 export type StickyContext = HandlerContext<StickyConfig>;
 
@@ -62,6 +67,9 @@ async function messageOf(ctx: StickyContext, sticky: Sticky): Promise<StickyMess
   if (sticky.content === null && sticky.embeds === null) return null;
   return { content: sticky.content ?? '', embeds: sticky.embeds ?? [] };
 }
+
+/** Discord allows five action rows per message. */
+const MAX_ROWS = 5;
 
 export interface ReposterOptions {
   index: StickyIndex;
@@ -122,7 +130,7 @@ export class Reposter {
     await Promise.all(
       rows
         .filter(({ channelId }) => this.index.get(channelId) !== undefined)
-        .map(({ channelId }) => ctx.queue.run(channelId, (task) => this.refresh(task, channelId))),
+        .map(({ channelId }) => ctx.queue.run(channelId, (task) => this.refreshPost(task, channelId))),
     );
   }
 
@@ -203,6 +211,7 @@ export class Reposter {
         }
       }
     });
+    ctx.emit(stickyEvents.deleted, { channelId: record.channelId });
   }
 
   /** Re-arms the guild's pending debounces after start-up or a switch back on; overdue ones post right away. */
@@ -241,8 +250,9 @@ export class Reposter {
       ctx.log.debug({ channelId, templateId: sticky.templateId }, "Skipped a repost: the sticky's template doesn't exist");
       return;
     }
+    const components = await this.componentsFor(ctx, channelId);
     try {
-      await this.post(ctx, sticky, message, lastMessageId);
+      await this.post(ctx, sticky, message, components, lastMessageId);
     } catch (error) {
       if (!(error instanceof UnknownWebhookError)) throw error;
       const replacement = await this.replaceWebhook(ctx, sticky);
@@ -254,7 +264,7 @@ export class Reposter {
           ctx.log.warn({ err: error, channelId }, 'Deleting the previous sticky post failed');
         }
       }
-      await this.post(ctx, { ...sticky, webhookId: replacement.id, webhookToken: replacement.token }, message, null, replacement);
+      await this.post(ctx, { ...sticky, webhookId: replacement.id, webhookToken: replacement.token }, message, components, null, replacement);
     }
   }
 
@@ -263,7 +273,7 @@ export class Reposter {
    * repost this refresh replaced in the queue was still due. A sticky without a post is left for its next repost.
    * Must run inside the channel's queue.
    */
-  private async refresh(ctx: StickyContext, channelId: string): Promise<void> {
+  async refreshPost(ctx: StickyContext, channelId: string): Promise<void> {
     if (this.repostWanted.has(channelId)) return this.repost(ctx, channelId);
     const { sticky, lastMessageId } = await ctx.db.run(async (tx) => {
       const [found] = await tx.select().from(stickies).where(eq(stickies.channelId, channelId));
@@ -273,10 +283,12 @@ export class Reposter {
     if (sticky === undefined || lastMessageId === null) return;
     const message = await messageOf(ctx, sticky);
     if (message === null) return;
+    const components = await this.componentsFor(ctx, channelId);
     try {
       const webhook = await resolveWebhook(ctx.client, { id: sticky.webhookId, token: sticky.webhookToken });
       await withWebhookErrors(sticky.webhookToken, () => webhook.editMessage(lastMessageId, {
         content: message.content, embeds: message.embeds,
+        components, withComponents: true,
         threadId: sticky.parentChannelId === null ? undefined : sticky.channelId,
         allowedMentions: { parse: [] },
       }));
@@ -286,7 +298,19 @@ export class Reposter {
     }
   }
 
-  private async post(ctx: StickyContext, sticky: Sticky, message: StickyMessage, lastMessageId: string | null, resolved?: IncomingWebhook): Promise<void> {
+  /**
+   * The rows other modules add below the message, in module order, cut to Discord's limit. Called outside any
+   * transaction.
+   */
+  async componentsFor(ctx: StickyContext, channelId: string): Promise<Row[]> {
+    const rows = (await ctx.ask(stickyAsks.components, { channelId })).flatMap(({ value }) => value);
+    if (rows.length > MAX_ROWS) {
+      ctx.log.warn({ channelId, dropped: rows.length - MAX_ROWS }, `Dropped sticky component rows over the limit of ${MAX_ROWS}`);
+    }
+    return rows.slice(0, MAX_ROWS);
+  }
+
+  private async post(ctx: StickyContext, sticky: Sticky, message: StickyMessage, components: Row[], lastMessageId: string | null, resolved?: IncomingWebhook): Promise<void> {
     const webhook = resolved ?? await resolveWebhook(ctx.client, { id: sticky.webhookId, token: sticky.webhookToken });
     const threadId = sticky.parentChannelId === null ? undefined : sticky.channelId;
     if (lastMessageId !== null) {
@@ -300,7 +324,7 @@ export class Reposter {
       }
     }
     const sent = await withWebhookErrors(sticky.webhookToken, () => webhook.send({
-      content: message.content || undefined, embeds: message.embeds, threadId,
+      content: message.content || undefined, embeds: message.embeds, components, withComponents: true, threadId,
       flags: sticky.silent ? MessageFlags.SuppressNotifications : undefined,
       username: ctx.config.webhookName, avatarURL: ctx.config.webhookAvatar, allowedMentions: { parse: [] },
     }));

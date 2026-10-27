@@ -6,16 +6,17 @@ import { createStickyCommand } from './commands.js';
 import { stickyConfigSchema, type StickyConfig } from './config.js';
 import * as schema from './db/schema.js';
 import { stickies } from './db/schema.js';
-import { stickyEvents } from './events.js';
+import { stickyApi, type StickyApi } from './api.js';
+import { stickyAsks, stickyEvents } from './events.js';
 import { adoptLegacyStickies } from './migrate.js';
 import { Reposter } from './repost.js';
 import { entryOf, StickyIndex } from './sticky-index.js';
 
 /** A sticky module with its own in-memory state; the default export is the one deployments load. */
-export function createStickyModule(): ModuleDefinition<StickyConfig> {
+export function createStickyModule(): ModuleDefinition<StickyConfig, StickyApi> {
   const index = new StickyIndex();
   const reposter = new Reposter({ index });
-  return defineModule<StickyConfig>({
+  return defineModule<StickyConfig, StickyApi>({
     name: 'sticky',
     docs: new URL('../docs/user/', import.meta.url),
     dependsOn: [templates],
@@ -23,6 +24,8 @@ export function createStickyModule(): ModuleDefinition<StickyConfig> {
     config: stickyConfigSchema,
     db: { schema, migrations: new URL('../drizzle/', import.meta.url) },
     events: stickyEvents,
+    asks: stickyAsks,
+    api: (ctx) => stickyApi(ctx, { index, reposter }),
     botPermissions: [
       PermissionFlagsBits.ViewChannel,
       PermissionFlagsBits.ManageWebhooks,
@@ -62,4 +65,5 @@ export function createStickyModule(): ModuleDefinition<StickyConfig> {
 
 export default createStickyModule();
 export { stickyConfigSchema, type StickyConfig } from './config.js';
-export { stickyEvents } from './events.js';
+export type { StickyApi } from './api.js';
+export { stickyAsks, stickyEvents } from './events.js';
