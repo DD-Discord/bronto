@@ -4,24 +4,17 @@ ENV CI=true
 RUN npm install --global pnpm@12.11.2
 
 WORKDIR /app
-# Manifests first, so dependency layers are reused while only sources change.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY packages/core/package.json packages/core/package.json
-COPY packages/bot/package.json packages/bot/package.json
-COPY modules/autodelete/package.json modules/autodelete/package.json
-COPY modules/sticky/package.json modules/sticky/package.json
-COPY examples/notes/package.json examples/notes/package.json
-RUN pnpm install --frozen-lockfile --prod
+# Downloads depend on the lockfile alone, so this layer is reused while only sources change.
+COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm fetch --prod
 
-COPY tsconfig.base.json ./
-COPY packages packages
-COPY docs/user docs/user
-COPY modules modules
-COPY examples examples
+# .dockerignore keeps secrets, configs and tests out.
+COPY . .
+RUN pnpm install --frozen-lockfile --offline --prod
 COPY docker/bronto /usr/local/bin/bronto
 RUN chmod 755 /usr/local/bin/bronto
-# Fails the build when a module can't resolve its imports from the production install.
-RUN node --import tsx --input-type=module -e "await import('@bronto/sticky')"
+# Fails the build when a module in the root package.json can't resolve its imports from the production install.
+RUN node --import tsx --input-type=module -e "const { dependencies } = JSON.parse(await (await import('node:fs/promises')).readFile('package.json', 'utf8')); for (const name of Object.keys(dependencies).filter((name) => name.startsWith('@bronto/'))) await import(name)"
 
 ENV NODE_ENV=production
 USER node

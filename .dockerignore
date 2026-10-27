@@ -1,4 +1,4 @@
-.git
+**/.git
 .github
 **/node_modules
 **/test
@@ -8,3 +8,6 @@
 config.yaml
 pgdata
 *.log
+# The image only serves the user docs, through /help.
+docs/*
+!docs/user
