@@ -4,17 +4,6 @@ import type { FormsContext } from './context.js';
 import { forms, type Form } from './db/schema.js';
 import { refreshOpeners } from './openers.js';
 import { updatePreview } from './preview.js';
-import type { Draft } from './retry.js';
-
-/** Wrong input: the reply names the problem and offers [Try again] with what was typed. */
-export class TryAgainError extends UserError {
-  constructor(
-    message: string,
-    readonly draft: Draft,
-  ) {
-    super(message);
-  }
-}
 
 type Change = Partial<Pick<Form, 'name' | 'active' | 'channelId' | 'pingUserIds' | 'pingRoleIds' | 'allowedRoleIds' | 'oncePerMember' | 'fields' | 'removedFieldIds'>>;
 

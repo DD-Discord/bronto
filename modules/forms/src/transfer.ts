@@ -17,7 +17,7 @@ import { openers, type Form } from './db/schema.js';
 import { forgetForm } from './lifecycle.js';
 import { exportForm, importForm, newFieldId, type Field, type FormSettings } from './model.js';
 import { actingMember, formById, formForThread, requireEditor } from './permissions.js';
-import { editorBinding } from './retry.js';
+import { editorBinding } from './binding.js';
 import { changeForm, savedMessage } from './save.js';
 import { checkSettingsAllowed } from './settings.js';
 

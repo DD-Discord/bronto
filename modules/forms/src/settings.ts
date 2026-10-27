@@ -19,24 +19,14 @@ import type { FormsContext } from './context.js';
 import type { Form } from './db/schema.js';
 import type { FormSettings } from './model.js';
 import { actingMember, formById, formForThread, requireEditor } from './permissions.js';
-import { editorBinding, retryReply, type Draft } from './retry.js';
-import { changeForm, savedMessage, TryAgainError } from './save.js';
+import { editorBinding } from './binding.js';
+import { registerRetry, retryReply, TryAgainError, type Draft, type SettingsInput } from './retry.js';
+import { changeForm, savedMessage } from './save.js';
 
 const MAX_NAME = 45;
 // Discord's limit for the values of one select.
 const MAX_SELECTED = 25;
 const CHANNEL_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread] as const;
-
-/** What the settings modal holds. */
-export interface SettingsInput {
-  name: string;
-  channelId: string | null;
-  pingUserIds: string[];
-  pingRoleIds: string[];
-  allowedRoleIds: string[];
-  active: boolean;
-  oncePerMember: boolean;
-}
 
 export const settingsInputOf = (form: Form): SettingsInput => ({
   name: form.name,
@@ -83,6 +73,8 @@ export function settingsModalFor(ctx: FormsContext, form: Form, input: SettingsI
       new LabelBuilder().setLabel('Options').setCheckboxGroupComponent(options),
     );
 }
+
+registerRetry('settings', (ctx, form, draft) => settingsModalFor(ctx, form, draft.input));
 
 /** Answers the preview's Settings button with the modal. */
 export async function openSettings(ctx: ButtonContext): Promise<void> {

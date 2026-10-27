@@ -2,15 +2,24 @@ import { defineModule, gatewayEvent, on, type ModuleDefinition } from '@bronto/c
 import sticky from '@bronto/sticky';
 import templates from '@bronto/templates';
 import { Events, GatewayDispatchEvents, GatewayIntentBits, PermissionFlagsBits } from 'discord.js';
-import { previewComponents } from './buttons.js';
-import { editorComponents } from './editor.js';
+import { previewComponents, registerPreviewActions } from './buttons.js';
+import { editorComponents, openAddField, openEditField } from './editor.js';
 import { createFormsCommand } from './commands.js';
 import * as schema from './db/schema.js';
 import { onChannelDelete, onThreadDelete, onThreadUpdate, reconcile } from './lifecycle.js';
 import { onThreadCreate } from './new-post.js';
 import { dropDrafts, tryAgainButton } from './retry.js';
-import { settingsModalDefinition } from './settings.js';
-import { transferComponents } from './transfer.js';
+import { openSettings, settingsModalDefinition } from './settings.js';
+import { askDelete, exportFormFile, openImport, transferComponents } from './transfer.js';
+
+registerPreviewActions({
+  'add-field': openAddField,
+  'edit-field': openEditField,
+  settings: openSettings,
+  export: exportFormFile,
+  import: openImport,
+  delete: askDelete,
+});
 
 /** The forms module; the default export is the one deployments load. */
 export function createFormsModule(): ModuleDefinition<Record<string, never>, undefined> {

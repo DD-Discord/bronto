@@ -20,8 +20,9 @@ import {
 } from './fields.js';
 import { newFieldId, type Field, type FieldType } from './model.js';
 import { formById, formForThread, requireEditor } from './permissions.js';
-import { editorBinding, retryReply, type Draft } from './retry.js';
-import { changeForm, savedMessage, TryAgainError } from './save.js';
+import { editorBinding } from './binding.js';
+import { registerRetry, retryReply, TryAgainError, type Draft } from './retry.js';
+import { changeForm, savedMessage } from './save.js';
 
 // A string select holds 25 options.
 const PICKER_SIZE = 25;
@@ -74,6 +75,8 @@ async function saveField(ctx: FormsContext, formId: string, type: FieldType, fie
     return { fields };
   });
 }
+
+registerRetry('field', (ctx, form, draft) => fieldModalFor(ctx, form, draft.type, draft.fieldId, draft.input));
 
 export const fieldModalDefinition = defineModal({
   name: 'field-modal',

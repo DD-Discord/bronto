@@ -1,23 +1,46 @@
 import { defineButton, UserError, type ReplyMessage } from '@bronto/core';
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, type ModalBuilder } from 'discord.js';
 import { randomBytes } from 'node:crypto';
 import type { FormsContext } from './context.js';
-import { fieldModalFor } from './editor.js';
 import type { FieldInput } from './fields.js';
 import type { FieldType } from './model.js';
 import { formById, requireEditor } from './permissions.js';
-import type { TryAgainError } from './save.js';
-import { settingsModalFor, type SettingsInput } from './settings.js';
+import type { Form } from './db/schema.js';
+import { EDITOR_TTL_MS, editorBinding } from './binding.js';
 
-// Discord lets a bot edit an ephemeral reply for 15 minutes; editor components live as long.
-export const EDITOR_TTL_MS = 15 * 60_000;
-/** Binding of the components in ephemeral editor replies. */
-export const editorBinding = { bind: { user: true, channel: true }, expiresAfterMs: EDITOR_TTL_MS, ephemeral: true } as const;
+/** What the settings modal holds. */
+export interface SettingsInput {
+  name: string;
+  channelId: string | null;
+  pingUserIds: string[];
+  pingRoleIds: string[];
+  allowedRoleIds: string[];
+  active: boolean;
+  oncePerMember: boolean;
+}
 
 /** What a member typed into a modal that [Try again] fills back in. */
 export type Draft =
   | { kind: 'field'; type: FieldType; fieldId: string | null; input: FieldInput }
   | { kind: 'settings'; input: SettingsInput };
+
+/** Wrong input: the reply names the problem and offers [Try again] with what was typed. */
+export class TryAgainError extends UserError {
+  constructor(
+    message: string,
+    readonly draft: Draft,
+  ) {
+    super(message);
+  }
+}
+
+type ModalFor = (ctx: FormsContext, form: Form, draft: never) => ModalBuilder;
+const modalBuilders = new Map<Draft['kind'], ModalFor>();
+
+/** Registers how [Try again] rebuilds the modal of a draft kind; the editor modules call it when they load. */
+export function registerRetry<K extends Draft['kind']>(kind: K, build: (ctx: FormsContext, form: Form, draft: Extract<Draft, { kind: K }>) => ModalBuilder): void {
+  modalBuilders.set(kind, build as ModalFor);
+}
 
 /**
  * Typed values by server and a random key, kept as long as editor components are valid. Module-level, so shared by
@@ -49,7 +72,9 @@ export const tryAgainButton = defineButton({
     if (entry === undefined || entry.expiresAt <= Date.now()) throw new UserError('That form has expired. Open the editor again.');
     const form = await formById(ctx, args[0] ?? '');
     const { draft } = entry;
-    await ctx.showModal(draft.kind === 'field' ? fieldModalFor(ctx, form, draft.type, draft.fieldId, draft.input) : settingsModalFor(ctx, form, draft.input));
+    const build = modalBuilders.get(draft.kind);
+    if (build === undefined) throw new Error(`No modal registered for ${draft.kind} drafts.`);
+    await ctx.showModal((build as (c: FormsContext, f: Form, d: Draft) => ModalBuilder)(ctx, form, draft));
   },
 });
 

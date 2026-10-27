@@ -89,6 +89,13 @@ describe('add field', () => {
     }
   });
 
+  it('keeps the longest custom ID of a field modal within 100 characters', async () => {
+    await addField(fb, discord, form, 'checkboxes', { fields: { label: 'Genres', options: 'A\nB' } });
+    const { modal } = await openFieldModal('Genres');
+    expect(modal.custom_id.split(':')[1]).toBe('field-modal');
+    expect(modal.custom_id.length).toBeLessThanOrEqual(100);
+  });
+
   it('parses options per type', async () => {
     await addField(fb, discord, form, 'radio', { fields: { label: 'Genre', options: 'Fantasy\n\nSci-fi\n Horror ' } });
     await addField(fb, discord, form, 'file', { fields: { label: 'Cover', options: '3\nimage, .pdf' } });
