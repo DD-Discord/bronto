@@ -34,6 +34,7 @@ export function createFormsModule(): ModuleDefinition<Record<string, never>, und
   const sweeps = new Map<string, NodeJS.Timeout>();
   return defineModule<Record<string, never>, undefined>({
     name: 'forms',
+    docs: new URL('../docs/user/', import.meta.url),
     dependsOn: [templates],
     optionalDependsOn: [sticky],
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
