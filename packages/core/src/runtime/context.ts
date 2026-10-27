@@ -109,6 +109,7 @@ function apiContext(runtime: ModuleRuntime): HandlerContext {
     emit: { get: () => live().emit, enumerable: true },
     customId: { get: () => live().customId, enumerable: true },
     check: { get: () => live().check, enumerable: true },
+    ask: { get: () => live().ask, enumerable: true },
   });
 }
 

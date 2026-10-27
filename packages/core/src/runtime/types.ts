@@ -3,6 +3,7 @@ import type { Logger } from 'pino';
 import type { ComponentDefinition } from '../interactions/components.js';
 import type { ScopedDb } from '../db/scoped.js';
 import type { EventDefinition } from './events.js';
+import type { AskDefinition } from './asks.js';
 import type { GateDefinition, GateResult } from './gates.js';
 import type { ApiOf, ModuleDefinition } from './module.js';
 
@@ -44,6 +45,12 @@ export interface HandlerContext<TConfig = any> extends ModuleContext<TConfig> {
    * denial stops the rest. A listener that throws or takes over 5 s denies. Only this module's gates; throws inside `db.run`.
    */
   check<P>(gate: GateDefinition<P>, payload: P): Promise<GateResult>;
+  /**
+   * Asks the listeners of the other enabled modules in dependency order and folds their answers with the ask's strategy.
+   * A listener that throws or exceeds the strategy's timeout is reported to it as failed or timed out. Only this
+   * module's asks; throws inside `db.run`.
+   */
+  ask<P, R>(ask: AskDefinition<P, any, R>, payload: P): Promise<R>;
   readonly queue: ModuleQueue;
   /**
    * A signed custom ID for one of this module's buttons, selects or modals, bound to this guild. `target.userId`

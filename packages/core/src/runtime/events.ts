@@ -1,5 +1,5 @@
 import type { ClientEvents, GatewayDispatchEvents, GatewayDispatchPayload } from 'discord.js';
-import type { GateDefinition, GateVerdict } from './gates.js';
+import type { AskDefinition } from './asks.js';
 import type { HandlerContext } from './types.js';
 
 /** A notification emitted by one module (or core); listeners match it by object identity. */
@@ -39,11 +39,7 @@ export type Listener =
   | { kind: 'discord'; event: DiscordEventName; handler: (ctx: HandlerContext, ...args: any[]) => unknown }
   | { kind: 'gateway'; event: GatewayDispatchEvents; handler: (ctx: HandlerContext, data: any) => unknown }
   | { kind: 'module'; event: EventDefinition<any>; handler: (ctx: HandlerContext, payload: any) => unknown }
-  | {
-      kind: 'gate';
-      gate: GateDefinition<any>;
-      handler: (ctx: HandlerContext, payload: any) => Promise<GateVerdict | void> | GateVerdict | void;
-    };
+  | { kind: 'ask'; ask: AskDefinition<any, any, any>; handler: (ctx: HandlerContext, payload: any) => unknown };
 
 /** Declares a listener for a discord.js event, a raw gateway packet (`gatewayEvent`) or a module event; modules list them in `listeners`. */
 export function on<K extends DiscordEventName>(

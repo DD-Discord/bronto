@@ -22,6 +22,6 @@ describe('gates', () => {
   it('builds a gate listener', () => {
     const deleting = defineGate<{ id: string }>('deleting2');
     const handler = () => ({ deny: 'x' });
-    expect(gate(deleting, handler)).toEqual({ kind: 'gate', gate: deleting, handler });
+    expect(gate(deleting, handler)).toEqual({ kind: 'ask', ask: deleting, handler });
   });
 });
