@@ -26,6 +26,12 @@ export class RuleIndex {
     this.rules.delete(RuleIndex.keyOf(guildId, channelId));
   }
 
+  /** Whether the webhook is the log webhook of a rule in the guild. */
+  isLogWebhook(guildId: string, webhookId: string): boolean {
+    for (const rule of this.rules.values()) if (rule.guildId === guildId && rule.logWebhookId === webhookId) return true;
+    return false;
+  }
+
   get(guildId: string, channelId: string): Rule | undefined {
     return this.rules.get(RuleIndex.keyOf(guildId, channelId));
   }

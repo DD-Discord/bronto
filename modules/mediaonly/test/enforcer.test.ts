@@ -187,6 +187,37 @@ describe('enforcing', () => {
     expect(discord.deletedPosts).toContain(otherWebhook.id);
   });
 
+  it('leaves its own reports alone in a logged rule channel', async () => {
+    await start();
+    await loggedRule({ channelId: LOG_CHANNEL, ignoreBots: false });
+    await ready(mb!);
+    await say(fakeMessage(LOG_CHANNEL, { content: 'First words' }));
+    expect(discord.reports).toHaveLength(1);
+    const report = discord.sent[0]!;
+    // The report comes back through the gateway as a webhook message without a member.
+    await say(fakeMessage(LOG_CHANNEL, { content: '', member: null, bot: true, webhookId: report.webhookId }));
+    expect(discord.deletedPosts).toHaveLength(1);
+    expect(discord.reports).toHaveLength(1);
+  });
+
+  it('leaves posts of the bot itself alone', async () => {
+    await start();
+    await insertRule(t, { channelId: CHANNEL, ignoreBots: false });
+    await ready(mb!);
+    const own = fakeMessage(CHANNEL, { member: null, bot: true });
+    own.author.id = discord.botId;
+    await say(own);
+    expect(discord.deletedPosts).toEqual([]);
+  });
+
+  it('skips human posts without member data', async () => {
+    await start();
+    await insertRule(t, { channelId: CHANNEL });
+    await ready(mb!);
+    await say(fakeMessage(CHANNEL, { member: null }));
+    expect(discord.deletedPosts).toEqual([]);
+  });
+
   it('skips members with Manage Messages', async () => {
     await start();
     await insertRule(t, { channelId: CHANNEL });
@@ -233,6 +264,7 @@ describe('enforcing', () => {
       unspoilered: fakeMessage(OTHER_CHANNEL, { content: '', attachments: [false] }),
       spoilered: fakeMessage(OTHER_CHANNEL, { content: '||https://example.com/a||', attachments: [true] }),
       disabled: fakeMessage(THREAD),
+      memberless: fakeMessage(CHANNEL, { member: null }),
     };
     await say(...Object.values(fixtures));
     const deleted = new Set(discord.deletedPosts);
@@ -240,7 +272,7 @@ describe('enforcing', () => {
     expect(byName((id) => verdicts.get(id)!)).toEqual(byName((id) => deleted.has(id)));
     expect(byName((id) => deleted.has(id))).toEqual({
       textOnly: true, attachment: false, link: false, bot: false, webhook: false, system: false, exempt: false,
-      unspoilered: true, spoilered: false, disabled: false,
+      unspoilered: true, spoilered: false, disabled: false, memberless: false,
     });
   });
 });

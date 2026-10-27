@@ -29,25 +29,34 @@ export interface CheckedMessage {
   content: string;
   system: boolean;
   webhookId: string | null;
-  author: { bot: boolean };
+  author: { id: string; bot: boolean };
   member: { permissionsIn(channelId: string): { has(permission: bigint): boolean } } | null;
   attachments: { values(): Iterable<{ spoiler: boolean }> };
 }
 
 /**
  * The rule a message breaks and why, or null when the module leaves it alone. In memory only, so the API and the
- * enforcer always agree, whichever listener runs first.
+ * enforcer always agree, whichever listener runs first. The bot's own posts and reports are never checked, so a log
+ * channel covered by a rule can't make the module act on its own reports.
  */
 export function rejection(
-  ctx: Pick<HandlerContext, 'guildId' | 'modules'>,
+  ctx: Pick<HandlerContext, 'guildId' | 'modules' | 'client'>,
   index: RuleIndex,
   message: CheckedMessage,
 ): { rule: Rule; problem: MediaProblem } | null {
   const rule = index.get(ctx.guildId, message.channelId);
   if (rule === undefined || !rule.enabled || message.system) return null;
-  if (rule.ignoreBots && (message.author.bot || message.webhookId !== null)) return null;
+  const { author, member, webhookId } = message;
+  if (author.id === ctx.client.user?.id) return null;
+  if (webhookId !== null && index.isLogWebhook(ctx.guildId, webhookId)) return null;
+  if (rule.ignoreBots && (author.bot || webhookId !== null)) return null;
   if (ctx.modules.optional(sticky)?.isSticky(message) === true) return null;
-  if (message.member?.permissionsIn(message.channelId).has(PermissionFlagsBits.ManageMessages) === true) return null;
+  if (member === null) {
+    // A person's post without member data: whether they are exempt is unknown.
+    if (!author.bot && webhookId === null) return null;
+  } else if (member.permissionsIn(message.channelId).has(PermissionFlagsBits.ManageMessages)) {
+    return null;
+  }
   const problem = mediaProblem({ content: message.content, attachments: [...message.attachments.values()] }, rule.requireSpoiler);
   return problem === null ? null : { rule, problem };
 }
