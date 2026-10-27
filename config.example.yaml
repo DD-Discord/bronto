@@ -1,9 +1,10 @@
 # Copy to config.yaml next to your .env. Values like ${NAME} come from the environment.
 discord:
   token: ${DISCORD_TOKEN}
-# Signs button, select and modal custom IDs; needed when a loaded module has buttons, selects or modals (example-notes does).
+# Signs button, select and modal custom IDs; needed when a loaded module has buttons, selects or modals (example-notes does)
+# and for the menus and buttons of /help (without it /help shows pages only).
 # At least 32 characters, e.g. `openssl rand -base64 32`. Changing it breaks every button and modal already posted.
-# Remove this section if no loaded module has buttons, selects or modals.
+# Remove this section if no loaded module has buttons, selects or modals and you can do without them in /help.
 interactions:
   secret: ${INTERACTION_SECRET}
 database:

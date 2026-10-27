@@ -15,6 +15,7 @@ RUN pnpm install --frozen-lockfile --prod
 
 COPY tsconfig.base.json ./
 COPY packages packages
+COPY docs/user docs/user
 COPY modules modules
 COPY examples examples
 COPY docker/bronto /usr/local/bin/bronto

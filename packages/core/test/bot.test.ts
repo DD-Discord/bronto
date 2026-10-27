@@ -417,12 +417,28 @@ describe('createBot', () => {
     cache(client, 'g1');
     await bot.start();
     await ready(bot, client);
-    expect(commandNames(client, 'g1')).toEqual(['modules', 'widgets']);
+    expect(commandNames(client, 'g1')).toEqual(['help', 'modules', 'widgets']);
     expect(client.commandWrites).toHaveLength(1);
     bot.lifecycle.forget('g1');
     client.emit(Events.GuildAvailable, { id: 'g1' });
     await bot.idle();
     expect(client.commandWrites).toHaveLength(1);
+  });
+
+  it('registers /help in a guild, and leaves out a module whose docs have a problem', async () => {
+    const broken = widgetsModule({ docs: new URL('./fixtures/docs/bad/', import.meta.url) });
+    const { bot, client, lines } = makeBot([broken]);
+    cache(client, 'g1');
+    await bot.start();
+    await ready(bot, client);
+    expect(commandNames(client, 'g1')).toEqual(['help', 'modules']);
+    expect(lines).toContainEqual(
+      expect.objectContaining({ level: 50, module: 'widgets', file: 'bad.md', line: expect.any(Number) }),
+    );
+    const fake = fakeCommand({ command: 'help', options: { module: 'widgets' } });
+    client.emit(Events.InteractionCreate, fake);
+    await bot.idle();
+    expect(JSON.stringify(fake.responses)).toContain("There's no help for");
   });
 
   it('answers commands once their guild is set up', async () => {
@@ -448,9 +464,9 @@ describe('createBot', () => {
       await bot.idle();
     };
     await say('disable');
-    expect(commandNames(client, 'g1')).toEqual(['modules']);
+    expect(commandNames(client, 'g1')).toEqual(['help', 'modules']);
     await say('enable');
-    expect(commandNames(client, 'g1')).toEqual(['modules', 'widgets']);
+    expect(commandNames(client, 'g1')).toEqual(['help', 'modules', 'widgets']);
     expect(calls).toEqual(['ready:g1', 'ready:g1']);
   });
 

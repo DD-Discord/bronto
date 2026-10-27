@@ -6,7 +6,10 @@ import { checkRoles, formatSchemaProblems } from '../db/checks.js';
 import type { Database } from '../db/database.js';
 import { prepareDatabase } from '../db/prepare.js';
 import { listMigratedModules } from '../db/purge.js';
+import { CORE_DOCS, loadDocs } from '../docs/load.js';
+import type { ModuleDocs } from '../docs/types.js';
 import { commandToJson } from '../interactions/commands.js';
+import { createHelp } from '../interactions/help-command.js';
 import { createModulesCommand } from '../interactions/modules-command.js';
 import { InteractionRouter } from '../interactions/router.js';
 import { ComponentSigner } from '../interactions/signing.js';
@@ -68,6 +71,24 @@ export interface Bot {
   stop(): Promise<void>;
 }
 
+/** Core's docs, then each module's; a docs folder with problems is logged and left out. */
+function loadLibrary(modules: LoadedModule[], log: Logger): Map<string, ModuleDocs> {
+  const library = new Map<string, ModuleDocs>();
+  const add = (name: string, folder: URL) => {
+    const { docs, problems } = loadDocs(folder, name);
+    for (const { file, line, message } of problems) log.error({ module: name, file, line }, `Invalid help docs: ${message}`);
+    return docs;
+  };
+  // Without core's docs /help still starts, showing an empty landing page.
+  library.set('core', add('core', CORE_DOCS) ?? { summary: '', topics: [{ id: 'index', title: 'Help', pages: [[]] }] });
+  for (const { definition } of modules) {
+    if (definition.docs === undefined) continue;
+    const docs = add(definition.name, definition.docs);
+    if (docs) library.set(definition.name, docs);
+  }
+  return library;
+}
+
 export function createBot(options: BotOptions): Bot {
   const { config, modules, database, client } = options;
   const log = options.log.child({}, { serializers: { err: serializeError } });
@@ -103,9 +124,15 @@ export function createBot(options: BotOptions): Bot {
     setModuleEnabled: (guildId, module, enabled, actorId, check) =>
       lifecycle.setModuleEnabled(guildId, module, enabled, actorId, check),
   });
+  const help = createHelp({ library: loadLibrary(modules, log), enablement, navigation: signer !== null });
   const router = new InteractionRouter({
     sources: [
-      { runtime: createCoreRuntime({ client, database, log }), commands: { modules: modulesCommand }, components: [], alwaysEnabled: true },
+      {
+        runtime: createCoreRuntime({ client, database, log }),
+        commands: { help: help.command, modules: modulesCommand },
+        components: help.components,
+        alwaysEnabled: true,
+      },
       ...runtimes.map((runtime) => ({
         runtime,
         commands: runtime.loaded.definition.commands ?? {},

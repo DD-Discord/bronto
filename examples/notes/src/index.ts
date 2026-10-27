@@ -92,6 +92,7 @@ const editText = defineSubcommand({
 
 export default defineModule({
   name: 'notes',
+  docs: new URL('../docs/user/', import.meta.url),
   db: { schema, migrations: new URL('../drizzle/', import.meta.url) },
   commands: {
     notes: defineCommand({

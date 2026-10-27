@@ -1,5 +1,5 @@
 import { createBot, type Bot } from '@bronto/core';
-import { captureLog, fakeButton, fakeCommand, fakeModal, FakeClient, TEST_INTERACTION_SECRET } from '@bronto/core/testing';
+import { captureLog, checkDocs, fakeButton, fakeCommand, fakeModal, FakeClient, TEST_INTERACTION_SECRET } from '@bronto/core/testing';
 import { Events, type ActionRowBuilder, type ButtonBuilder, type ModalBuilder } from 'discord.js';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -44,9 +44,15 @@ async function send<T extends { responses: Array<{ kind: string; payload: unknow
 }
 
 describe('example notes module', () => {
+  it('has valid user docs', () => {
+    const docs = checkDocs(new URL('../docs/user/', import.meta.url), 'notes');
+    expect(docs.topics.map((topic) => topic.id)).toEqual(['index', 'commands']);
+  });
+
   it('registers /notes with the generated and custom subcommands', () => {
-    const [, registered] = client.registered.get('g1') as Array<{ name: string; options: Array<{ name: string }> }>;
-    expect(registered?.name).toBe('notes');
+    const commands = client.registered.get('g1') as Array<{ name: string; options: Array<{ name: string }> }>;
+    const registered = commands.find((command) => command.name === 'notes');
+    expect(registered).toBeDefined();
     expect(registered?.options.map((option) => option.name)).toEqual(['create', 'edit', 'show', 'list', 'delete', 'post', 'edit-text']);
   });
 

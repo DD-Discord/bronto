@@ -14,6 +14,7 @@ import { dropWaitingUploads } from './save.js';
 export function createTemplatesModule(): ModuleDefinition<Record<string, never>, TemplatesApi> {
   return defineModule<Record<string, never>, TemplatesApi>({
     name: 'templates',
+    docs: new URL('../docs/user/', import.meta.url),
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
     db: { schema, migrations: new URL('../drizzle/', import.meta.url) },
     botPermissions: [

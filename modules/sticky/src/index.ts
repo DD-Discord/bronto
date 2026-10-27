@@ -17,6 +17,7 @@ export function createStickyModule(): ModuleDefinition<StickyConfig> {
   const reposter = new Reposter({ index });
   return defineModule<StickyConfig>({
     name: 'sticky',
+    docs: new URL('../docs/user/', import.meta.url),
     dependsOn: [templates],
     intents: [GatewayIntentBits.GuildMessages],
     config: stickyConfigSchema,
