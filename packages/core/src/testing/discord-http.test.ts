@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChannelType, PermissionFlagsBits, DiscordAPIError, type ForumChannel, type ThreadChannel } from 'discord.js';
 import { FakeDiscordHttp } from './discord-http.js';
 import { createNativeTestClient, type NativeTestClient } from './native-client.js';
@@ -233,4 +233,51 @@ it('serves guild members with their roles, and computes permissions from roles a
   } finally {
     await client.destroy();
   }
+});
+
+describe('webhook components', () => {
+  const button = { type: 1, components: [{ type: 2, style: 1, custom_id: 'go', label: 'Go' }] };
+  const link = { type: 1, components: [{ type: 2, style: 5, url: 'https://example.com', label: 'Link' }] };
+  const select = { type: 1, components: [{ type: 3, custom_id: 'pick', options: [] }] };
+  const setup = (options?: { applicationId?: string }) => {
+    const http = new FakeDiscordHttp();
+    http.addGuild(GUILD); http.addChannel(CHANNEL, { guildId: GUILD, type: ChannelType.GuildText });
+    const webhook = http.addWebhook(CHANNEL, undefined, options);
+    const request = (method: string, path: string, body?: unknown, query = '') =>
+      http.answer({ method, path, query, body, authorized: false });
+    return { http, webhook, request, path: `/webhooks/${webhook.id}/${webhook.token}` };
+  };
+
+  it('stores interactive components of an own webhook sent with with_components', async () => {
+    const { request, path, http } = setup();
+    const sent = await request('POST', path, { content: 'x', components: [button] }, '?with_components=true');
+    expect(sent).toMatchObject({ status: 200, json: { components: [button] } });
+    expect(http.messages.get((sent.json as { id: string }).id)?.components).toEqual([button]);
+  });
+
+  it('rejects interactive components without with_components', async () => {
+    const { request, path } = setup();
+    expect(await request('POST', path, { components: [button] })).toMatchObject({ status: 400, json: { code: 50035 } });
+    expect(await request('POST', path, { components: [select] }, '?with_components=false')).toMatchObject({ status: 400, json: { code: 50035 } });
+  });
+
+  it('rejects interactive components of a webhook owned by another application', async () => {
+    const { request, path } = setup({ applicationId: '100000000000000999' });
+    expect(await request('POST', path, { components: [button] }, '?with_components=true')).toMatchObject({ status: 400, json: { code: 50035 } });
+  });
+
+  it('allows link buttons without with_components', async () => {
+    const { request, path } = setup({ applicationId: '100000000000000999' });
+    expect(await request('POST', path, { components: [link] })).toMatchObject({ status: 200, json: { components: [link] } });
+  });
+
+  it('replaces components on edit and applies the same rules', async () => {
+    const { request, path } = setup();
+    const id = ((await request('POST', path, { content: 'x', components: [button] }, '?with_components=true')).json as { id: string }).id;
+    expect(await request('PATCH', `${path}/messages/${id}`, { components: [select] })).toMatchObject({ status: 400, json: { code: 50035 } });
+    expect(await request('PATCH', `${path}/messages/${id}`, { components: [select] }, '?with_components=true'))
+      .toMatchObject({ status: 200, json: { components: [select] } });
+    expect(await request('PATCH', `${path}/messages/${id}`, { content: 'y' })).toMatchObject({ json: { content: 'y', components: [select] } });
+    expect(await request('PATCH', `${path}/messages/${id}`, { components: [] })).toMatchObject({ json: { components: [] } });
+  });
 });
