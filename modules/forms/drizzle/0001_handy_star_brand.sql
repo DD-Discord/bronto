@@ -1,0 +1,1 @@
+ALTER TABLE "forms"."submissions" ADD COLUMN "render" jsonb NOT NULL;

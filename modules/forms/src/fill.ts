@@ -22,7 +22,7 @@ import { deleteDraft, DRAFT_TTL_MS, isExpired, loadDraft, releaseFiles, storeFil
 import { pages, PAGE_SIZE, type Field } from './model.js';
 import { formById, formForThread, requireEditor } from './permissions.js';
 import { renderSubmission } from './render.js';
-import { fillKey, hasSubmitted, queued, refusal, submit, tooLarge } from './submit.js';
+import { hasSubmitted, queued, refusal, submit, tooLarge } from './submit.js';
 
 // Discord's limit for modal titles.
 const MAX_TITLE = 45;
@@ -100,11 +100,14 @@ function fieldLabel(field: Field, draft: Draft | null): LabelBuilder {
   }
 }
 
-/** The modal of one page of the form, filled in from the draft. */
+/**
+ * The modal of one page of the form, filled in from the draft. Its custom ID carries when it was shown, so that a
+ * repeated submit of the same modal is recognised.
+ */
 export function pageModal(ctx: FormsContext, form: Form, page: number, draft: Draft | null, dry: boolean): ModalBuilder {
   const all = pages(form.fields);
   return new ModalBuilder()
-    .setCustomId(ctx.customId(pageSubmit, [form.id, String(page), flag(dry)]))
+    .setCustomId(ctx.customId(pageSubmit, [form.id, String(page), flag(dry), Date.now().toString(36)]))
     .setTitle(modalTitle(form.name, page, all.length))
     .addLabelComponents((all[page] ?? []).map((field) => fieldLabel(field, draft)));
 }
@@ -141,9 +144,7 @@ export async function openForm(ctx: ButtonContext, openerId: string): Promise<vo
   if (draft !== null && isExpired(draft)) {
     // The modal goes first: Discord allows three seconds to show it. The queue keeps the cleanup ahead of the submit.
     await ctx.showModal(pageModal(ctx, form, 0, null, false));
-    await ctx.queue.run(fillKey(form.id, userId), async (task) => {
-      await liveDraft(task as FormsContext, form.id, userId, false);
-    });
+    await queued(ctx, form.id, userId, (task) => liveDraft(task, form.id, userId, false));
     return;
   }
   await ctx.showModal(pageModal(ctx, form, currentPage(form, draft), draft, false));
@@ -156,9 +157,7 @@ export async function openTrial(ctx: ButtonContext): Promise<void> {
   if (form.fields.length === 0) throw new UserError('This form has no fields yet.');
   const userId = ctx.actorId!;
   await ctx.showModal(pageModal(ctx, form, 0, null, true));
-  await ctx.queue.run(fillKey(form.id, userId), async (task) => {
-    await deleteDraft(task as FormsContext, form.id, userId, true);
-  });
+  await queued(ctx, form.id, userId, (task) => deleteDraft(task, form.id, userId, true));
 }
 
 function buttonRow(...buttons: ButtonBuilder[]) {
@@ -296,6 +295,8 @@ interface PageSubmit {
   dry: boolean;
   userId: string;
   limit: number;
+  /** When the modal was shown. */
+  openedAt: Date;
   read: (fields: Field[]) => PageInput;
 }
 
@@ -349,7 +350,7 @@ async function savePage(ctx: FormsContext, input: PageSubmit): Promise<Reply> {
 
   const stored = await storeFiles(ctx, fresh, limit);
   const pageFiles = new Set(fields.filter((field) => field.type === 'file').map((field) => field.id));
-  const saved = await ctx.db.run(async (tx) => {
+  const save = ctx.db.run(async (tx) => {
     const [row] = await tx
       .select()
       .from(drafts)
@@ -369,6 +370,13 @@ async function savePage(ctx: FormsContext, input: PageSubmit): Promise<Reply> {
       .returning();
     return { draft: draftRow!, replaced };
   });
+  let saved: Awaited<typeof save>;
+  try {
+    saved = await save;
+  } catch (error) {
+    await releaseFiles(ctx, stored, []);
+    throw error;
+  }
   if (saved === null) {
     await releaseFiles(ctx, stored, []);
     return EXPIRED;
@@ -388,10 +396,10 @@ async function savePage(ctx: FormsContext, input: PageSubmit): Promise<Reply> {
     });
     return retryReply(ctx, formId, false, `**${form.fields[gap]!.label}** needs an answer; the form changed after you filled in that page.`);
   }
-  return submit(ctx, formId, userId, limit);
+  return submit(ctx, formId, userId, limit, input.openedAt);
 }
 
-/** A page of the form submitted: `[formId, page, dry]`. */
+/** A page of the form submitted: `[formId, page, dry, shown]`, `shown` being when the modal was shown (base36 ms). */
 export const pageSubmit = defineModal({
   name: 'fill-page',
   ephemeral: true,
@@ -405,6 +413,7 @@ export const pageSubmit = defineModal({
         dry: args[2] === '1',
         userId,
         limit: ctx.interaction.attachmentSizeLimit,
+        openedAt: new Date(Number.parseInt(args[3] ?? '0', 36)),
         read: (fields) => readPage(ctx, fields),
       }),
     );
@@ -435,10 +444,7 @@ export const cancelButton = defineButton({
   execute: async (ctx, args) => {
     const formId = args[0] ?? '';
     const userId = ctx.actorId!;
-    await queued(ctx, formId, userId, async (task) => {
-      await deleteDraft(task, formId, userId, args[1] === '1');
-      return '';
-    });
+    await queued(ctx, formId, userId, (task) => deleteDraft(task, formId, userId, args[1] === '1'));
     await ctx.update({ content: 'Cancelled. Your answers and files were deleted.', components: [] });
   },
 });

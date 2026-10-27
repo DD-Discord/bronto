@@ -2,7 +2,8 @@ import { fakeModal, type RecordedRequest } from '@bronto/core/testing';
 import { Events, MessageFlags } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
-import { GUILD, USER } from './harness.js';
+import { fillKey, queued } from '../src/submit.js';
+import { GUILD, inHandler, USER } from './harness.js';
 import {
   clickIn,
   contentOf,
@@ -10,6 +11,7 @@ import {
   fileField,
   formWith,
   messagesIn,
+  open,
   openerId,
   openModal,
   PING_ROLE,
@@ -177,7 +179,113 @@ describe('submitting', () => {
     await setForm(f, form.id, { fields: [1, 2, 3, 4, 5].map((n) => text(n)) });
     const done = await submitPage(f, await openModal(f, opener));
     expect(contentOf(done)).toContain('Submitted to');
-    expect(contentOf(done)).toContain("1 file for a field that was removed wasn't posted.");
+    expect(contentOf(done)).toContain("These files weren't posted: cover.png (its field was removed).");
     expect(messagesIn(f, SUBMIT)[0]!.attachments).toEqual([]);
+  });
+
+  it('posts without a draft file deleted by hand and names it', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [fileField(1), ...[1, 2, 3, 4, 5].map((n) => text(n))]);
+    const opener = await openerId(f, form);
+    const saved = await submitPage(f, await openModal(f, opener), { uploads: { f0000001: [upload(f, 'cover.png', 'png bytes')] } });
+    const [draft] = await draftRows(f);
+    f.discord.messages.delete(draft!.files[0]!.messageId);
+    const done = await submitPage(f, shownModal(await clickIn(f, replyOf(saved), 'Continue (2/2)')));
+    expect(contentOf(done)).toContain("These files weren't posted: cover.png (no longer available).");
+    const [row] = await submissionRows(f);
+    expect(row!.status).toBe('posted');
+    expect(messagesIn(f, SUBMIT)).toHaveLength(1);
+  });
+
+  it('a retry posts the stored parts after the fields were edited', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, longFields());
+    failNth(SUBMIT, 2);
+    const failed = await submitPage(f, await openModal(f, await openerId(f, form)), { fields: longAnswers });
+    const [before] = await submissionRows(f);
+    const stored = before!.render.parts;
+    expect(stored.length).toBeGreaterThan(2);
+    await setForm(f, form.id, { fields: [text(1, { type: 'long', label: 'Renamed' }), text(2, { type: 'long' }), text(4)] });
+    await clickIn(f, replyOf(failed), 'Try again');
+    const posted = messagesIn(f, SUBMIT);
+    expect(posted).toHaveLength(stored.length);
+    posted.forEach((message, index) => expect(message.components).toEqual(JSON.parse(JSON.stringify(stored[index]!.components))));
+    const all = posted.map(textOf).join('\n');
+    expect(all).not.toContain('Renamed');
+    expect(all).toContain('Question 3');
+  });
+
+  it('Discard before any part was posted deletes the submission and keeps the draft', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1)]);
+    const opener = await openerId(f, form);
+    failNth(SUBMIT, 1);
+    await submitPage(f, await openModal(f, opener), { fields: { q0000001: 'Kept' } });
+    const refused = await open(f, opener);
+    expect(contentOf(refused)).toContain("isn't fully posted yet");
+    const discarded = await clickIn(f, replyOf(refused), 'Discard');
+    expect(contentOf(discarded)).toContain('Discarded.');
+    expect(await submissionRows(f)).toEqual([]);
+    const [draft] = await draftRows(f);
+    expect(draft!.answers.q0000001).toEqual({ text: 'Kept' });
+    expect(messagesIn(f, SUBMIT)).toEqual([]);
+  });
+
+  it('Discard after some parts counts the submission as posted and names the missing parts', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, longFields());
+    failNth(SUBMIT, 2);
+    const failed = await submitPage(f, await openModal(f, await openerId(f, form)), { fields: longAnswers });
+    const [row] = await submissionRows(f);
+    const total = row!.render.parts.length;
+    const discarded = await clickIn(f, replyOf(failed), 'Discard');
+    expect(contentOf(discarded)).toContain(`Parts 2–${total} of ${total} weren't posted.`);
+    const [done] = await submissionRows(f);
+    expect(done!.status).toBe('posted');
+    expect(await draftRows(f)).toEqual([]);
+    expect(messagesIn(f, SUBMIT)).toHaveLength(1);
+  });
+
+  it('a repeated submit of one modal posts once on a form allowing many submissions', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1)], { oncePerMember: false });
+    const opener = await openerId(f, form);
+    const modal = await openModal(f, opener);
+    const submits = [0, 1].map(() => fakeModal({ customId: modal.custom_id, guildId: GUILD, channelId: TEXT, userId: USER, fields: { q0000001: 'Twice' } }));
+    for (const fake of submits) f.fb.client.emit(Events.InteractionCreate, fake as never);
+    await f.fb.bot.idle();
+    expect(await submissionRows(f)).toHaveLength(1);
+    expect(submits.map((fake) => contentOf(fake, fake.responses.length - 1))).toContain('You already submitted this form.');
+    await submitPage(f, await openModal(f, opener), { fields: { q0000001: 'Again' } });
+    expect(await submissionRows(f)).toHaveLength(2);
+  });
+});
+
+describe('the member queue', () => {
+  it('runs work that a newer task replaced while it waited', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1)]);
+    const results = await inHandler(f.fb, async (ctx) => {
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const running = ctx.queue.run(fillKey(form.id, USER), () => blocked);
+      const first = queued(ctx, form.id, USER, async () => 'first');
+      const second = queued(ctx, form.id, USER, async () => 'second');
+      release();
+      await running;
+      return Promise.all([first, second]);
+    });
+    expect(results).toEqual(['first', 'second']);
+  });
+
+  it('Cancel says the draft was deleted only after deleting it', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [1, 2, 3, 4, 5, 6].map((n) => text(n)));
+    const saved = await submitPage(f, await openModal(f, await openerId(f, form)), { fields: { q0000001: 'One' } });
+    const cancelled = await clickIn(f, replyOf(saved), 'Cancel');
+    expect(contentOf(cancelled)).toBe('Cancelled. Your answers and files were deleted.');
+    expect(await draftRows(f)).toEqual([]);
   });
 });

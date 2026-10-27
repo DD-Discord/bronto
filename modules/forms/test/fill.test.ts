@@ -1,11 +1,11 @@
-import { MessageFlags } from 'discord.js';
+import { ChannelType, MessageFlags } from 'discord.js';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
-import { drafts, submissions } from '../src/db/schema.js';
+import { drafts, forms, forums, submissions } from '../src/db/schema.js';
 import { DRAFT_TTL_MS, sweepDrafts } from '../src/drafts.js';
 import { forgetForm } from '../src/lifecycle.js';
-import { formsDb, inHandler, USER } from './harness.js';
+import { FORUM, formsDb, GUILD, inHandler, USER } from './harness.js';
 import {
   clickIn,
   contentOf,
@@ -43,6 +43,7 @@ afterEach(async () => {
   await t.drop();
 });
 
+const DRAFTS = '100000000000000500';
 const seven = () => [1, 2, 3, 4, 5, 6, 7].map((n) => text(n));
 
 /** The draft-file messages: bot messages with attachments outside the channels the tests use. */
@@ -71,7 +72,7 @@ describe('opening a form', () => {
     f = await startFilling(t);
     const form = await formWith(f, [text(1)]);
     await formsDb(t).run(async (tx) => {
-      await tx.insert(submissions).values({ formId: form.id, userId: USER, answers: {}, channelId: SUBMIT, status: 'posted', once: true });
+      await tx.insert(submissions).values({ formId: form.id, userId: USER, answers: {}, channelId: SUBMIT, status: 'posted', once: true, render: { fields: [], parts: [], dropped: [] } });
     });
     expect(contentOf(await open(f, await openerId(f, form)))).toBe('You already submitted this form.');
   });
@@ -105,6 +106,18 @@ describe('opening a form', () => {
     expect(inputs.r0000001).toMatchObject({ type: 21, required: false });
     expect(inputs.c0000001).toMatchObject({ type: 23 });
     expect(inputs.f0000001).toMatchObject({ type: 19, min_values: 1, max_values: 2, file_types: ['image', '.pdf'] });
+  });
+
+  it('keeps the page modal custom ID within 100 characters', async () => {
+    f = await startFilling(t);
+    const fields = Array.from({ length: 5000 }, (_, i) => text(1, { id: i.toString(36).padStart(8, 'z') }));
+    const form = await formWith(f, fields);
+    await formsDb(t).run(async (tx) => {
+      await tx.insert(drafts).values({ formId: form.id, userId: USER, page: 999, expiresAt: new Date(Date.now() + DRAFT_TTL_MS) });
+    });
+    const modal = await openModal(f, await openerId(f, form));
+    expect(modal.title).toBe('Story contest (1000/1000)');
+    expect(modal.custom_id.length).toBeLessThanOrEqual(100);
   });
 
   it('keeps the page suffix whole when the title is too long', async () => {
@@ -158,6 +171,25 @@ describe('opening a form', () => {
     const form = await formWith(f, [fileField(1, { fileTypes: ['.pdf'] })]);
     const refused = await submitPage(f, await openModal(f, await openerId(f, form)), { uploads: { f0000001: [upload(f, 'story.exe', 'x')] } });
     expect(contentOf(refused)).toContain("story.exe isn't a file type Files 1 accepts");
+  });
+
+  it('releases the uploaded files when saving the draft fails', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [fileField(1), ...seven()]);
+    const modal = await openModal(f, await openerId(f, form));
+    // The form goes away while the files are being stored, so saving the draft fails.
+    f.discord.addChannel(DRAFTS, { guildId: GUILD, type: ChannelType.PublicThread, parentId: FORUM, name: 'drafts' });
+    await formsDb(t).run(async (tx) => {
+      await tx.update(forums).set({ draftsThreadId: DRAFTS });
+    });
+    const path = `/channels/${DRAFTS}/messages`;
+    f.discord.override('POST', path, async (request) => {
+      f.discord.clearOverride('POST', path);
+      await t.database.admin.delete(forms).where(eq(forms.id, form.id));
+      return f.discord.answer(request);
+    });
+    await submitPage(f, modal, { uploads: { f0000001: [upload(f, 'cover.png', 'png bytes')] } });
+    expect(draftFileMessages()).toEqual([]);
   });
 
   it('Cancel deletes the draft and its file message', async () => {

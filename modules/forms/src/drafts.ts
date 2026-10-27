@@ -1,5 +1,5 @@
 import { downloadFile } from '@bronto/core';
-import { ChannelType, DiscordAPIError, RESTJSONErrorCodes, type ThreadChannel } from 'discord.js';
+import { ChannelType, RESTJSONErrorCodes, type ThreadChannel } from 'discord.js';
 import { and, eq, lt, notExists, or, sql } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 import type { FormsContext } from './context.js';
@@ -14,6 +14,16 @@ export const DRAFT_SWEEP_MS = 3_600_000;
 const DRAFTS_THREAD = 'drafts';
 /** Discord's limit on attachments per message. */
 const FILES_PER_MESSAGE = 10;
+
+/**
+ * The code of a failed Discord API request. Read structurally rather than with `instanceof DiscordAPIError`, which fails
+ * when the error comes from another installed copy of discord.js.
+ */
+export function apiCode(error: unknown): number | undefined {
+  if (!(error instanceof Error) || !error.name.startsWith('DiscordAPIError')) return undefined;
+  const { code } = error as Error & { code?: unknown };
+  return typeof code === 'number' ? code : undefined;
+}
 
 export const isExpired = (draft: Pick<Draft, 'expiresAt'>, now = Date.now()) => draft.expiresAt.getTime() <= now;
 
@@ -68,7 +78,7 @@ async function existingThread(ctx: FormsContext): Promise<ThreadChannel | null> 
     const thread = await ctx.client.channels.fetch(id);
     return thread?.isThread() === true ? thread : null;
   } catch (error) {
-    if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return null;
+    if (apiCode(error) === RESTJSONErrorCodes.UnknownChannel) return null;
     throw error;
   }
 }
@@ -104,7 +114,7 @@ async function sendToThread(thread: ThreadChannel, files: NewFile[]) {
   try {
     return await thread.send(options);
   } catch (error) {
-    if (!(error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.InvalidActionOnArchivedThread)) throw error;
+    if (!(apiCode(error) === RESTJSONErrorCodes.InvalidActionOnArchivedThread)) throw error;
     await thread.setArchived(false);
     return thread.send(options);
   }
@@ -160,7 +170,7 @@ export async function releaseFiles(ctx: FormsContext, removed: DraftFile[], kept
       if (keep.length === 0) await thread.messages.delete(messageId);
       else await thread.messages.edit(messageId, { attachments: keep.map((file) => ({ id: file.attachmentId }) as never) });
     } catch (error) {
-      if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownMessage) continue;
+      if (apiCode(error) === RESTJSONErrorCodes.UnknownMessage) continue;
       ctx.log.warn({ err: error, messageId }, 'Removing draft files failed');
     }
   }
@@ -173,21 +183,27 @@ export class MissingFileError extends Error {
   }
 }
 
-/** Downloads draft files of at most `limit` bytes each; their messages are refetched for fresh links. */
-export async function downloadFiles(ctx: FormsContext, files: DraftFile[], limit: number): Promise<Map<string, Buffer>> {
-  const result = new Map<string, Buffer>();
-  if (files.length === 0) return result;
-  const thread = await existingThread(ctx);
+/** Fresh links of the draft files that are still on Discord, by attachment ID; their messages are refetched. */
+export async function fileLinks(ctx: FormsContext, files: DraftFile[]): Promise<Map<string, string>> {
   const links = new Map<string, string>();
+  if (files.length === 0) return links;
+  const thread = await existingThread(ctx);
+  if (thread === null) return links;
   for (const messageId of new Set(files.map((file) => file.messageId))) {
-    if (thread === null) break;
     try {
       const message = await thread.messages.fetch({ message: messageId, force: true });
       for (const attachment of message.attachments.values()) links.set(attachment.id, attachment.url);
     } catch (error) {
-      if (!(error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownMessage)) throw error;
+      if (!(apiCode(error) === RESTJSONErrorCodes.UnknownMessage)) throw error;
     }
   }
+  return links;
+}
+
+/** Downloads draft files of at most `limit` bytes each, with fresh links. */
+export async function downloadFiles(ctx: FormsContext, files: DraftFile[], limit: number): Promise<Map<string, Buffer>> {
+  const result = new Map<string, Buffer>();
+  const links = await fileLinks(ctx, files);
   for (const file of files) {
     const url = links.get(file.attachmentId);
     if (url === undefined) throw new MissingFileError(file);

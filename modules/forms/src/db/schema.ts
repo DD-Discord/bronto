@@ -13,6 +13,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { Field } from '../model.js';
+import type { RenderedPart } from '../render.js';
 
 export const formsSchema = pgSchema('forms');
 
@@ -99,6 +100,17 @@ export const drafts = guildTable(
   (t) => [primaryKey({ columns: [t.formId, t.userId, t.dry] })],
 );
 
+/**
+ * What a submission posts, fixed when it is submitted so that every attempt posts the same parts: the fields as they
+ * were, the rendered parts, and the names of uploaded files that weren't posted (their field was removed, or the file
+ * was gone).
+ */
+export interface SubmissionRender {
+  fields: Field[];
+  parts: RenderedPart[];
+  dropped: { name: string; reason: 'removed' | 'missing' }[];
+}
+
 /** A finished submission. */
 export const submissions = guildTable(
   formsSchema,
@@ -115,6 +127,7 @@ export const submissions = guildTable(
     channelId: text('channel_id').notNull(),
     status: text('status').$type<'posting' | 'posted'>().notNull(),
     partMessageIds: text('part_message_ids').array().notNull().default([]),
+    render: jsonb('render').$type<SubmissionRender>().notNull(),
     /** Copied from the form at submit time: the unique index lets such a member submit once. */
     once: boolean('once').notNull(),
   },

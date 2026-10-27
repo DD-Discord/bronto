@@ -15,7 +15,7 @@ import { channelsUsingTemplate, dropStickyOpeners, dropTemplateOpeners, openerRo
 import { removeOpenerSelect } from './post.js';
 import { dropDrafts, tryAgainButton } from './retry.js';
 import { openSettings, settingsModalDefinition } from './settings.js';
-import { retryPostButton } from './submit.js';
+import { discardPostButton, retryPostButton } from './submit.js';
 import { askDelete, exportFormFile, openImport, transferComponents } from './transfer.js';
 
 registerPreviewActions({
@@ -64,7 +64,7 @@ export function createFormsModule(): ModuleDefinition<Record<string, never>, und
       }),
     ],
     commands: { forms: createFormsCommand() },
-    components: [...previewComponents, ...editorComponents, settingsModalDefinition, ...transferComponents, tryAgainButton, openButton, removeOpenerSelect, ...fillComponents, retryPostButton],
+    components: [...previewComponents, ...editorComponents, settingsModalDefinition, ...transferComponents, tryAgainButton, openButton, removeOpenerSelect, ...fillComponents, retryPostButton, discardPostButton],
     hooks: {
       // Queued, not awaited: the guild's events and interactions wait for guildReady, and reconcile asks Discord once
       // per form.

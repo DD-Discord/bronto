@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { EDITOR_TTL_MS } from '../src/binding.js';
 import { editorComponents } from '../src/editor.js';
 import { fillComponents } from '../src/fill.js';
-import { retryPostButton } from '../src/submit.js';
+import { discardPostButton, retryPostButton } from '../src/submit.js';
 import { previewComponents } from '../src/buttons.js';
 import { tryAgainButton } from '../src/retry.js';
 import { settingsModalDefinition } from '../src/settings.js';
@@ -70,7 +70,7 @@ describe('component definitions', () => {
     expect(deleteConfirm!.expiresAfterMs).toBe(EDITOR_TTL_MS);
   });
 
-  it.each([...fillComponents, retryPostButton].map((definition) => [definition.name, definition] as const))('filling component %s is bound to its member and never expires', (_name, definition) => {
+  it.each([...fillComponents, retryPostButton, discardPostButton].map((definition) => [definition.name, definition] as const))('filling component %s is bound to its member and never expires', (_name, definition) => {
     expect(definition.expiresAfterMs).toBeNull();
     expect(definition.ephemeral).toBe(true);
     expect(definition.bind).toEqual({ user: true, channel: false });
