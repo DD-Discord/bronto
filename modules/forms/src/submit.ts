@@ -1,5 +1,5 @@
 import { defineButton, UserError, type Reply, type ReplyMessage } from '@bronto/core';
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, DiscordAPIError, MessageFlags, type MessageMentionOptions } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, DiscordAPIError, MessageFlags, RESTJSONErrorCodes, type MessageMentionOptions } from 'discord.js';
 import { and, eq, gte } from 'drizzle-orm';
 import type { FormsContext } from './context.js';
 import { drafts, forms, submissions, type Answer, type Form, type Submission, type SubmissionFile, type SubmissionRender } from './db/schema.js';
@@ -230,6 +230,7 @@ function failure(ctx: FormsContext, form: Form, submissionId: string, reason: st
 
 function reasonOf(error: unknown): string {
   if (error instanceof MissingFileError) return `${error.file.name} is no longer available.`;
+  if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return "the submissions channel or the form's post no longer exists.";
   if (error instanceof DiscordAPIError) return `Discord answered "${error.message}".`;
   return 'something went wrong.';
 }

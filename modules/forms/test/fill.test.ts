@@ -129,6 +129,19 @@ describe('opening a form', () => {
     expect(modal.title.endsWith('… (1/2)')).toBe(true);
   });
 
+  it('leaves a draft answer unfilled when it exceeds a lowered maximum length', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1, { maxLength: 5 })]);
+    await formsDb(t).run(async (tx) => {
+      await tx.insert(drafts).values({ formId: form.id, userId: USER, page: 0, answers: { q0000001: { text: 'Far too long' } }, expiresAt: new Date(Date.now() + DRAFT_TTL_MS) });
+    });
+    const modal = await openModal(f, await openerId(f, form));
+    const label = (modal.components as Json[])[0]!;
+    expect(label.component.value).toBeUndefined();
+    expect(label.description).toBe('Your earlier answer was longer than the new limit of 5 characters. Shorten it.');
+    expect(label.description.length).toBeLessThanOrEqual(100);
+  });
+
   it('resumes a draft', async () => {
     f = await startFilling(t);
     const form = await formWith(f, seven());

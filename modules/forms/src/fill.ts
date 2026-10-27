@@ -67,8 +67,11 @@ function fieldLabel(field: Field, draft: Draft | null): LabelBuilder {
         .setMaxLength(field.maxLength ?? MAX_TEXT);
       if (field.minLength !== undefined) input.setMinLength(field.minLength);
       if (field.placeholder !== undefined) input.setPlaceholder(field.placeholder);
-      const value = answer !== undefined && 'text' in answer ? answer.text.slice(0, field.maxLength ?? MAX_TEXT) : '';
-      if (value !== '') input.setValue(value);
+      const value = answer !== undefined && 'text' in answer ? answer.text : '';
+      const limit = field.maxLength ?? MAX_TEXT;
+      // A longer earlier answer isn't cut: the member shortens it themself.
+      if (value.length > limit) label.setDescription(`Your earlier answer was longer than the new limit of ${limit} characters. Shorten it.`);
+      else if (value !== '') input.setValue(value);
       return label.setTextInputComponent(input);
     }
     case 'select': {

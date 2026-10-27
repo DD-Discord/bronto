@@ -379,3 +379,17 @@ describe("the form's post as the default channel", () => {
     expect(messagesIn(f, form.threadId).map(textOf).join('\n')).not.toContain('Hello');
   });
 });
+
+describe('a missing target', () => {
+  it('says the channel or post no longer exists and offers Try again and Discard', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1)]);
+    const modal = await openModal(f, await openerId(f, form));
+    f.discord.channels.delete(SUBMIT);
+    const done = await submitPage(f, modal, { fields: { q0000001: 'Hello' } });
+    expect(contentOf(done)).toContain("the submissions channel or the form's post no longer exists.");
+    buttonId(replyOf(done), 'Try again');
+    buttonId(replyOf(done), 'Discard');
+    expect((await submissionRows(f))[0]).toMatchObject({ status: 'posting' });
+  });
+});
