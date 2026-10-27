@@ -31,7 +31,13 @@ export type FakeCommandInput = Partial<FakeInteractionBase> & {
 /** An uploaded modal file; `id` defaults to its position. */
 export interface UploadedFile { id?: string; filename?: string; url?: string; size?: number; contentType?: string; [key: string]: unknown }
 
-/** discord.js splits mentionables by kind; the fake cannot tell them apart and lists every chosen ID under `users`. */
+/** The IDs chosen in a mentionable select, by kind. */
+export interface MentionableSelection { users?: string[]; roles?: string[]; members?: string[] }
+
+/**
+ * A mentionable select's choices by kind. A selected guild user appears in `users` and, in discord.js, usually in
+ * `members` too; the fake fills `members` only from its input.
+ */
 interface MentionablesResult {
   members: Collection<string, { id: string }>;
   roles: Collection<string, { id: string }>;
@@ -51,6 +57,7 @@ interface Details {
   uploads?: Record<string, UploadedFile[]>;
   checkboxes?: Record<string, boolean>;
   selections?: Record<string, string[]>;
+  mentionables?: Record<string, MentionableSelection>;
   values?: string[];
 }
 
@@ -140,9 +147,16 @@ export class FakeInteraction {
       },
       getSelectedChannels: resolved,
       getSelectedRoles: resolved,
-      getSelectedMentionables: (customId, required) => {
-        const users = resolved(customId, required);
-        return users === null ? null : { members: new Collection(), roles: new Collection(), users };
+      getSelectedMentionables: (customId, required = false) => {
+        const chosen = details.mentionables?.[customId];
+        if (chosen === undefined) throw new Error(`No modal field ${customId}`);
+        const byId = (ids: string[] = []) => new Collection<string, { id: string }>(ids.map((id) => [id, { id }]));
+        const result = { members: byId(chosen.members), roles: byId(chosen.roles), users: byId(chosen.users) };
+        if (result.members.size + result.roles.size + result.users.size === 0) {
+          if (required) throw new Error(`Required modal field ${customId} is empty`);
+          return null;
+        }
+        return result;
       },
       getTextInputValue: (customId) => {
         const value = fields[customId];
@@ -272,6 +286,7 @@ export function fakeModal(
     checkboxes?: Record<string, boolean>;
     /** Chosen values per field, read by every select, checkbox-group, radio and entity-select getter. */
     selections?: Record<string, string[]>;
+    mentionables?: Record<string, MentionableSelection>;
   },
 ): FakeInteraction {
   return new FakeInteraction('modal', input, input);

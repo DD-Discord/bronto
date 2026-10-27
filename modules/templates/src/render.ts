@@ -1,9 +1,9 @@
+import { linkExpiry, REFRESH_MARGIN_MS } from '@bronto/core';
 import { and, eq } from 'drizzle-orm';
 import { DiscordAPIError, RESTJSONErrorCodes, type APIEmbed } from 'discord.js';
 import type { TemplatesContext } from './context.js';
 import type { TemplateMessage } from './content.js';
 import { IMAGE_SLOTS, templateImages, templates, type ImageSlot, type TemplateImage } from './db/schema.js';
-import { linkExpiry, REFRESH_MARGIN_MS } from '@bronto/core';
 import { messageAttachments } from './images.js';
 
 export { REFRESH_MARGIN_MS };

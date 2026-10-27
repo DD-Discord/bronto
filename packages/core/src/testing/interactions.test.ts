@@ -74,8 +74,6 @@ describe('fake interactions', () => {
     expect(modal.fields.getSelectedChannels('where')!.get('c2')).toEqual({ id: 'c2' });
     expect(modal.fields.getSelectedRoles('who')!.get('r1')).toEqual({ id: 'r1' });
     expect(modal.fields.getSelectedRoles('none')).toBeNull();
-    expect(modal.fields.getSelectedMentionables('who')!.users.get('r1')).toEqual({ id: 'r1' });
-    expect(modal.fields.getSelectedMentionables('none')).toBeNull();
     expect(() => modal.fields.getSelectedChannels('none', true)).toThrow();
     for (const read of [
       () => modal.fields.getStringSelectValues('missing'),
@@ -83,8 +81,22 @@ describe('fake interactions', () => {
       () => modal.fields.getRadioGroup('missing'),
       () => modal.fields.getSelectedChannels('missing'),
       () => modal.fields.getSelectedRoles('missing'),
-      () => modal.fields.getSelectedMentionables('missing'),
     ]) expect(read).toThrow('No modal field missing');
+  });
+
+  it('reads roles, users and members of a mentionable select separately', () => {
+    const modal = fakeModal({
+      customId: 'x', mentionables: { ping: { roles: ['r1'], users: ['u1'] }, nobody: {}, onlyMembers: { members: ['u2'] } },
+    }).asInteraction();
+    if (!modal.isModalSubmit()) throw new Error('unreachable');
+    const picked = modal.fields.getSelectedMentionables('ping')!;
+    expect([...picked.roles.keys()]).toEqual(['r1']);
+    expect([...picked.users.keys()]).toEqual(['u1']);
+    expect(picked.members.size).toBe(0);
+    expect([...modal.fields.getSelectedMentionables('onlyMembers')!.members.keys()]).toEqual(['u2']);
+    expect(modal.fields.getSelectedMentionables('nobody')).toBeNull();
+    expect(() => modal.fields.getSelectedMentionables('nobody', true)).toThrow();
+    expect(() => modal.fields.getSelectedMentionables('missing')).toThrow('No modal field missing');
   });
 
   it('carries the upload size limit, 10 MiB unless given', () => {
