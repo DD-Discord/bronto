@@ -47,6 +47,17 @@ interface Part {
 
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
 const MIN_ROOM = 20;
+/** Leaves room for the `<index>-` prefix within 100 characters. */
+const MAX_NAME = 94;
+
+/** Discord rewrites unusual characters in uploaded names, which would break the `attachment://` match. */
+function safeName(name: string): string {
+  const clean = name.replace(/[^A-Za-z0-9._-]/g, '_');
+  if (clean.length <= MAX_NAME) return clean;
+  const dot = clean.lastIndexOf('.');
+  const ext = dot > 0 && clean.length - dot <= 16 ? clean.slice(dot) : '';
+  return clean.slice(0, MAX_NAME - ext.length) + ext;
+}
 
 const label = (text: string) => `**${text}**`;
 
@@ -117,7 +128,7 @@ export function renderSubmission(input: RenderInput): RenderedPart[] {
         continue;
       }
       const room = MAX_TEXT - cur.chars - head.length;
-      if (cur.components + 1 > MAX_COMPONENTS || (cur.kids.length > 0 && room < MIN_ROOM)) {
+      if (cur.components + 1 > MAX_COMPONENTS || room < MIN_ROOM) {
         newPart();
         continue;
       }
@@ -142,7 +153,7 @@ export function renderSubmission(input: RenderInput): RenderedPart[] {
         newPart();
         addText(`${label(title)} (continued)`);
       }
-      const name = `${cur.files.length + 1}-${file.name}`;
+      const name = `${cur.files.length + 1}-${safeName(file.name)}`;
       cur.files.push({ key: file.key, name });
       cur.bytes += file.size;
       const tail = cur.kids[cur.kids.length - 1];
@@ -164,7 +175,9 @@ export function renderSubmission(input: RenderInput): RenderedPart[] {
       const files = input.files.filter((f) => f.fieldId === field.id);
       if (files.length === 0) continue;
       const title = label(field.label);
-      if (!fits(title.length)) newPart();
+      const first = files[0]!;
+      const need = IMAGE.test(first.name) ? 2 : 1;
+      if (!fits(title.length) || cur.components + 1 + need > MAX_COMPONENTS || cur.files.length >= MAX_FILES || cur.bytes + first.size > input.uploadLimit) newPart();
       addText(title);
       addFiles(field.label, files);
     } else {

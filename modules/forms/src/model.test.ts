@@ -122,6 +122,14 @@ describe('export and import', () => {
     expect(() => importForm(JSON.stringify({ version: 1, settings, fields: bad }))).toThrow(/fields\.1\.label/);
   });
 
+  it('rejects more than 25 pings combined', () => {
+    const id = (i: number) => `${100000000000000000 + i}`;
+    const ok = { ...settings, pingUserIds: Array.from({ length: 20 }, (_, i) => id(i)), pingRoleIds: Array.from({ length: 5 }, (_, i) => id(50 + i)) };
+    expect(() => importForm(JSON.stringify({ version: 1, settings: ok, fields }))).not.toThrow();
+    const bad = { ...ok, pingRoleIds: [...ok.pingRoleIds, id(99)] };
+    expect(() => importForm(JSON.stringify({ version: 1, settings: bad, fields }))).toThrow(/pings/);
+  });
+
   it('rejects a malformed ping id', () => {
     const bad = { ...settings, pingUserIds: ['abc'] };
     expect(() => importForm(JSON.stringify({ version: 1, settings: bad, fields }))).toThrow(/settings\.pingUserIds/);

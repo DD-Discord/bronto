@@ -96,6 +96,9 @@ export const fieldSchema = z
 
 export type Field = z.infer<typeof fieldSchema>;
 
+/** Discord's mentionable select holds 25 entries; the form's ping list is capped likewise. */
+const MAX_PING_TOTAL = 25;
+
 const settingsSchema = z.strictObject({
   name: z.string().min(1).max(MAX_LABEL),
   active: z.boolean(),
@@ -104,6 +107,9 @@ const settingsSchema = z.strictObject({
   pingRoleIds: z.array(snowflake).max(MAX_PINGS),
   allowedRoleIds: z.array(snowflake).max(MAX_PINGS),
   oncePerMember: z.boolean(),
+}).refine((s) => s.pingUserIds.length + s.pingRoleIds.length <= MAX_PING_TOTAL, {
+  path: ['pingUserIds'],
+  message: `at most ${MAX_PING_TOTAL} pings (users and roles combined)`,
 });
 
 export type FormSettings = z.infer<typeof settingsSchema>;

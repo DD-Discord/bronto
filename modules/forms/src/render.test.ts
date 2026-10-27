@@ -179,4 +179,34 @@ describe('renderSubmission', () => {
       expect(part.allowedMentions.users ?? []).not.toContain('123');
     }
   });
+
+  it('keeps every part within the limit with 25 pings and a long answer', () => {
+    const ids = Array.from({ length: 25 }, (_, i) => `${100000000000000000 + i}`);
+    const text = 'word '.repeat(800);
+    const parts = renderSubmission(
+      base({ pingUserIds: ids.slice(0, 13), pingRoleIds: ids.slice(13), username: 'u'.repeat(32), formName: 'F'.repeat(45), fields: [field('aaaaaaaa')], answers: { aaaaaaaa: { text } } }),
+    );
+    for (const part of parts) expect(chars(part)).toBeLessThanOrEqual(MAX_TEXT);
+    expect(collect(parts, 'Field aaaaaaaa')).toBe(text);
+  });
+
+  it('keeps a field label with its first file', () => {
+    const files = [
+      ...Array.from({ length: 10 }, (_, i) => ({ key: `a${i}`, fieldId: 'fff00001', name: 'a.txt', size: 1 })),
+      { key: 'b0', fieldId: 'fff00002', name: 'b.txt', size: 1 },
+    ];
+    const parts = renderSubmission(base({ fields: [field('fff00001', 'file', 'A'), field('fff00002', 'file', 'B')], files }));
+    expect(parts.map((p) => p.files.length)).toEqual([10, 1]);
+    expect(texts(parts[0]!)).not.toContain('**B**');
+    expect(texts(parts[1]!)).toContain('**B**');
+    expect(texts(parts[1]!).join()).not.toContain('(continued)');
+  });
+
+  it('makes attachment names safe', () => {
+    const [part] = renderSubmission(base({ fields: [field('fff00001', 'file')], files: [{ key: 'k', fieldId: 'fff00001', name: 'my file (1).png', size: 1 }] }));
+    expect(part!.files[0]!.name).toBe('1-my_file__1_.png');
+    const [long] = renderSubmission(base({ fields: [field('fff00001', 'file')], files: [{ key: 'k', fieldId: 'fff00001', name: `${'n'.repeat(300)}.png`, size: 1 }] }));
+    expect(long!.files[0]!.name.length).toBeLessThanOrEqual(100);
+    expect(long!.files[0]!.name.endsWith('.png')).toBe(true);
+  });
 });
