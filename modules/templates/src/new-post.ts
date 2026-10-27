@@ -1,10 +1,9 @@
-import { UserError } from '@bronto/core';
+import { downloadFile, UserError } from '@bronto/core';
 import { PermissionFlagsBits, type APIEmbed, type AnyThreadChannel, type GuildBasedChannel } from 'discord.js';
 import { sendableEmbed, type TemplateMessage } from './content.js';
 import type { TemplatesContext } from './context.js';
 import type { ImageSlot } from './db/schema.js';
 import { storedForumId } from './forum.js';
-import { downloadFile } from './images.js';
 import { createPost, type PendingUpload } from './posts.js';
 import { parseBody } from './transfer.js';
 

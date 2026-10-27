@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import type { TemplatesContext } from '../src/context.js';
 import { templateImages, templates, type ImageSlot } from '../src/db/schema.js';
-import { linkExpiry } from '../src/images.js';
+import { linkExpiry } from '@bronto/core';
 import { render, setSlot } from '../src/render.js';
 import { FORUM, GUILD, prepareTemplatesBot, templatesDb, type TemplatesBot } from './harness.js';
 

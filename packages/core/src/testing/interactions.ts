@@ -31,6 +31,13 @@ export type FakeCommandInput = Partial<FakeInteractionBase> & {
 /** An uploaded modal file; `id` defaults to its position. */
 export interface UploadedFile { id?: string; filename?: string; url?: string; size?: number; contentType?: string; [key: string]: unknown }
 
+/** discord.js splits mentionables by kind; the fake cannot tell them apart and lists every chosen ID under `users`. */
+interface MentionablesResult {
+  members: Collection<string, { id: string }>;
+  roles: Collection<string, { id: string }>;
+  users: Collection<string, { id: string }>;
+}
+
 type Kind = 'command' | 'autocomplete' | 'button' | 'modal' | 'select';
 
 interface Details {
@@ -43,6 +50,7 @@ interface Details {
   fields?: Record<string, string>;
   uploads?: Record<string, UploadedFile[]>;
   checkboxes?: Record<string, boolean>;
+  selections?: Record<string, string[]>;
   values?: string[];
 }
 
@@ -72,6 +80,12 @@ export class FakeInteraction {
     getTextInputValue(customId: string): string;
     getUploadedFiles(customId: string): Collection<string, UploadedFile> | null;
     getCheckbox(customId: string): boolean;
+    getStringSelectValues(customId: string): readonly string[];
+    getCheckboxGroup(customId: string): readonly string[];
+    getRadioGroup(customId: string, required?: boolean): string | null;
+    getSelectedChannels(customId: string, required?: boolean): Collection<string, { id: string }> | null;
+    getSelectedRoles(customId: string, required?: boolean): Collection<string, { id: string }> | null;
+    getSelectedMentionables(customId: string, required?: boolean): MentionablesResult | null;
   };
   private readonly kind: Kind;
   private readonly rejectResponses: boolean;
@@ -102,7 +116,34 @@ export class FakeInteraction {
       getFocused: () => ({ name: details.focused ?? '', type: 3, value: String(values[details.focused ?? ''] ?? ''), focused: true }),
     };
     const fields = details.fields ?? {};
+    const selection = (customId: string): string[] => {
+      const ids = details.selections?.[customId];
+      if (ids === undefined) throw new Error(`No modal field ${customId}`);
+      return ids;
+    };
+    // Like discord.js, an empty selection reads as null and throws when required.
+    const resolved = (customId: string, required = false): Collection<string, { id: string }> | null => {
+      const ids = selection(customId);
+      if (ids.length === 0) {
+        if (required) throw new Error(`Required modal field ${customId} is empty`);
+        return null;
+      }
+      return new Collection(ids.map((id) => [id, { id }]));
+    };
     this.fields = {
+      getStringSelectValues: selection,
+      getCheckboxGroup: selection,
+      getRadioGroup: (customId, required = false) => {
+        const [first] = selection(customId);
+        if (first === undefined && required) throw new Error(`Required modal field ${customId} is empty`);
+        return first ?? null;
+      },
+      getSelectedChannels: resolved,
+      getSelectedRoles: resolved,
+      getSelectedMentionables: (customId, required) => {
+        const users = resolved(customId, required);
+        return users === null ? null : { members: new Collection(), roles: new Collection(), users };
+      },
       getTextInputValue: (customId) => {
         const value = fields[customId];
         if (value === undefined) throw new Error(`No modal field ${customId}`);
@@ -229,6 +270,8 @@ export function fakeModal(
     fields?: Record<string, string>;
     uploads?: Record<string, UploadedFile[]>;
     checkboxes?: Record<string, boolean>;
+    /** Chosen values per field, read by every select, checkbox-group, radio and entity-select getter. */
+    selections?: Record<string, string[]>;
   },
 ): FakeInteraction {
   return new FakeInteraction('modal', input, input);

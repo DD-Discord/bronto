@@ -1,4 +1,4 @@
-import { defineButton, defineModal, UserError, type ButtonDefinition } from '@bronto/core';
+import { defineButton, defineModal, downloadFile, UserError, type ButtonDefinition } from '@bronto/core';
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -16,7 +16,6 @@ import type { TemplatesContext } from './context.js';
 import { IMAGE_SLOTS, type ImageSlot, type TemplateImage } from './db/schema.js';
 import { openEditor } from './editor.js';
 import { templatesGates } from './events.js';
-import { downloadFile } from './images.js';
 import { forgetTemplate } from './lifecycle.js';
 import { requireEditor, templateForThread } from './permissions.js';
 import { clearSlot, render, setSlot, slotUrl } from './render.js';
