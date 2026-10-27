@@ -21,6 +21,17 @@ export {
   type Listener,
 } from './events.js';
 export {
+  answer,
+  askLabel,
+  COLLECTOR_TIMEOUT_MS,
+  defineAsk,
+  defineCollector,
+  type AskDefinition,
+  type AskOutcome,
+  type AskStrategy,
+  type Collected,
+} from './asks.js';
+export {
   defineGate,
   gate,
   gateLabel,

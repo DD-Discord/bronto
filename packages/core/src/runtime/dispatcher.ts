@@ -8,14 +8,15 @@ import type { ModuleRuntime } from './context.js';
 import type { ModuleEnablement } from './enablement.js';
 import { outsideHandlerError, runInHandlerScope, type HandlerScope } from './handler-scope.js';
 import { eventLabel, type DiscordEventName, type EventDefinition, type Listener } from './events.js';
-import { GATE_TIMEOUT_MS, gateLabel, type GateDefinition, type GateResult } from './gates.js';
+import { askLabel, type AskDefinition, type AskOutcome } from './asks.js';
+import { gateLabel, type GateResult } from './gates.js';
 import type { KeyedQueue } from './queue.js';
 import type { HandlerContext } from './types.js';
 
 type DiscordListener = Extract<Listener, { kind: 'discord' }>;
 type GatewayListener = Extract<Listener, { kind: 'gateway' }>;
 type ModuleListener = Extract<Listener, { kind: 'module' }>;
-type GateListener = Extract<Listener, { kind: 'gate' }>;
+type AskListener = Extract<Listener, { kind: 'ask' }>;
 
 // These events mean the guild is gone or going; gating them would set the guild up again.
 const UNGATED_EVENTS = new Set<DiscordEventName>([Events.GuildDelete, Events.GuildUnavailable]);
@@ -68,7 +69,7 @@ export class Dispatcher {
   private readonly discordListeners = new Map<DiscordEventName, Array<{ runtime: ModuleRuntime; listener: DiscordListener }>>();
   private readonly gatewayListeners = new Map<string, Array<{ runtime: ModuleRuntime; listener: GatewayListener }>>();
   private readonly moduleListeners = new Map<EventDefinition<unknown>, Array<{ runtime: ModuleRuntime; listener: ModuleListener }>>();
-  private readonly gateListeners = new Map<GateDefinition<unknown>, Array<{ runtime: ModuleRuntime; listener: GateListener }>>();
+  private readonly askListeners = new Map<AskDefinition<any, any, any>, Array<{ runtime: ModuleRuntime; listener: AskListener }>>();
   private readonly inFlight = new Set<Promise<unknown>>();
   private stopped = false;
 
@@ -89,10 +90,10 @@ export class Dispatcher {
           const entries = this.gatewayListeners.get(listener.event) ?? [];
           entries.push({ runtime, listener });
           this.gatewayListeners.set(listener.event, entries);
-        } else if (listener.kind === 'gate') {
-          const entries = this.gateListeners.get(listener.gate) ?? [];
+        } else if (listener.kind === 'ask') {
+          const entries = this.askListeners.get(listener.ask) ?? [];
           entries.push({ runtime, listener });
-          this.gateListeners.set(listener.gate, entries);
+          this.askListeners.set(listener.ask, entries);
         } else {
           const entries = this.moduleListeners.get(listener.event) ?? [];
           entries.push({ runtime, listener });
@@ -239,7 +240,21 @@ export class Dispatcher {
         if (inTransaction()) {
           throw new Error(`Module "${runtime.name}" checked ${gateLabel(gate)} inside ctx.db.run; check before opening the transaction.`);
         }
-        return this.track(this.runGate(gate, payload, guildId, actorId));
+        return this.track(this.runAsk(gate, payload, guildId, actorId));
+      },
+      ask: (ask, payload) => {
+        if (ask.owner !== runtime.name) {
+          throw new Error(`Module "${runtime.name}" cannot ask ${askLabel(ask)}; modules ask only their own asks.`);
+        }
+        if (state.finished) {
+          throw new Error(
+            `Module "${runtime.name}" asked ${askLabel(ask)} after its handler finished; ask inside the handler or a queued task.`,
+          );
+        }
+        if (inTransaction()) {
+          throw new Error(`Module "${runtime.name}" asked ${askLabel(ask)} inside ctx.db.run; ask before opening the transaction.`);
+        }
+        return this.track(this.runAsk(ask, payload, guildId, actorId));
       },
       customId: (component, args = [], target = {}) => {
         if (component.owner === null) {
@@ -270,34 +285,50 @@ export class Dispatcher {
     };
   }
 
-  /** Asks the gate's listeners one after another; denials, errors and timeouts stop at the first. */
-  private async runGate(gate: GateDefinition<unknown>, payload: unknown, guildId: string, actorId: string | null): Promise<GateResult> {
-    for (const { runtime, listener } of this.gateListeners.get(gate) ?? []) {
+  /** Asks the listeners one after another, folding each outcome into the ask's strategy until it is done. */
+  private async runAsk<R>(ask: AskDefinition<any, any, R>, payload: unknown, guildId: string, actorId: string | null): Promise<R> {
+    const { strategy } = ask;
+    let state = strategy.initial();
+    for (const { runtime, listener } of this.askListeners.get(ask) ?? []) {
       if (!this.enablement.isEnabled(guildId, runtime.name)) continue;
-      let verdict: unknown;
-      const run = this.runHandler(runtime, guildId, actorId, `gate:${gateLabel(gate)}`, async (ctx) => {
-        verdict = await listener.handler(ctx, payload);
+      let value: unknown;
+      const run = this.runHandler(runtime, guildId, actorId, `ask:${askLabel(ask)}`, async (ctx) => {
+        value = await listener.handler(ctx, payload);
       });
       let timer: NodeJS.Timeout | undefined;
       const timeout = new Promise<'timeout'>((resolve) => {
-        timer = setTimeout(() => resolve('timeout'), GATE_TIMEOUT_MS);
+        timer = setTimeout(() => resolve('timeout'), strategy.timeoutMs);
       });
-      const outcome = await Promise.race([run, timeout]).finally(() => clearTimeout(timer));
-      if (outcome === 'timeout') {
-        runtime.context.log.warn({ guildId, handler: `gate:${gateLabel(gate)}` }, 'Gate listener timed out');
-        return { allowed: false, reasons: [`${runtime.name} did not answer in time`] };
+      const result = await Promise.race([run, timeout]).finally(() => clearTimeout(timer));
+      let outcome: AskOutcome;
+      let validation: { valid: boolean; error?: unknown } = { valid: true };
+      if (result !== 'timeout' && result.ok && ask.validate !== undefined) {
+        // A throwing validator counts as an invalid answer instead of failing the whole ask.
+        try {
+          validation = { valid: ask.validate(value) };
+        } catch (error) {
+          validation = { valid: false, error };
+        }
       }
-      if (!outcome.ok) return { allowed: false, reasons: [`${runtime.name} failed to answer`] };
-      // Only no answer allows; `{ deny: '<reason>' }` denies with the reason, anything else is an invalid answer
-      // (fail closed).
-      if (verdict === undefined) continue;
-      if (typeof verdict === 'object' && verdict !== null && 'deny' in verdict) {
-        const { deny } = verdict;
-        if (typeof deny === 'string' && deny !== '') return { allowed: false, reasons: [deny] };
+      if (result === 'timeout') {
+        runtime.context.log.warn({ guildId, handler: `ask:${askLabel(ask)}` }, 'Ask listener timed out');
+        outcome = { module: runtime.name, kind: 'timeout' };
+      } else if (!result.ok) {
+        outcome = { module: runtime.name, kind: 'failed' };
+      } else if (!validation.valid) {
+        runtime.context.log.warn(
+          { guildId, handler: `ask:${askLabel(ask)}`, err: validation.error },
+          'Ask listener gave an invalid answer',
+        );
+        outcome = { module: runtime.name, kind: 'invalid' };
+      } else {
+        outcome = { module: runtime.name, kind: 'answer', value };
       }
-      return { allowed: false, reasons: [`${runtime.name} gave an invalid answer`] };
+      const step = strategy.next(state, outcome);
+      if ('done' in step) return step.done;
+      state = step.state;
     }
-    return { allowed: true };
+    return strategy.finish(state);
   }
 
   private async runGateway(

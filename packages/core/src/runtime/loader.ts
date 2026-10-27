@@ -128,7 +128,11 @@ function sortByDependencies(modules: LoadedModule[]): LoadedModule[] {
     }
     state.set(name, 'visiting');
     for (const dependency of module.definition.dependsOn ?? []) {
-      visit(byName.get(dependency.name)!, [...path, name]); // All dependencies are guaranteed to be present.
+      visit(byName.get(dependency.name)!, [...path, name]); // Required dependencies are guaranteed to be present.
+    }
+    for (const dependency of module.definition.optionalDependsOn ?? []) {
+      const loadedDependency = byName.get(dependency.name);
+      if (loadedDependency !== undefined) visit(loadedDependency, [...path, name]);
     }
     state.set(name, 'done');
     sorted.push(module);

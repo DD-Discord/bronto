@@ -5,6 +5,30 @@ import { error, gone, ok } from './responses.js';
 import { route } from './router.js';
 import type { DiscordState } from './state.js';
 
+type Component = { type?: number; style?: number; components?: Component[] };
+
+/** Anything but a link button needs an application-owned webhook and with_components. */
+const isInteractive = (component: Component): boolean =>
+  component.type === 1 ? (component.components ?? []).some(isInteractive)
+    : component.type === 2 ? component.style !== 5 : component.type !== undefined;
+
+function rejectsComponents(state: DiscordState, webhook: APIWebhook, request: RecordedRequest, components: unknown) {
+  if (!Array.isArray(components) || !components.some(isInteractive)) return false;
+  const allowed = new URLSearchParams(request.query).get('with_components') === 'true';
+  return !allowed || webhook.application_id !== state.applicationId;
+}
+
+/** Discord's 50035 cases for rows: more than five components in a row, or a non-link button without a custom_id. */
+function malformedRows(components: unknown): boolean {
+  if (!Array.isArray(components)) return false;
+  return (components as Component[]).some(
+    (row) =>
+      row.type === 1 &&
+      ((row.components ?? []).length > 5 ||
+        (row.components ?? []).some((c) => c.type === 2 && c.style !== 5 && typeof (c as { custom_id?: unknown }).custom_id !== 'string')),
+  );
+}
+
 type WebhookParams = { webhookId: string; token?: string };
 
 export function webhookRoutes(state: DiscordState) {
@@ -25,8 +49,10 @@ export function webhookRoutes(state: DiscordState) {
     state.deletedWebhooks.push(webhook.id);
     return gone();
   });
-  const send = withWebhook((webhook, request) => {
+  const send = withWebhook(async (webhook, request) => {
     const threadId = new URLSearchParams(request.query).get('thread_id');
+    const { body } = await readPayload(request);
+    if (malformedRows(body.components) || rejectsComponents(state, webhook, request, body.components)) return error(50035, 400);
     return sendMessage(state, request, threadId ?? webhook.channel_id!, webhook.id);
   });
   const deleteMessage = withWebhook((webhook, request, { messageId }: WebhookParams & { messageId: string }) => {
@@ -42,6 +68,8 @@ export function webhookRoutes(state: DiscordState) {
     const channelId = new URLSearchParams(request.query).get('thread_id') ?? webhook.channel_id;
     if (!message || message.webhook_id !== webhook.id || message.channel_id !== channelId) return error(10008);
     const { body } = await readPayload(request);
+    if (malformedRows(body.components) || rejectsComponents(state, webhook, request, body.components)) return error(50035, 400);
+    if (body.components !== undefined) message.components = (body.components as typeof message.components | null) ?? [];
     if (body.content !== undefined) message.content = (body.content as string | null) ?? '';
     if (body.embeds !== undefined) message.embeds = (body.embeds as typeof message.embeds | null) ?? [];
     message.edited_timestamp = new Date().toISOString();

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { templatesApi } from '../src/api.js';
 import { forums, templateImages, templates } from '../src/db/schema.js';
-import { linkExpiry } from '../src/images.js';
+import { linkExpiry } from '@bronto/core';
 import { createPost, updatePreview } from '../src/posts.js';
 import { FORUM, GUILD, inHandler, prepareTemplatesBot, templatesDb, type TemplatesBot } from './harness.js';
 

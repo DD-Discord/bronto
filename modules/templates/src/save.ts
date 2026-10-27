@@ -1,4 +1,4 @@
-import { UserError, type ButtonContext, type ModalContext } from '@bronto/core';
+import { downloadFile, UserError, type ButtonContext, type ModalContext } from '@bronto/core';
 import { DiscordAPIError } from 'discord.js';
 import { and, eq, inArray } from 'drizzle-orm';
 import { normalizeEmbed, validateTemplate, type TemplateMessage } from './content.js';
@@ -6,7 +6,6 @@ import type { TemplatesContext } from './context.js';
 import { IMAGE_SLOTS, templateImages, templates, type ImageSlot, type Template, type TemplateImage } from './db/schema.js';
 import { editorView } from './editor.js';
 import { templatesEvents } from './events.js';
-import { downloadFile } from './images.js';
 import { updatePreview } from './posts.js';
 import { uploadFileName, type PendingUpload } from './preview.js';
 import { slotUrl } from './render.js';

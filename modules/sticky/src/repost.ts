@@ -1,11 +1,16 @@
 import { ensureWebhook, resolveWebhook, withWebhookErrors, UnknownMessageError, UnknownWebhookError, type IncomingWebhook, type HandlerContext } from '@bronto/core';
 import templates from '@bronto/templates';
-import { DiscordAPIError, RESTJSONErrorCodes, MessageFlags, type APIEmbed } from 'discord.js';
-import { and, asc, eq, isNotNull, isNull, ne } from 'drizzle-orm';
+import {
+  DiscordAPIError, RESTJSONErrorCodes, MessageFlags,
+  type APIActionRowComponent, type APIComponentInMessageActionRow, type APIEmbed,
+} from 'discord.js';
+import { and, asc, eq, isNotNull, isNull, ne, or } from 'drizzle-orm';
 import type { StickyConfig } from './config.js';
 import { stickies, stickyState, type Sticky } from './db/schema.js';
-import { stickyEvents } from './events.js';
+import { stickyAsks, stickyEvents } from './events.js';
 import type { StickyIndex } from './sticky-index.js';
+
+type Row = APIActionRowComponent<APIComponentInMessageActionRow>;
 
 export type StickyContext = HandlerContext<StickyConfig>;
 
@@ -62,6 +67,9 @@ async function messageOf(ctx: StickyContext, sticky: Sticky): Promise<StickyMess
   if (sticky.content === null && sticky.embeds === null) return null;
   return { content: sticky.content ?? '', embeds: sticky.embeds ?? [] };
 }
+
+/** Discord allows five action rows per message. */
+const MAX_ROWS = 5;
 
 export interface ReposterOptions {
   index: StickyIndex;
@@ -122,7 +130,7 @@ export class Reposter {
     await Promise.all(
       rows
         .filter(({ channelId }) => this.index.get(channelId) !== undefined)
-        .map(({ channelId }) => ctx.queue.run(channelId, (task) => this.refresh(task, channelId))),
+        .map(({ channelId }) => ctx.queue.run(channelId, (task) => this.refreshPost(task, channelId))),
     );
   }
 
@@ -188,21 +196,38 @@ export class Reposter {
           task.log.warn({ err: error, channelId: record.channelId }, 'Deleting the sticky post failed');
         }
       }
-      const shared = await task.db.run(async (tx) =>
-        tx
-          .select({ channelId: stickies.channelId })
-          .from(stickies)
-          .where(and(eq(stickies.webhookId, sticky.webhookId), ne(stickies.channelId, record.channelId)))
-          .limit(1),
-      );
-      if (shared.length === 0) {
-        try {
-          await withWebhookErrors(sticky.webhookToken, () => task.client.deleteWebhook(sticky.webhookId, { token: sticky.webhookToken }));
-        } catch (error) {
-          if (!(error instanceof UnknownWebhookError)) throw error;
-        }
-      }
+      await this.deleteWebhookUnlessShared(task, sticky, record.channelId);
     });
+    ctx.emit(stickyEvents.deleted, { channelId: record.channelId });
+  }
+
+  /**
+   * Forgets the stickies of a deleted channel or thread, and of the threads of a deleted channel. Discord is not
+   * asked to delete the posts. A deleted thread leaves its parent's webhook behind, which goes unless shared; a
+   * deleted channel takes its webhooks with it.
+   */
+  async onChannelGone(ctx: StickyContext, channelId: string): Promise<void> {
+    const rows = await ctx.db.run(async (tx) =>
+      tx.select().from(stickies).where(or(eq(stickies.channelId, channelId), eq(stickies.parentChannelId, channelId))),
+    );
+    for (const record of rows) {
+      this.index.delete(record.channelId);
+      this.cancel(record.channelId);
+      await ctx.queue.run(record.channelId, async (task) => {
+        await task.db.run(async (tx) => {
+          await tx.delete(stickies).where(eq(stickies.channelId, record.channelId));
+        });
+        if (record.channelId === channelId && record.parentChannelId !== null) {
+          try {
+            await this.deleteWebhookUnlessShared(task, record, record.channelId);
+          } catch (error) {
+            task.log.warn({ err: error, channelId: record.channelId }, "Deleting a deleted thread's sticky webhook failed");
+          }
+        }
+      });
+      ctx.log.info({ channelId: record.channelId }, 'Deleted the sticky of a deleted channel');
+      ctx.emit(stickyEvents.deleted, { channelId: record.channelId });
+    }
   }
 
   /** Re-arms the guild's pending debounces after start-up or a switch back on; overdue ones post right away. */
@@ -241,11 +266,15 @@ export class Reposter {
       ctx.log.debug({ channelId, templateId: sticky.templateId }, "Skipped a repost: the sticky's template doesn't exist");
       return;
     }
+    const components = await this.componentsFor(ctx, channelId);
+    // Discord rejects components from webhooks of other applications, so such a webhook is swapped out.
+    const foreign = components.length > 0 && await this.isForeign(ctx, sticky);
     try {
-      await this.post(ctx, sticky, message, lastMessageId);
+      if (foreign) throw new UnknownWebhookError();
+      await this.post(ctx, sticky, message, components, lastMessageId);
     } catch (error) {
       if (!(error instanceof UnknownWebhookError)) throw error;
-      const replacement = await this.replaceWebhook(ctx, sticky);
+      const replacement = await this.replaceWebhook(ctx, sticky, foreign);
       // Only the deleted webhook could remove its posts; the bot removes the last one with its own permissions.
       if (lastMessageId !== null) {
         try {
@@ -254,7 +283,7 @@ export class Reposter {
           ctx.log.warn({ err: error, channelId }, 'Deleting the previous sticky post failed');
         }
       }
-      await this.post(ctx, { ...sticky, webhookId: replacement.id, webhookToken: replacement.token }, message, null, replacement);
+      await this.post(ctx, { ...sticky, webhookId: replacement.id, webhookToken: replacement.token }, message, components, null, replacement);
     }
   }
 
@@ -263,7 +292,7 @@ export class Reposter {
    * repost this refresh replaced in the queue was still due. A sticky without a post is left for its next repost.
    * Must run inside the channel's queue.
    */
-  private async refresh(ctx: StickyContext, channelId: string): Promise<void> {
+  async refreshPost(ctx: StickyContext, channelId: string): Promise<void> {
     if (this.repostWanted.has(channelId)) return this.repost(ctx, channelId);
     const { sticky, lastMessageId } = await ctx.db.run(async (tx) => {
       const [found] = await tx.select().from(stickies).where(eq(stickies.channelId, channelId));
@@ -273,20 +302,49 @@ export class Reposter {
     if (sticky === undefined || lastMessageId === null) return;
     const message = await messageOf(ctx, sticky);
     if (message === null) return;
+    const components = await this.componentsFor(ctx, channelId);
+    if (components.length > 0 && await this.isForeign(ctx, sticky)) return this.repost(ctx, channelId);
     try {
       const webhook = await resolveWebhook(ctx.client, { id: sticky.webhookId, token: sticky.webhookToken });
-      await withWebhookErrors(sticky.webhookToken, () => webhook.editMessage(lastMessageId, {
+      await this.withoutRejectedRows(ctx, channelId, components, (rows) => withWebhookErrors(sticky.webhookToken, () => webhook.editMessage(lastMessageId, {
         content: message.content, embeds: message.embeds,
+        components: rows, withComponents: true,
         threadId: sticky.parentChannelId === null ? undefined : sticky.channelId,
         allowedMentions: { parse: [] },
-      }));
+      })));
     } catch (error) {
       if (!(error instanceof UnknownMessageError) && !(error instanceof UnknownWebhookError)) throw error;
       await this.repost(ctx, channelId);
     }
   }
 
-  private async post(ctx: StickyContext, sticky: Sticky, message: StickyMessage, lastMessageId: string | null, resolved?: IncomingWebhook): Promise<void> {
+  /**
+   * The rows other modules add below the message, in module order, cut to Discord's limit. Called outside any
+   * transaction.
+   */
+  async componentsFor(ctx: StickyContext, channelId: string): Promise<Row[]> {
+    const rows = (await ctx.ask(stickyAsks.components, { channelId })).flatMap(({ value }) => value);
+    if (rows.length > MAX_ROWS) {
+      ctx.log.warn({ channelId, dropped: rows.length - MAX_ROWS }, `Dropped sticky component rows over the limit of ${MAX_ROWS}`);
+    }
+    return rows.slice(0, MAX_ROWS);
+  }
+
+  /**
+   * Runs a send or edit with the rows; when Discord rejects the payload (Invalid Form Body) while rows were sent, the
+   * rows are at fault, so it runs once more without them and the sticky stays.
+   */
+  private async withoutRejectedRows<T>(ctx: StickyContext, channelId: string, rows: Row[], run: (rows: Row[]) => Promise<T>): Promise<T> {
+    try {
+      return await run(rows);
+    } catch (error) {
+      if (rows.length === 0 || !(error instanceof DiscordAPIError) || error.code !== RESTJSONErrorCodes.InvalidFormBodyOrContentType) throw error;
+      ctx.log.warn({ channelId, err: error }, 'Sticky rows were rejected; posted without them');
+      return run([]);
+    }
+  }
+
+  private async post(ctx: StickyContext, sticky: Sticky, message: StickyMessage, components: Row[], lastMessageId: string | null, resolved?: IncomingWebhook): Promise<void> {
     const webhook = resolved ?? await resolveWebhook(ctx.client, { id: sticky.webhookId, token: sticky.webhookToken });
     const threadId = sticky.parentChannelId === null ? undefined : sticky.channelId;
     if (lastMessageId !== null) {
@@ -299,11 +357,12 @@ export class Reposter {
         }
       }
     }
-    const sent = await withWebhookErrors(sticky.webhookToken, () => webhook.send({
-      content: message.content || undefined, embeds: message.embeds, threadId,
+    const send = (rows: Row[]) => withWebhookErrors(sticky.webhookToken, () => webhook.send({
+      content: message.content || undefined, embeds: message.embeds, components: rows, withComponents: true, threadId,
       flags: sticky.silent ? MessageFlags.SuppressNotifications : undefined,
       username: ctx.config.webhookName, avatarURL: ctx.config.webhookAvatar, allowedMentions: { parse: [] },
     }));
+    const sent = await this.withoutRejectedRows(ctx, sticky.channelId, components, send);
     const messageId = sent.id;
     try {
       await ctx.db.run(async (tx) => {
@@ -320,10 +379,39 @@ export class Reposter {
     ctx.emit(stickyEvents.posted, { channelId: sticky.channelId, messageId });
   }
 
-  private async replaceWebhook(ctx: StickyContext, sticky: Sticky): Promise<IncomingWebhook> {
+  /** Whether the sticky's webhook can't carry components: it belongs to another application or was created by hand. A missing webhook counts as not foreign. */
+  private async isForeign(ctx: StickyContext, sticky: Sticky): Promise<boolean> {
+    try {
+      const webhook = await resolveWebhook(ctx.client, { id: sticky.webhookId, token: sticky.webhookToken });
+      return webhook.applicationId !== ctx.client.application?.id;
+    } catch (error) {
+      if (error instanceof UnknownWebhookError) return false;
+      throw error;
+    }
+  }
+
+  /** Deletes the sticky's webhook unless a sticky of another channel uses it too. */
+  private async deleteWebhookUnlessShared(ctx: StickyContext, sticky: Sticky, channelId: string): Promise<void> {
+    const shared = await ctx.db.run(async (tx) =>
+      tx
+        .select({ channelId: stickies.channelId })
+        .from(stickies)
+        .where(and(eq(stickies.webhookId, sticky.webhookId), ne(stickies.channelId, channelId)))
+        .limit(1),
+    );
+    if (shared.length > 0) return;
+    try {
+      await withWebhookErrors(sticky.webhookToken, () => ctx.client.deleteWebhook(sticky.webhookId, { token: sticky.webhookToken }));
+    } catch (error) {
+      if (!(error instanceof UnknownWebhookError)) throw error;
+    }
+  }
+
+  /** Creates a webhook for the sticky; a webhook of another application is deleted unless shared, but never fails the swap. */
+  private async replaceWebhook(ctx: StickyContext, sticky: Sticky, foreign = false): Promise<IncomingWebhook> {
     const { webhook } = await ensureWebhook(
       ctx.client, sticky.channelId,
-      { id: sticky.webhookId, token: sticky.webhookToken },
+      foreign ? null : { id: sticky.webhookId, token: sticky.webhookToken },
       ctx.config.webhookName,
     );
     await ctx.db.run(async (tx) => {
@@ -333,7 +421,14 @@ export class Reposter {
         .where(eq(stickies.channelId, sticky.channelId));
     });
     this.index.updateWebhook(sticky.channelId, webhook.id);
-    ctx.log.info({ channelId: sticky.channelId }, 'Replaced the deleted webhook of a sticky');
+    if (foreign) {
+      try {
+        await this.deleteWebhookUnlessShared(ctx, sticky, sticky.channelId);
+      } catch (error) {
+        ctx.log.warn({ err: error, channelId: sticky.channelId }, 'Deleting the replaced webhook failed');
+      }
+    }
+    ctx.log.info({ channelId: sticky.channelId, foreign }, foreign ? 'Replaced the webhook of another application' : 'Replaced the deleted webhook of a sticky');
     return webhook;
   }
 

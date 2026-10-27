@@ -24,9 +24,9 @@ afterEach(async () => {
   await t.drop();
 });
 
-function build() {
+function build(optional = false) {
   const alpha = defineModule({ name: 'alpha' });
-  const beta = defineModule({ name: 'beta', dependsOn: [alpha] });
+  const beta = defineModule(optional ? { name: 'beta', optionalDependsOn: [alpha] } : { name: 'beta', dependsOn: [alpha] });
   const { log } = captureLog();
   const services = { client: {} as Client, database: t.database, log };
   const runtimes = createModuleRuntimes(
@@ -92,6 +92,15 @@ describe('/modules', () => {
     await say('disable', { module: 'beta' });
     expect(await say('disable', { module: 'alpha' })).toBe('Turned off **alpha**.');
     expect(await say('enable', { module: 'beta' })).toBe('Turn on **alpha** first; **beta** depends on it.');
+  });
+
+  it('ignores optional dependencies when switching modules', async () => {
+    const { say, enablement } = build(true);
+    expect(await say('disable', { module: 'alpha' })).toBe('Turned off **alpha**.');
+    expect(await say('disable', { module: 'beta' })).toBe('Turned off **beta**.');
+    expect(await say('enable', { module: 'beta' })).toBe('Turned on **beta**.');
+    expect(enablement.isEnabled('g1', 'alpha')).toBe(false);
+    expect(enablement.isEnabled('g1', 'beta')).toBe(true);
   });
 
   it('checks dependencies against switches that ran before', async () => {

@@ -4,4 +4,4 @@ Keeps a message at the bottom of a channel or thread: whenever someone posts, th
 
 - Using `/sticky`: run `/help` in Discord and pick Sticky.
 - Loading the module and its permissions: [docs/admin/setup.md](docs/admin/setup.md)
-- Events for other modules: [docs/api/events.md](docs/api/events.md)
+- API, collector and events for other modules: [docs/api/index.md](docs/api/index.md)

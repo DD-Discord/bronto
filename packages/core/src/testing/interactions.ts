@@ -31,6 +31,19 @@ export type FakeCommandInput = Partial<FakeInteractionBase> & {
 /** An uploaded modal file; `id` defaults to its position. */
 export interface UploadedFile { id?: string; filename?: string; url?: string; size?: number; contentType?: string; [key: string]: unknown }
 
+/** The IDs chosen in a mentionable select, by kind. */
+export interface MentionableSelection { users?: string[]; roles?: string[]; members?: string[] }
+
+/**
+ * A mentionable select's choices by kind. A selected guild user appears in `users` and, in discord.js, usually in
+ * `members` too; the fake fills `members` only from its input.
+ */
+interface MentionablesResult {
+  members: Collection<string, { id: string }>;
+  roles: Collection<string, { id: string }>;
+  users: Collection<string, { id: string }>;
+}
+
 type Kind = 'command' | 'autocomplete' | 'button' | 'modal' | 'select';
 
 interface Details {
@@ -43,6 +56,8 @@ interface Details {
   fields?: Record<string, string>;
   uploads?: Record<string, UploadedFile[]>;
   checkboxes?: Record<string, boolean>;
+  selections?: Record<string, string[]>;
+  mentionables?: Record<string, MentionableSelection>;
   values?: string[];
 }
 
@@ -72,6 +87,12 @@ export class FakeInteraction {
     getTextInputValue(customId: string): string;
     getUploadedFiles(customId: string): Collection<string, UploadedFile> | null;
     getCheckbox(customId: string): boolean;
+    getStringSelectValues(customId: string): readonly string[];
+    getCheckboxGroup(customId: string): readonly string[];
+    getRadioGroup(customId: string, required?: boolean): string | null;
+    getSelectedChannels(customId: string, required?: boolean): Collection<string, { id: string }> | null;
+    getSelectedRoles(customId: string, required?: boolean): Collection<string, { id: string }> | null;
+    getSelectedMentionables(customId: string, required?: boolean): MentionablesResult | null;
   };
   private readonly kind: Kind;
   private readonly rejectResponses: boolean;
@@ -102,7 +123,41 @@ export class FakeInteraction {
       getFocused: () => ({ name: details.focused ?? '', type: 3, value: String(values[details.focused ?? ''] ?? ''), focused: true }),
     };
     const fields = details.fields ?? {};
+    const selection = (customId: string): string[] => {
+      const ids = details.selections?.[customId];
+      if (ids === undefined) throw new Error(`No modal field ${customId}`);
+      return ids;
+    };
+    // Like discord.js, an empty selection reads as null and throws when required.
+    const resolved = (customId: string, required = false): Collection<string, { id: string }> | null => {
+      const ids = selection(customId);
+      if (ids.length === 0) {
+        if (required) throw new Error(`Required modal field ${customId} is empty`);
+        return null;
+      }
+      return new Collection(ids.map((id) => [id, { id }]));
+    };
     this.fields = {
+      getStringSelectValues: selection,
+      getCheckboxGroup: selection,
+      getRadioGroup: (customId, required = false) => {
+        const [first] = selection(customId);
+        if (first === undefined && required) throw new Error(`Required modal field ${customId} is empty`);
+        return first ?? null;
+      },
+      getSelectedChannels: resolved,
+      getSelectedRoles: resolved,
+      getSelectedMentionables: (customId, required = false) => {
+        const chosen = details.mentionables?.[customId];
+        if (chosen === undefined) throw new Error(`No modal field ${customId}`);
+        const byId = (ids: string[] = []) => new Collection<string, { id: string }>(ids.map((id) => [id, { id }]));
+        const result = { members: byId(chosen.members), roles: byId(chosen.roles), users: byId(chosen.users) };
+        if (result.members.size + result.roles.size + result.users.size === 0) {
+          if (required) throw new Error(`Required modal field ${customId} is empty`);
+          return null;
+        }
+        return result;
+      },
       getTextInputValue: (customId) => {
         const value = fields[customId];
         if (value === undefined) throw new Error(`No modal field ${customId}`);
@@ -229,6 +284,9 @@ export function fakeModal(
     fields?: Record<string, string>;
     uploads?: Record<string, UploadedFile[]>;
     checkboxes?: Record<string, boolean>;
+    /** Chosen values per field, read by every select, checkbox-group, radio and entity-select getter. */
+    selections?: Record<string, string[]>;
+    mentionables?: Record<string, MentionableSelection>;
   },
 ): FakeInteraction {
   return new FakeInteraction('modal', input, input);

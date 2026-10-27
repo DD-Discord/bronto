@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { downloadFile, linkExpiry, MAX_DOWNLOAD_BYTES } from './images.js';
+import { downloadFile, linkExpiry, MAX_DOWNLOAD_BYTES } from './download.js';
 
 describe('linkExpiry', () => {
   it('reads the hex ex parameter as unix seconds', () => {

@@ -16,4 +16,4 @@ In a private thread the bot must be added to the thread or have Manage Threads.
 
 Mentions in a template show up as mentions but never ping anyone.
 
-If someone deletes the webhook the sticky posts through, a new one is created on the next repost.
+If someone deletes the webhook the sticky posts through, a new one is created on the next repost. The same happens when buttons are added to a sticky whose webhook belongs to another application or was created by hand, since only the bot's own webhook can carry buttons.

@@ -4,6 +4,7 @@ import { assertModuleName } from '../db/names.js';
 import { checkCommand, type CommandDefinition } from '../interactions/commands.js';
 import type { ComponentDefinition } from '../interactions/components.js';
 import type { EventDefinition, Listener } from './events.js';
+import type { AskDefinition } from './asks.js';
 import type { GateDefinition } from './gates.js';
 import type { LegacyImporter } from './legacy.js';
 import type { HandlerContext, ModuleContext } from './types.js';
@@ -26,6 +27,8 @@ export interface ModuleDefinition<TConfig = any, TApi = unknown> {
   /** Module name; also its Postgres schema and the prefix of its events, logs and queue keys. */
   name: string;
   dependsOn?: ModuleDefinition<any, any>[];
+  /** Modules used when loaded; the module still loads without them, and they load first when present. */
+  optionalDependsOn?: ModuleDefinition<any, any>[];
   intents?: GatewayIntentBits[];
   partials?: Partials[];
   /** Validates the module's section of config.yaml. */
@@ -39,6 +42,8 @@ export interface ModuleDefinition<TConfig = any, TApi = unknown> {
   events?: Record<string, EventDefinition<any>>;
   /** Gates other modules can be asked through `ctx.check`; only the owner checks them. */
   gates?: Record<string, GateDefinition<any>>;
+  /** Asks other modules can be asked through `ctx.ask`; only the owner asks them. */
+  asks?: Record<string, AskDefinition<any, any, any>>;
   listeners?: Listener[];
   /** Top-level slash commands keyed by name; registered in a guild while the module is enabled there. */
   commands?: Record<string, CommandDefinition>;
@@ -78,6 +83,12 @@ export function defineModule<TConfig = Record<string, never>, TApi = undefined>(
       throw new Error(`Gate "${gate.name}" already belongs to module "${gate.owner}".`);
     }
     gate.owner = definition.name;
+  }
+  for (const ask of Object.values(definition.asks ?? {})) {
+    if (ask.owner !== null && ask.owner !== definition.name) {
+      throw new Error(`Ask "${ask.name}" already belongs to module "${ask.owner}".`);
+    }
+    ask.owner = definition.name;
   }
   for (const [name, command] of Object.entries(definition.commands ?? {})) checkCommand(name, command);
   const componentNames = new Set<string>();

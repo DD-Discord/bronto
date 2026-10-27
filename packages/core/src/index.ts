@@ -5,3 +5,4 @@ export * from './runtime/index.js';
 export * from './crud/index.js';
 export * from './docs/index.js';
 export * from './webhooks/index.js';
+export * from './files/index.js';

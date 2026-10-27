@@ -1,0 +1,370 @@
+import { ChannelType, MessageFlags } from 'discord.js';
+import { eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
+import { drafts, forms, forums, submissions } from '../src/db/schema.js';
+import { DRAFT_TTL_MS, sweepDrafts } from '../src/drafts.js';
+import { forgetForm } from '../src/lifecycle.js';
+import { FORUM, formsDb, GUILD, inHandler, USER } from './harness.js';
+import {
+  clickIn,
+  contentOf,
+  draftRows,
+  fileField,
+  formWith,
+  labelsOf,
+  messagesIn,
+  open,
+  openerId,
+  openModal,
+  replyOf,
+  ROLE,
+  setForm,
+  startFilling,
+  submissionRows,
+  SUBMIT,
+  submitPage,
+  TEXT,
+  text,
+  upload,
+  type Filling,
+} from './filling.js';
+import { buttonId, choose, click, clickPreview, modalInputs, selectOf, shownModal, submitModal, textOf, type Json } from './ui.js';
+
+let t: TestDatabase;
+let f: Filling;
+
+beforeEach(async () => {
+  t = await createTestDatabase();
+});
+
+afterEach(async () => {
+  vi.useRealTimers();
+  await f?.fb.bot.stop();
+  await t.drop();
+});
+
+const DRAFTS = '100000000000000500';
+const seven = () => [1, 2, 3, 4, 5, 6, 7].map((n) => text(n));
+
+/** The draft-file messages: bot messages with attachments outside the channels the tests use. */
+const draftFileMessages = () => [...f.discord.messages.values()].filter((message) => message.attachments.length > 0 && message.channel_id !== TEXT);
+
+describe('opening a form', () => {
+  it.each([
+    ['closed', { active: false, fields: [] }, 'This form is currently closed.'],
+    ['without fields', { fields: [] }, 'This form has no fields yet.'],
+    ['for other roles', { allowedRoleIds: [ROLE] }, "You can't fill in this form."],
+  ])('refuses a form %s', async (_name, change, message) => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1)], change);
+    const fake = await open(f, await openerId(f, form));
+    expect(contentOf(fake)).toBe(message);
+  });
+
+  it('opens for a member with an allowed role', async () => {
+    f = await startFilling(t, [ROLE]);
+    const form = await formWith(f, [text(1)], { allowedRoleIds: [ROLE] });
+    const fake = await open(f, await openerId(f, form));
+    expect(labelsOf(shownModal(fake))).toEqual(['Question 1']);
+  });
+
+  it('refuses a member who already submitted a once-per-member form', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1)]);
+    await formsDb(t).run(async (tx) => {
+      await tx.insert(submissions).values({ formId: form.id, userId: USER, answers: {}, channelId: SUBMIT, status: 'posted', once: true, render: { fields: [], parts: [], dropped: [] } });
+    });
+    expect(contentOf(await open(f, await openerId(f, form)))).toBe('You already submitted this form.');
+  });
+
+  it('shows five fields per page and continues with the next page', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, seven());
+    const first = await openModal(f, await openerId(f, form));
+    expect(first.title).toBe('Story contest (1/2)');
+    expect(labelsOf(first)).toEqual(['Question 1', 'Question 2', 'Question 3', 'Question 4', 'Question 5']);
+    const saved = await submitPage(f, first, { fields: { q0000001: 'One' } });
+    expect(contentOf(saved)).toBe('Page 1 of 2 saved.');
+    const second = shownModal(await clickIn(f, replyOf(saved), 'Continue (2/2)'));
+    expect(second.title).toBe('Story contest (2/2)');
+    expect(labelsOf(second)).toEqual(['Question 6', 'Question 7']);
+  });
+
+  it('builds the input of each field type', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [
+      text(1, { type: 'long', required: true, minLength: 10, maxLength: 500, placeholder: 'Your story' }),
+      { id: 's0000001', type: 'select', label: 'Genre', required: true, options: ['Fantasy', 'Mystery'] },
+      { id: 'r0000001', type: 'radio', label: 'Length', required: false, options: ['Short', 'Long'] },
+      { id: 'c0000001', type: 'checkboxes', label: 'Agree', required: false, options: ['I wrote it'] },
+      fileField(1, { required: true, maxFiles: 2, fileTypes: ['image', '.pdf'] }),
+    ]);
+    const inputs = modalInputs(await openModal(f, await openerId(f, form)));
+    expect(inputs.q0000001).toMatchObject({ type: 4, style: 2, required: true, min_length: 10, max_length: 500, placeholder: 'Your story' });
+    expect(inputs.s0000001).toMatchObject({ type: 3, required: true, min_values: 1, max_values: 1 });
+    expect(inputs.s0000001!.options.map((o: Json) => o.label)).toEqual(['Fantasy', 'Mystery']);
+    expect(inputs.r0000001).toMatchObject({ type: 21, required: false });
+    expect(inputs.c0000001).toMatchObject({ type: 23 });
+    expect(inputs.f0000001).toMatchObject({ type: 19, min_values: 1, max_values: 2, file_types: ['image', '.pdf'] });
+  });
+
+  it('keeps the page modal custom ID within 100 characters', async () => {
+    f = await startFilling(t);
+    const fields = Array.from({ length: 5000 }, (_, i) => text(1, { id: i.toString(36).padStart(8, 'z') }));
+    const form = await formWith(f, fields);
+    await formsDb(t).run(async (tx) => {
+      await tx.insert(drafts).values({ formId: form.id, userId: USER, page: 999, expiresAt: new Date(Date.now() + DRAFT_TTL_MS) });
+    });
+    const modal = await openModal(f, await openerId(f, form));
+    expect(modal.title).toBe('Story contest (1000/1000)');
+    expect(modal.custom_id.length).toBeLessThanOrEqual(100);
+  });
+
+  it('keeps the page suffix whole when the title is too long', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, seven(), { name: 'x'.repeat(45) });
+    const modal = await openModal(f, await openerId(f, form));
+    expect(modal.title).toHaveLength(45);
+    expect(modal.title.endsWith('… (1/2)')).toBe(true);
+  });
+
+  it('leaves a draft answer unfilled when it exceeds a lowered maximum length', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1, { maxLength: 5 })]);
+    await formsDb(t).run(async (tx) => {
+      await tx.insert(drafts).values({ formId: form.id, userId: USER, page: 0, answers: { q0000001: { text: 'Far too long' } }, expiresAt: new Date(Date.now() + DRAFT_TTL_MS) });
+    });
+    const modal = await openModal(f, await openerId(f, form));
+    const label = (modal.components as Json[])[0]!;
+    expect(label.component.value).toBeUndefined();
+    expect(label.description).toBe('Your earlier answer was longer than the new limit of 5 characters. Shorten it.');
+    expect(label.description.length).toBeLessThanOrEqual(100);
+  });
+
+  it('resumes a draft', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, seven());
+    const opener = await openerId(f, form);
+    await submitPage(f, await openModal(f, opener), { fields: { q0000001: 'One' } });
+    const again = await openModal(f, opener);
+    expect(again.title).toBe('Story contest (2/2)');
+    const [draft] = await draftRows(f);
+    expect(draft!.answers.q0000001).toEqual({ text: 'One' });
+  });
+
+  it('expired draft starts over and deletes its files', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-03-01T12:00:00Z') });
+    f = await startFilling(t);
+    const form = await formWith(f, [fileField(1), ...seven().slice(0, 6)]);
+    const opener = await openerId(f, form);
+    await submitPage(f, await openModal(f, opener), { uploads: { f0000001: [upload(f, 'cover.png', 'png bytes')] } });
+    expect(draftFileMessages()).toHaveLength(1);
+    vi.setSystemTime(new Date(Date.now() + 23 * 3600_000));
+    expect((await openModal(f, opener)).title).toBe('Story contest (2/2)');
+    vi.setSystemTime(new Date(Date.now() + 2 * 3600_000));
+    expect((await openModal(f, opener)).title).toBe('Story contest (1/2)');
+    expect(await draftRows(f)).toEqual([]);
+    expect(draftFileMessages()).toEqual([]);
+  });
+
+  it('refuses a file over the upload limit and keeps the typed answers', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1), fileField(1)]);
+    const modal = await openModal(f, await openerId(f, form));
+    const refused = await submitPage(f, modal, { fields: { q0000001: 'My story' }, uploads: { f0000001: [upload(f, 'huge.png', 3 * 1024 * 1024)] } }, { attachmentSizeLimit: 2 * 1024 * 1024 + 1000 });
+    expect(contentOf(refused)).toContain('huge.png is larger than 2 MB, the most this server accepts.');
+    expect(await submissionRows(f)).toEqual([]);
+    expect(draftFileMessages()).toEqual([]);
+    const retried = shownModal(await clickIn(f, replyOf(refused), 'Try again'));
+    expect(modalInputs(retried).q0000001!.value).toBe('My story');
+  });
+
+  it('refuses a file type the field does not accept', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [fileField(1, { fileTypes: ['.pdf'] })]);
+    const refused = await submitPage(f, await openModal(f, await openerId(f, form)), { uploads: { f0000001: [upload(f, 'story.exe', 'x')] } });
+    expect(contentOf(refused)).toContain("story.exe isn't a file type Files 1 accepts");
+  });
+
+  it('releases the uploaded files when saving the draft fails', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [fileField(1), ...seven()]);
+    const modal = await openModal(f, await openerId(f, form));
+    // The form goes away while the files are being stored, so saving the draft fails.
+    f.discord.addChannel(DRAFTS, { guildId: GUILD, type: ChannelType.PublicThread, parentId: FORUM, name: 'drafts' });
+    await formsDb(t).run(async (tx) => {
+      await tx.update(forums).set({ draftsThreadId: DRAFTS });
+    });
+    const path = `/channels/${DRAFTS}/messages`;
+    f.discord.override('POST', path, async (request) => {
+      f.discord.clearOverride('POST', path);
+      await t.database.admin.delete(forms).where(eq(forms.id, form.id));
+      return f.discord.answer(request);
+    });
+    await submitPage(f, modal, { uploads: { f0000001: [upload(f, 'cover.png', 'png bytes')] } });
+    expect(draftFileMessages()).toEqual([]);
+  });
+
+  it('Cancel deletes the draft and its file message', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [fileField(1), ...seven()]);
+    const saved = await submitPage(f, await openModal(f, await openerId(f, form)), { uploads: { f0000001: [upload(f, 'cover.png', 'png bytes')] } });
+    expect(await draftRows(f)).toHaveLength(1);
+    expect(draftFileMessages()).toHaveLength(1);
+    const cancelled = await clickIn(f, replyOf(saved), 'Cancel');
+    expect(contentOf(cancelled)).toContain('deleted');
+    expect(await draftRows(f)).toEqual([]);
+    expect(draftFileMessages()).toEqual([]);
+  });
+
+  it('keeps the uploaded files when their page is submitted again without uploads', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1), fileField(1, { required: true })]);
+    const opener = await openerId(f, form);
+    const first = await openModal(f, opener);
+    await setForm(f, form.id, { active: false });
+    const refused = await submitPage(f, first, { fields: { q0000001: 'Hello' }, uploads: { f0000001: [upload(f, 'cover.png', 'png bytes')] } });
+    expect(contentOf(refused)).toBe('This form is currently closed.');
+    await setForm(f, form.id, { active: true });
+    const again = await openModal(f, opener);
+    expect(modalInputs(again).f0000001).toMatchObject({ required: false, min_values: 0, description: 'Already uploaded: cover.png. Upload again to replace.' });
+    expect(contentOf(await submitPage(f, again))).toContain('Submitted to');
+    expect(messagesIn(f, SUBMIT)[0]!.attachments.map((a: Json) => a.filename)).toEqual(['1-cover.png']);
+  });
+
+  it('replaces the uploaded files when their page is submitted again with uploads', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [fileField(1), ...seven()]);
+    const opener = await openerId(f, form);
+    await submitPage(f, await openModal(f, opener), { uploads: { f0000001: [upload(f, 'old.png', 'old')] } });
+    await formsDb(t).run(async (tx) => {
+      await tx.update(drafts).set({ page: 0 });
+    });
+    await submitPage(f, await openModal(f, opener), { uploads: { f0000001: [upload(f, 'new.png', 'new')] } });
+    const [draft] = await draftRows(f);
+    expect(draft!.files.map((file) => file.name)).toEqual(['new.png']);
+    expect(draftFileMessages()).toHaveLength(1);
+  });
+
+  it('cuts the list of uploaded files to fit the description', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [fileField(1), ...seven()]);
+    const opener = await openerId(f, form);
+    const names = ['a'.repeat(40), 'b'.repeat(40), 'c'.repeat(40)].map((name) => `${name}.png`);
+    await submitPage(f, await openModal(f, opener), { uploads: { f0000001: names.map((name) => upload(f, name, 'x')) } });
+    await formsDb(t).run(async (tx) => {
+      await tx.update(drafts).set({ page: 0 });
+    });
+    const { description } = modalInputs(await openModal(f, opener)).f0000001!;
+    expect(description.length).toBeLessThanOrEqual(100);
+    expect(description).toMatch(/^Already uploaded: a+\.png, b+….*\. Upload again to replace\.$/);
+  });
+
+  it('keeps the typed answers when storing the files fails', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1), fileField(1)]);
+    f.discord.addChannel(DRAFTS, { guildId: GUILD, type: ChannelType.PublicThread, parentId: FORUM, name: 'drafts' });
+    await formsDb(t).run(async (tx) => {
+      await tx.update(forums).set({ draftsThreadId: DRAFTS });
+    });
+    f.discord.override('POST', `/channels/${DRAFTS}/messages`, () => ({ status: 500, json: { code: 0, message: 'Synthetic failure' } }));
+    const refused = await submitPage(f, await openModal(f, await openerId(f, form)), { fields: { q0000001: 'My story' }, uploads: { f0000001: [upload(f, 'cover.png', 'png bytes')] } });
+    expect(contentOf(refused)).toContain("I couldn't store your files.");
+    const retried = shownModal(await clickIn(f, replyOf(refused), 'Try again'));
+    expect(modalInputs(retried).q0000001!.value).toBe('My story');
+  });
+
+  it('keeps the drafts post when locking it fails', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [fileField(1), ...seven()]);
+    const threads = `/channels/${FORUM}/threads`;
+    f.discord.override('POST', threads, async (request) => {
+      f.discord.clearOverride('POST', threads);
+      const created = await f.discord.answer(request);
+      f.discord.override('PATCH', `/channels/${(created.json as Json).id}`, () => ({ status: 403, json: { code: 50013, message: 'Missing Permissions' } }));
+      return created;
+    });
+    const saved = await submitPage(f, await openModal(f, await openerId(f, form)), { uploads: { f0000001: [upload(f, 'cover.png', 'png bytes')] } });
+    expect(contentOf(saved)).toBe('Page 1 of 2 saved.');
+    const [forum] = await t.database.admin.select().from(forums);
+    expect(forum!.draftsThreadId).toBe(draftFileMessages()[0]!.channel_id);
+    expect(f.fb.lines.some((line) => line.msg === 'Locking the drafts post failed')).toBe(true);
+  });
+
+  it('stores uploads in a locked drafts post of the forum', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [fileField(1), ...seven()]);
+    await submitPage(f, await openModal(f, await openerId(f, form)), { uploads: { f0000001: [upload(f, 'a.png', 'a'), upload(f, 'b.png', 'b')] } });
+    const [message] = draftFileMessages();
+    expect(message!.attachments).toHaveLength(2);
+    const thread = f.discord.channels.get(message!.channel_id) as Json;
+    expect(thread).toMatchObject({ name: 'drafts', thread_metadata: { locked: true } });
+    const [draft] = await draftRows(f);
+    expect(draft!.files.map((file) => file.name)).toEqual(['a.png', 'b.png']);
+    expect(draft!.answers.f0000001).toEqual({ files: draft!.files.map((file) => file.key) });
+  });
+});
+
+describe('cleaning up draft files', () => {
+  async function draftWithFile(fields = [fileField(1), ...seven()]) {
+    const form = await formWith(f, fields);
+    await submitPage(f, await openModal(f, await openerId(f, form)), { uploads: { f0000001: [upload(f, 'cover.png', 'png bytes')] } });
+    expect(draftFileMessages()).toHaveLength(1);
+    return form;
+  }
+
+  it('the sweep deletes expired drafts and their files and keeps fresh ones', async () => {
+    f = await startFilling(t);
+    const form = await draftWithFile();
+    await inHandler(f.fb, (ctx) => sweepDrafts(ctx));
+    expect(await draftRows(f)).toHaveLength(1);
+    await formsDb(t).run(async (tx) => {
+      await tx.update(drafts).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(drafts.formId, form.id));
+    });
+    await inHandler(f.fb, (ctx) => sweepDrafts(ctx));
+    expect(await draftRows(f)).toEqual([]);
+    expect(draftFileMessages()).toEqual([]);
+  });
+
+  it('deleting a form deletes the files of its drafts', async () => {
+    f = await startFilling(t);
+    const form = await draftWithFile();
+    await inHandler(f.fb, (ctx) => forgetForm(ctx, form));
+    expect(draftFileMessages()).toEqual([]);
+  });
+
+  it('removing a file field deletes its draft files', async () => {
+    f = await startFilling(t);
+    const form = await draftWithFile();
+    const pick = await clickPreview(f.fb, f.discord, form.threadId, 'Edit field');
+    const picked = await choose(f.fb, form.threadId, selectOf(replyOf(pick)).custom_id, ['f0000001']);
+    await click(f.fb, form.threadId, buttonId(replyOf(picked), 'Remove field'));
+    expect(draftFileMessages()).toEqual([]);
+    const [draft] = await draftRows(f);
+    expect(draft!.files).toEqual([]);
+  });
+
+  it('has a lifetime of a day', () => {
+    expect(DRAFT_TTL_MS).toBe(86_400_000);
+  });
+});
+
+describe('Try it', () => {
+  it('replies with a preview and creates no submission row and no channel message', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1), fileField(1)], { active: false });
+    const modal = shownModal(await clickPreview(f.fb, f.discord, form.threadId, 'Try it'));
+    expect(modal.title).toBe('Story contest');
+    const done = await submitModal(f.fb, form.threadId, modal, { fields: { q0000001: 'Trial answer' }, uploads: { f0000001: [upload(f, 'cover.png', 'png bytes')] } });
+    const reply = replyOf(done);
+    expect(reply.flags & MessageFlags.IsComponentsV2).toBeTruthy();
+    expect(reply.flags & MessageFlags.Ephemeral).toBeTruthy();
+    expect(textOf(reply)).toContain('Trial answer');
+    expect(textOf(reply)).toContain('cover.png');
+    expect(await submissionRows(f)).toEqual([]);
+    expect(messagesIn(f, SUBMIT)).toEqual([]);
+    expect(await draftRows(f)).toEqual([]);
+    expect(draftFileMessages()).toEqual([]);
+  });
+});

@@ -1,11 +1,11 @@
-import { UserError } from '@bronto/core';
+import { linkExpiry, UserError } from '@bronto/core';
 import { ChannelType, DiscordAPIError, RESTJSONErrorCodes, type Message, type MessageEditOptions } from 'discord.js';
 import { eq } from 'drizzle-orm';
 import { normalizeEmbed, validateTemplate, type TemplateMessage } from './content.js';
 import type { TemplatesContext } from './context.js';
 import { templateImages, templates, type ImageSlot, type Template } from './db/schema.js';
 import { ensureForum } from './forum.js';
-import { linkExpiry, messageAttachments } from './images.js';
+import { messageAttachments } from './images.js';
 import { previewBody, previewButtonRow, previewMessage, uploadFileName, withUploads, type PendingUpload } from './preview.js';
 
 export type { PendingUpload } from './preview.js';
