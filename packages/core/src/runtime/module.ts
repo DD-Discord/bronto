@@ -27,6 +27,8 @@ export interface ModuleDefinition<TConfig = any, TApi = unknown> {
   /** Module name; also its Postgres schema and the prefix of its events, logs and queue keys. */
   name: string;
   dependsOn?: ModuleDefinition<any, any>[];
+  /** Modules used when loaded; the module still loads without them, and they load first when present. */
+  optionalDependsOn?: ModuleDefinition<any, any>[];
   intents?: GatewayIntentBits[];
   partials?: Partials[];
   /** Validates the module's section of config.yaml. */

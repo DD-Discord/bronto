@@ -134,4 +134,32 @@ describe('loadModules', () => {
     );
     expect(problems).toEqual(['modules: dependency cycle loop_a -> loop_b -> loop_a']);
   });
+
+  it('loads a module whose optional dependency is absent', async () => {
+    const optional = defineModule({ name: 'optional_user', optionalDependsOn: [base] });
+    const loaded = await loadModules({ '@x/optional': {} }, importerOf({ '@x/optional': asPackage(optional) }));
+    expect(loaded.map((module) => module.packageName)).toEqual(['@x/optional']);
+  });
+
+  it('sorts an optional dependency first when it is loaded', async () => {
+    const optional = defineModule({ name: 'optional_user', optionalDependsOn: [base] });
+    const loaded = await loadModules(
+      { '@x/optional': {}, '@x/base': {} },
+      importerOf({ '@x/optional': asPackage(optional), '@x/base': asPackage(base) }),
+    );
+    expect(loaded.map((module) => module.packageName)).toEqual(['@x/base', '@x/optional']);
+  });
+
+  it('reports a cycle through an optional dependency', async () => {
+    const first = defineModule({ name: 'opt_cycle_a' });
+    const second = defineModule({ name: 'opt_cycle_b', optionalDependsOn: [first] });
+    first.dependsOn = [second];
+    const problems = await problemsOf(
+      loadModules(
+        { '@x/a': {}, '@x/b': {} },
+        importerOf({ '@x/a': asPackage(first), '@x/b': asPackage(second) }),
+      ),
+    );
+    expect(problems).toEqual(['modules: dependency cycle opt_cycle_a -> opt_cycle_b -> opt_cycle_a']);
+  });
 });
