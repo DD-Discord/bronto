@@ -301,13 +301,25 @@ export class Dispatcher {
       });
       const result = await Promise.race([run, timeout]).finally(() => clearTimeout(timer));
       let outcome: AskOutcome;
+      let validation: { valid: boolean; error?: unknown } = { valid: true };
+      if (result !== 'timeout' && result.ok && ask.validate !== undefined) {
+        // A throwing validator counts as an invalid answer instead of failing the whole ask.
+        try {
+          validation = { valid: ask.validate(value) };
+        } catch (error) {
+          validation = { valid: false, error };
+        }
+      }
       if (result === 'timeout') {
         runtime.context.log.warn({ guildId, handler: `ask:${askLabel(ask)}` }, 'Ask listener timed out');
         outcome = { module: runtime.name, kind: 'timeout' };
       } else if (!result.ok) {
         outcome = { module: runtime.name, kind: 'failed' };
-      } else if (ask.validate !== undefined && !ask.validate(value)) {
-        runtime.context.log.warn({ guildId, handler: `ask:${askLabel(ask)}` }, 'Ask listener gave an invalid answer');
+      } else if (!validation.valid) {
+        runtime.context.log.warn(
+          { guildId, handler: `ask:${askLabel(ask)}`, err: validation.error },
+          'Ask listener gave an invalid answer',
+        );
         outcome = { module: runtime.name, kind: 'invalid' };
       } else {
         outcome = { module: runtime.name, kind: 'answer', value };

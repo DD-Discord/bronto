@@ -929,6 +929,31 @@ describe('collectors', () => {
     expect(JSON.stringify(log.lines)).toContain('Ask listener gave an invalid answer');
   });
 
+  it('skips a listener whose answer makes the validator throw', async () => {
+    const strict = defineCollector<null, string>('strict', {
+      validate: (value): value is string => {
+        if (value === 'explode') throw new Error('validator boom');
+        return typeof value === 'string';
+      },
+    });
+    const strictOwner = defineModule({ name: 'col_strict_owner', asks: { strict } });
+    const bomb = defineModule({ name: 'col_bomb', dependsOn: [strictOwner], listeners: [answer(strict, () => 'explode')] });
+    const fine = defineModule({ name: 'col_fine', dependsOn: [strictOwner, bomb], listeners: [answer(strict, () => 'fine')] });
+    const log = captureLog();
+    const rts = createModuleRuntimes(
+      [strictOwner, bomb, fine].map((definition) => ({ packageName: `@test/${definition.name}`, definition, config: {} })),
+      { client: {} as Client, database: t.database, log: log.log },
+    );
+    const d = new Dispatcher({ runtimes: rts, database: t.database, enablement, queue: new KeyedQueue(() => undefined) });
+    let got: Collected<string>[] | undefined;
+    await d.runHandler(rts[0]!, 'g1', null, 'test', async (ctx) => {
+      got = await ctx.ask(strict, null);
+    });
+    expect(got).toEqual([{ module: 'col_fine', value: 'fine' }]);
+    expect(JSON.stringify(log.lines)).toContain('Ask listener gave an invalid answer');
+    expect(JSON.stringify(log.lines)).toContain('validator boom');
+  });
+
   it('skips disabled modules', async () => {
     await enablement.set('g1', 'col_first', false);
     try {

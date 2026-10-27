@@ -98,6 +98,9 @@ describe('ctx.modules.optional', () => {
   it('rejects a loaded dependency without an API', async () => {
     const run = caller(load([bare, consumer], t.database, enablement));
     await expect(run('g1', (api) => api.bare())).rejects.toThrow('Module "bare" has no API.');
+    await enablement.set('g1', 'bare', false);
+    await expect(run('g1', (api) => api.bare())).rejects.toThrow('Module "bare" has no API.');
+    await enablement.set('g1', 'bare', true);
   });
 
   it('keeps get strict for optional-only dependencies', async () => {

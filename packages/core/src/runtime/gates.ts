@@ -26,6 +26,7 @@ const gateStrategy: AskStrategy<GateResult, null> = {
   next(state, outcome) {
     if (outcome.kind === 'timeout') return denied(`${outcome.module} did not answer in time`);
     if (outcome.kind === 'failed') return denied(`${outcome.module} failed to answer`);
+    // Gates define no validate, so this is unreachable; it keeps the outcome handling exhaustive.
     if (outcome.kind === 'invalid') return denied(`${outcome.module} gave an invalid answer`);
     const verdict = outcome.value;
     if (verdict === undefined) return { state };

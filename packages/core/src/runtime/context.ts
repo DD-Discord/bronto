@@ -82,8 +82,8 @@ function createRuntime(
         if (scope === null) throw outsideHandlerError();
         const target = byName.get(definition.name);
         if (target === undefined) return null;
-        if (services.enablement?.isEnabled(scope.contextFor(target).guildId, target.name) === false) return null;
         if (target.api === undefined) throw new Error(`Module "${definition.name}" has no API.`);
+        if (services.enablement?.isEnabled(scope.contextFor(target).guildId, target.name) === false) return null;
         return target.api as ApiOf<M>;
       },
     },

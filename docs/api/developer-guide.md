@@ -852,8 +852,7 @@ listeners: [
 ### Collectors
 
 A collector is an ask that gathers something from every listener, for example lines other modules add to a board's
-footer. It **fails open**: a listener that throws, times out or gives an invalid answer is skipped (logged as a
-warning) and the others still count.
+footer. It **fails open**: a listener that throws, times out or gives an invalid answer is skipped (logged) and the others still count.
 
 ```ts
 import { answer, defineCollector } from '@bronto/core';
@@ -1203,7 +1202,7 @@ Run one module's tests with `pnpm vitest run modules/karma`. `pnpm test` runs ev
   change since (does the record still exist, is the role still self-assignable), and treat modal field values as
   untrusted input.
 - **Module boundaries:** a module emits only its own events and uses other modules only through their `api` (declared in
-  `dependsOn`). A module with a `db` runs as a role that reaches only its own schema, so other modules' and core's
+  `dependsOn`, or in `optionalDependsOn` and reached through `ctx.modules.optional`). A module with a `db` runs as a role that reaches only its own schema, so other modules' and core's
   tables are off limits; a module without a `db` runs as the app role, which can reach core's per-server tables, but it
   shouldn't touch them.
 - **Asks:** call `ctx.check` and `ctx.ask` outside `ctx.db.run`. Gates fail closed, collectors skip failing
