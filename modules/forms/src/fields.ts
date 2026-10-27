@@ -279,7 +279,7 @@ const MAX_SUMMARY_OPTIONS = 1200;
 
 /** The detail view's text: the field and all its settings. */
 export function fieldSummary(field: Field, index: number): string {
-  const lines = [`**${index + 1}. ${field.label}** · ${FIELD_TYPE_NAMES[field.type].toLowerCase()} · ${field.required ? 'required' : 'optional'}`];
+  const lines = [`**${index + 1}. ${field.label}**`, `${FIELD_TYPE_NAMES[field.type]} · ${field.required ? 'required' : 'optional'}`];
   if (field.description !== undefined) lines.push(`Description: ${field.description}`);
   const none = (value: number | undefined, other: string) => (value === undefined ? other : String(value));
   switch (field.type) {
