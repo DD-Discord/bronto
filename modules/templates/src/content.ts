@@ -6,9 +6,9 @@ export interface TemplateMessage {
   embed: APIEmbed | null;
 }
 
-const LIMITS = { content: 2000, title: 256, description: 4096, fieldName: 256, fieldValue: 1024, footer: 2048, author: 256 };
+export const LIMITS = { content: 2000, title: 256, description: 4096, fieldName: 256, fieldValue: 1024, footer: 2048, author: 256 };
 const MAX_FIELDS = 25;
-const MAX_EMBED = 6000;
+export const MAX_EMBED = 6000;
 const COLOR_MESSAGE = 'Colors are hex values like #5865F2.';
 const LINK_MESSAGE = 'Links must start with http:// or https://.';
 

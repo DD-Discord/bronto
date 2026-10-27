@@ -60,3 +60,4 @@ export type { TemplateMessage } from './content.js';
 export type { ImageSlot, Template, TemplateImage } from './db/schema.js';
 export { escapeLinkText } from './commands.js';
 export { templatesEvents, templatesGates } from './events.js';
+export { fillPlaceholders, postPlaceholders } from './placeholders.js';

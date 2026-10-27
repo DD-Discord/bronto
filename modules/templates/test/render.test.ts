@@ -5,6 +5,7 @@ import { createTestDatabase, type TestDatabase } from '../../../packages/core/te
 import type { TemplatesContext } from '../src/context.js';
 import { templateImages, templates, type ImageSlot } from '../src/db/schema.js';
 import { linkExpiry } from '@bronto/core';
+import { embedLength } from '../src/content.js';
 import { render, setSlot } from '../src/render.js';
 import { FORUM, GUILD, prepareTemplatesBot, templatesDb, type TemplatesBot } from './harness.js';
 
@@ -195,5 +196,77 @@ describe('render', () => {
   it('adds no time when the template is off or has no embed', async () => {
     const plain = await seed({ embed: { title: 'Hi' } });
     expect((await inHandler((ctx) => render(ctx, plain.id)))!.embed!.timestamp).toBeUndefined();
+  });
+
+  describe('placeholders', () => {
+    const values = { 'user.name': 'ann', 'server.name': 'Hub' };
+
+    it('fills known keys', async () => {
+      const { id } = await seed({});
+      await t.database.admin.update(templates).set({ content: 'Hi {user.name}' });
+      expect((await inHandler((ctx) => render(ctx, id, values)))!.content).toBe('Hi ann');
+    });
+
+    it('fills once and leaves unknown keys', async () => {
+      const { id } = await seed({});
+      await t.database.admin.update(templates).set({ content: '{a} {b} a { b' });
+      const message = await inHandler((ctx) => render(ctx, id, { a: '{user.name}', 'user.name': 'ann' }));
+      expect(message!.content).toBe('{user.name} {b} a { b');
+    });
+
+    it('fills every embed text field', async () => {
+      const { id } = await seed({});
+      const text = '{server.name}';
+      await t.database.admin.update(templates).set({
+        embed: {
+          title: text,
+          description: text,
+          fields: [{ name: text, value: text }],
+          footer: { text },
+          author: { name: text },
+        },
+      });
+      const embed = (await inHandler((ctx) => render(ctx, id, values)))!.embed!;
+      expect(embed).toEqual({
+        title: 'Hub',
+        description: 'Hub',
+        fields: [{ name: 'Hub', value: 'Hub' }],
+        footer: { text: 'Hub' },
+        author: { name: 'Hub' },
+      });
+    });
+
+    it("cuts filled text to Discord's limits", async () => {
+      const { id } = await seed({});
+      const long = { 'user.name': 'x'.repeat(5000) };
+      await t.database.admin.update(templates).set({
+        content: '{user.name}',
+        embed: { title: '{user.name}', fields: [{ name: 'n', value: '{user.name}' }] },
+      });
+      const message = (await inHandler((ctx) => render(ctx, id, long)))!;
+      expect(message.content).toBe(`${'x'.repeat(1999)}…`);
+      expect(message.embed!.title).toBe(`${'x'.repeat(255)}…`);
+      expect(message.embed!.fields![0]!.value).toBe(`${'x'.repeat(1023)}…`);
+    });
+
+    it('cuts the description when the embed exceeds 6000 characters', async () => {
+      const { id } = await seed({});
+      await t.database.admin.update(templates).set({
+        embed: {
+          description: '{user.name}',
+          fields: Array.from({ length: 4 }, () => ({ name: 'n', value: '{user.name}' })),
+        },
+      });
+      const embed = (await inHandler((ctx) => render(ctx, id, { 'user.name': 'x'.repeat(5000) })))!.embed!;
+      expect(embedLength(embed)).toBeLessThanOrEqual(6000);
+      expect(embed.description!.endsWith('…')).toBe(true);
+    });
+
+    it('is unchanged without values', async () => {
+      const { id } = await seed({});
+      await t.database.admin.update(templates).set({ content: 'Hi {user.name}', embed: { title: '{server.name}' } });
+      const message = await inHandler((ctx) => render(ctx, id));
+      expect(message).toEqual({ content: 'Hi {user.name}', embed: { title: '{server.name}' } });
+    });
   });
 });
