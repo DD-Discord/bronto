@@ -19,6 +19,7 @@ import {
   openModal,
   replyOf,
   ROLE,
+  setForm,
   startFilling,
   submissionRows,
   SUBMIT,
@@ -202,6 +203,80 @@ describe('opening a form', () => {
     expect(contentOf(cancelled)).toContain('deleted');
     expect(await draftRows(f)).toEqual([]);
     expect(draftFileMessages()).toEqual([]);
+  });
+
+  it('keeps the uploaded files when their page is submitted again without uploads', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1), fileField(1, { required: true })]);
+    const opener = await openerId(f, form);
+    const first = await openModal(f, opener);
+    await setForm(f, form.id, { active: false });
+    const refused = await submitPage(f, first, { fields: { q0000001: 'Hello' }, uploads: { f0000001: [upload(f, 'cover.png', 'png bytes')] } });
+    expect(contentOf(refused)).toBe('This form is currently closed.');
+    await setForm(f, form.id, { active: true });
+    const again = await openModal(f, opener);
+    expect(modalInputs(again).f0000001).toMatchObject({ required: false, min_values: 0, description: 'Already uploaded: cover.png. Upload again to replace.' });
+    expect(contentOf(await submitPage(f, again))).toContain('Submitted to');
+    expect(messagesIn(f, SUBMIT)[0]!.attachments.map((a: Json) => a.filename)).toEqual(['1-cover.png']);
+  });
+
+  it('replaces the uploaded files when their page is submitted again with uploads', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [fileField(1), ...seven()]);
+    const opener = await openerId(f, form);
+    await submitPage(f, await openModal(f, opener), { uploads: { f0000001: [upload(f, 'old.png', 'old')] } });
+    await formsDb(t).run(async (tx) => {
+      await tx.update(drafts).set({ page: 0 });
+    });
+    await submitPage(f, await openModal(f, opener), { uploads: { f0000001: [upload(f, 'new.png', 'new')] } });
+    const [draft] = await draftRows(f);
+    expect(draft!.files.map((file) => file.name)).toEqual(['new.png']);
+    expect(draftFileMessages()).toHaveLength(1);
+  });
+
+  it('cuts the list of uploaded files to fit the description', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [fileField(1), ...seven()]);
+    const opener = await openerId(f, form);
+    const names = ['a'.repeat(40), 'b'.repeat(40), 'c'.repeat(40)].map((name) => `${name}.png`);
+    await submitPage(f, await openModal(f, opener), { uploads: { f0000001: names.map((name) => upload(f, name, 'x')) } });
+    await formsDb(t).run(async (tx) => {
+      await tx.update(drafts).set({ page: 0 });
+    });
+    const { description } = modalInputs(await openModal(f, opener)).f0000001!;
+    expect(description.length).toBeLessThanOrEqual(100);
+    expect(description).toMatch(/^Already uploaded: a+\.png, b+….*\. Upload again to replace\.$/);
+  });
+
+  it('keeps the typed answers when storing the files fails', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1), fileField(1)]);
+    f.discord.addChannel(DRAFTS, { guildId: GUILD, type: ChannelType.PublicThread, parentId: FORUM, name: 'drafts' });
+    await formsDb(t).run(async (tx) => {
+      await tx.update(forums).set({ draftsThreadId: DRAFTS });
+    });
+    f.discord.override('POST', `/channels/${DRAFTS}/messages`, () => ({ status: 500, json: { code: 0, message: 'Synthetic failure' } }));
+    const refused = await submitPage(f, await openModal(f, await openerId(f, form)), { fields: { q0000001: 'My story' }, uploads: { f0000001: [upload(f, 'cover.png', 'png bytes')] } });
+    expect(contentOf(refused)).toContain("I couldn't store your files.");
+    const retried = shownModal(await clickIn(f, replyOf(refused), 'Try again'));
+    expect(modalInputs(retried).q0000001!.value).toBe('My story');
+  });
+
+  it('keeps the drafts post when locking it fails', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [fileField(1), ...seven()]);
+    const threads = `/channels/${FORUM}/threads`;
+    f.discord.override('POST', threads, async (request) => {
+      f.discord.clearOverride('POST', threads);
+      const created = await f.discord.answer(request);
+      f.discord.override('PATCH', `/channels/${(created.json as Json).id}`, () => ({ status: 403, json: { code: 50013, message: 'Missing Permissions' } }));
+      return created;
+    });
+    const saved = await submitPage(f, await openModal(f, await openerId(f, form)), { uploads: { f0000001: [upload(f, 'cover.png', 'png bytes')] } });
+    expect(contentOf(saved)).toBe('Page 1 of 2 saved.');
+    const [forum] = await t.database.admin.select().from(forums);
+    expect(forum!.draftsThreadId).toBe(draftFileMessages()[0]!.channel_id);
+    expect(f.fb.lines.some((line) => line.msg === 'Locking the drafts post failed')).toBe(true);
   });
 
   it('stores uploads in a locked drafts post of the forum', async () => {

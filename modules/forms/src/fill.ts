@@ -17,16 +17,18 @@ import {
 } from 'discord.js';
 import { and, eq } from 'drizzle-orm';
 import type { FormsContext } from './context.js';
-import { drafts, forms, openers, type Answer, type Draft, type Form } from './db/schema.js';
+import { drafts, forms, openers, type Answer, type Draft, type DraftFile, type Form } from './db/schema.js';
 import { deleteDraft, DRAFT_TTL_MS, isExpired, loadDraft, releaseFiles, storeFiles, type NewFile } from './drafts.js';
 import { pages, PAGE_SIZE, type Field } from './model.js';
 import { formById, formForThread, requireEditor } from './permissions.js';
 import { renderSubmission } from './render.js';
-import { hasSubmitted, queued, refusal, submit, tooLarge } from './submit.js';
+import { hasSubmitted, postingRefusal, queued, refusal, submit, tooLarge } from './submit.js';
 
 // Discord's limit for modal titles.
 const MAX_TITLE = 45;
 const MAX_TEXT = 4000;
+// Discord's limit for label descriptions.
+const MAX_DESCRIPTION = 100;
 const EXPIRED = 'Your answers to the earlier pages are no longer saved. Open the form again to start over.';
 const CHANGED = 'This form changed while you were filling it in. Press Try again to see the current page.';
 
@@ -40,6 +42,15 @@ function modalTitle(name: string, page: number, count: number): string {
 }
 
 const choicesOf = (answer: Answer | undefined) => (answer !== undefined && 'choices' in answer ? answer.choices : []);
+
+/** `Already uploaded: a.png, b.png. Upload again to replace.`, the names cut to fit a label description. */
+function uploadedNote(names: string[]): string {
+  const head = 'Already uploaded: ';
+  const tail = '. Upload again to replace.';
+  const room = MAX_DESCRIPTION - head.length - tail.length;
+  const list = names.join(', ');
+  return head + (list.length <= room ? list : `${list.slice(0, room - 1)}…`) + tail;
+}
 
 function fieldLabel(field: Field, draft: Draft | null): LabelBuilder {
   const label = new LabelBuilder().setLabel(field.label);
@@ -90,10 +101,14 @@ function fieldLabel(field: Field, draft: Draft | null): LabelBuilder {
           .addOptions(field.options.map((option) => ({ label: option, value: option, default: chosen.includes(option) }))),
       );
     case 'file': {
+      // Files uploaded before stay unless new ones are uploaded, so the input is optional then.
+      const uploaded = (draft?.files ?? []).filter((file) => file.fieldId === field.id).map((file) => file.name);
+      const required = field.required && uploaded.length === 0;
+      if (uploaded.length > 0) label.setDescription(uploadedNote(uploaded));
       const upload = new FileUploadBuilder(field.fileTypes.length > 0 ? { file_types: field.fileTypes as never } : {})
         .setCustomId(field.id)
-        .setRequired(field.required)
-        .setMinValues(field.required ? 1 : 0)
+        .setRequired(required)
+        .setMinValues(required ? 1 : 0)
         .setMaxValues(field.maxFiles);
       return label.setFileUploadComponent(upload);
     }
@@ -182,6 +197,12 @@ function savedReply(ctx: FormsContext, formId: string, dry: boolean, next: numbe
 const retryReply = (ctx: FormsContext, formId: string, dry: boolean, message: string): ReplyMessage => ({
   content: message,
   components: [buttonRow(continueTo(ctx, formId, dry, 'Try again'), cancel(ctx, formId, dry))],
+});
+
+/** A refusal that leaves the draft as it is; Cancel deletes it. */
+const cancelReply = (ctx: FormsContext, formId: string, message: string): ReplyMessage => ({
+  content: message,
+  components: [buttonRow(cancel(ctx, formId, false))],
 });
 
 interface PageInput {
@@ -306,7 +327,14 @@ async function savePage(ctx: FormsContext, input: PageSubmit): Promise<Reply> {
   const form = await formById(ctx, formId);
   const all = pages(form.fields);
   if (all.length === 0) return 'This form has no fields yet.';
-  if (!dry && form.oncePerMember && (await hasSubmitted(ctx, formId, userId))) return 'You already submitted this form.';
+  if (!dry) {
+    // Checked before any file work: the files of a submission being posted stay as they are.
+    const stuck = await postingRefusal(ctx, form, userId);
+    if (stuck !== null) return stuck;
+    if (form.oncePerMember && (await hasSubmitted(ctx, formId, userId))) return cancelReply(ctx, formId, 'You already submitted this form.');
+    // A repeated submit of a last page that was already submitted.
+    if (page === all.length - 1 && (await hasSubmitted(ctx, formId, userId, input.openedAt))) return 'You already submitted this form.';
+  }
   const draft = await liveDraft(ctx, formId, userId, dry);
   const current = currentPage(form, draft);
   if (page < current) return savedReply(ctx, formId, dry, current, all.length);
@@ -348,8 +376,16 @@ async function savePage(ctx: FormsContext, input: PageSubmit): Promise<Reply> {
     }
   }
 
-  const stored = await storeFiles(ctx, fresh, limit);
+  let stored: DraftFile[];
+  try {
+    stored = await storeFiles(ctx, fresh, limit);
+  } catch (error) {
+    ctx.log.warn({ err: error, formId }, 'Storing uploaded files failed');
+    return refuse(`I couldn't store your files. ${keep}`);
+  }
   const pageFiles = new Set(fields.filter((field) => field.type === 'file').map((field) => field.id));
+  // A file field submitted empty keeps the files uploaded to it before; new uploads replace them.
+  const uploaded = new Set([...pageFiles].filter((id) => (uploads.get(id)?.length ?? 0) > 0));
   const save = ctx.db.run(async (tx) => {
     const [row] = await tx
       .select()
@@ -358,10 +394,10 @@ async function savePage(ctx: FormsContext, input: PageSubmit): Promise<Reply> {
       .for('update');
     // The sweep took the draft meanwhile: the earlier pages are gone.
     if (page > 0 && row === undefined) return null;
-    const replaced = (row?.files ?? []).filter((file) => pageFiles.has(file.fieldId));
-    const files = [...(row?.files ?? []).filter((file) => !pageFiles.has(file.fieldId)), ...stored];
+    const replaced = (row?.files ?? []).filter((file) => uploaded.has(file.fieldId));
+    const files = [...(row?.files ?? []).filter((file) => !uploaded.has(file.fieldId)), ...stored];
     const merged: Record<string, Answer> = { ...row?.answers, ...answers };
-    for (const id of pageFiles) merged[id] = { files: stored.filter((file) => file.fieldId === id).map((file) => file.key) };
+    for (const id of pageFiles) merged[id] = { files: files.filter((file) => file.fieldId === id).map((file) => file.key) };
     const values = { page: page + 1, answers: merged, files, expiresAt: new Date(Date.now() + DRAFT_TTL_MS) };
     const [draftRow] = await tx
       .insert(drafts)
@@ -396,7 +432,7 @@ async function savePage(ctx: FormsContext, input: PageSubmit): Promise<Reply> {
     });
     return retryReply(ctx, formId, false, `**${form.fields[gap]!.label}** needs an answer; the form changed after you filled in that page.`);
   }
-  return submit(ctx, formId, userId, limit, input.openedAt);
+  return submit(ctx, formId, userId, limit, input.openedAt, (message, retry) => (retry ? retryReply(ctx, formId, false, message) : cancelReply(ctx, formId, message)));
 }
 
 /** A page of the form submitted: `[formId, page, dry, shown]`, `shown` being when the modal was shown (base36 ms). */

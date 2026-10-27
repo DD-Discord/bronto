@@ -1,5 +1,5 @@
 import { downloadFile } from '@bronto/core';
-import { ChannelType, RESTJSONErrorCodes, type ThreadChannel } from 'discord.js';
+import { ChannelType, DiscordAPIError, RESTJSONErrorCodes, type ThreadChannel } from 'discord.js';
 import { and, eq, lt, notExists, or, sql } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 import type { FormsContext } from './context.js';
@@ -14,16 +14,6 @@ export const DRAFT_SWEEP_MS = 3_600_000;
 const DRAFTS_THREAD = 'drafts';
 /** Discord's limit on attachments per message. */
 const FILES_PER_MESSAGE = 10;
-
-/**
- * The code of a failed Discord API request. Read structurally rather than with `instanceof DiscordAPIError`, which fails
- * when the error comes from another installed copy of discord.js.
- */
-export function apiCode(error: unknown): number | undefined {
-  if (!(error instanceof Error) || !error.name.startsWith('DiscordAPIError')) return undefined;
-  const { code } = error as Error & { code?: unknown };
-  return typeof code === 'number' ? code : undefined;
-}
 
 export const isExpired = (draft: Pick<Draft, 'expiresAt'>, now = Date.now()) => draft.expiresAt.getTime() <= now;
 
@@ -54,10 +44,15 @@ async function ensureDraftsThread(ctx: FormsContext): Promise<void> {
     name: DRAFTS_THREAD,
     message: { content: 'Files members upload while filling in forms. Unfinished answers are deleted after a day.', allowedMentions: { parse: [] } },
   });
-  await thread.setLocked(true);
   await ctx.db.run(async (tx) => {
     await tx.update(forums).set({ draftsThreadId: thread.id }).where(eq(forums.forumChannelId, row.forumChannelId));
   });
+  // Locking keeps members from posting there; the files are stored either way.
+  try {
+    await thread.setLocked(true);
+  } catch (error) {
+    ctx.log.warn({ err: error, threadId: thread.id }, 'Locking the drafts post failed');
+  }
 }
 
 /** The drafts post, created as a locked post of the forms forum on first use. */
@@ -78,7 +73,7 @@ async function existingThread(ctx: FormsContext): Promise<ThreadChannel | null> 
     const thread = await ctx.client.channels.fetch(id);
     return thread?.isThread() === true ? thread : null;
   } catch (error) {
-    if (apiCode(error) === RESTJSONErrorCodes.UnknownChannel) return null;
+    if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return null;
     throw error;
   }
 }
@@ -114,7 +109,7 @@ async function sendToThread(thread: ThreadChannel, files: NewFile[]) {
   try {
     return await thread.send(options);
   } catch (error) {
-    if (!(apiCode(error) === RESTJSONErrorCodes.InvalidActionOnArchivedThread)) throw error;
+    if (!(error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.InvalidActionOnArchivedThread)) throw error;
     await thread.setArchived(false);
     return thread.send(options);
   }
@@ -170,7 +165,7 @@ export async function releaseFiles(ctx: FormsContext, removed: DraftFile[], kept
       if (keep.length === 0) await thread.messages.delete(messageId);
       else await thread.messages.edit(messageId, { attachments: keep.map((file) => ({ id: file.attachmentId }) as never) });
     } catch (error) {
-      if (apiCode(error) === RESTJSONErrorCodes.UnknownMessage) continue;
+      if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownMessage) continue;
       ctx.log.warn({ err: error, messageId }, 'Removing draft files failed');
     }
   }
@@ -194,7 +189,7 @@ export async function fileLinks(ctx: FormsContext, files: DraftFile[]): Promise<
       const message = await thread.messages.fetch({ message: messageId, force: true });
       for (const attachment of message.attachments.values()) links.set(attachment.id, attachment.url);
     } catch (error) {
-      if (!(apiCode(error) === RESTJSONErrorCodes.UnknownMessage)) throw error;
+      if (!(error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownMessage)) throw error;
     }
   }
   return links;

@@ -1,9 +1,10 @@
 import { defineButton, UserError, type Reply, type ReplyMessage } from '@bronto/core';
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, type MessageMentionOptions } from 'discord.js';
-import { and, eq, gt } from 'drizzle-orm';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, DiscordAPIError, MessageFlags, type MessageMentionOptions } from 'discord.js';
+import { and, eq, gte } from 'drizzle-orm';
 import type { FormsContext } from './context.js';
 import { drafts, forms, submissions, type Answer, type Form, type Submission, type SubmissionFile, type SubmissionRender } from './db/schema.js';
-import { apiCode, downloadFiles, fileLinks, loadDraft, MissingFileError, releaseFiles } from './drafts.js';
+import { downloadFiles, fileLinks, loadDraft, MissingFileError, releaseFiles } from './drafts.js';
+import { PAGE_SIZE } from './model.js';
 import { renderSubmission } from './render.js';
 
 /** Discord's limit on the text of a plain message. */
@@ -52,13 +53,13 @@ async function postingSubmission(ctx: FormsContext, formId: string, userId: stri
   return row ?? null;
 }
 
-/** Whether the member has a posted or posting submission of the form, optionally one made after `after`. */
+/** Whether the member has a posted or posting submission of the form, optionally one made at or after `after`. */
 export async function hasSubmitted(ctx: FormsContext, formId: string, userId: string, after?: Date): Promise<boolean> {
   const [row] = await ctx.db.run(async (tx) =>
     tx
       .select({ id: submissions.id })
       .from(submissions)
-      .where(and(eq(submissions.formId, formId), eq(submissions.userId, userId), after === undefined ? undefined : gt(submissions.submittedAt, after)))
+      .where(and(eq(submissions.formId, formId), eq(submissions.userId, userId), after === undefined ? undefined : gte(submissions.submittedAt, after)))
       .limit(1),
   );
   return row !== undefined;
@@ -68,6 +69,16 @@ function retryRow(ctx: FormsContext, submissionId: string): ActionRowBuilder<But
   const retry = new ButtonBuilder().setCustomId(ctx.customId(retryPostButton, [submissionId])).setLabel('Try again').setStyle(ButtonStyle.Primary);
   const discard = new ButtonBuilder().setCustomId(ctx.customId(discardPostButton, [submissionId])).setLabel('Discard').setStyle(ButtonStyle.Secondary);
   return new ActionRowBuilder<ButtonBuilder>().addComponents(retry, discard);
+}
+
+/** Try again and Discard for the member's submission still being posted, or null when there is none. */
+export async function postingRefusal(ctx: FormsContext, form: Form, userId: string): Promise<ReplyMessage | null> {
+  const posting = await postingSubmission(ctx, form.id, userId);
+  if (posting === null) return null;
+  return {
+    content: `Your submission to **${form.name}** isn't fully posted yet. Press Try again to post the rest, or Discard.`,
+    components: [retryRow(ctx, posting.id)],
+  };
 }
 
 /**
@@ -82,13 +93,8 @@ export async function refusal(ctx: FormsContext, form: Form, userId: string): Pr
     const member = await guild.members.fetch(userId);
     if (!member.roles.cache.hasAny(...form.allowedRoleIds)) return "You can't fill in this form.";
   }
-  const posting = await postingSubmission(ctx, form.id, userId);
-  if (posting !== null) {
-    return {
-      content: `Your submission to **${form.name}** isn't fully posted yet. Press Try again to post the rest, or Discard.`,
-      components: [retryRow(ctx, posting.id)],
-    };
-  }
+  const posting = await postingRefusal(ctx, form, userId);
+  if (posting !== null) return posting;
   if (form.oncePerMember && (await hasSubmitted(ctx, form.id, userId))) return 'You already submitted this form.';
   if (form.fields.length === 0) return 'This form has no fields yet.';
   if (form.channelId === null) return 'This form has no channel for submissions yet.';
@@ -103,15 +109,19 @@ async function usernameOf(ctx: FormsContext, userId: string): Promise<string> {
   }
 }
 
+/** A refusal of the final submit that keeps the draft: Cancel, and with `retry` Try again on the draft's page. */
+export type Refuse = (message: string, retry: boolean) => ReplyMessage;
+
 /**
  * Turns the member's draft into a submission and posts it. The open checks run again first; the unique index on
  * one-per-member submissions decides a race between two final submits, and `openedAt` (when the last page was shown)
  * catches a repeated submit of the same modal. The parts are rendered once here and stored with the submission.
  */
-export async function submit(ctx: FormsContext, formId: string, userId: string, limit: number, openedAt: Date): Promise<Reply> {
+export async function submit(ctx: FormsContext, formId: string, userId: string, limit: number, openedAt: Date, refuse: Refuse): Promise<Reply> {
   const [form] = await ctx.db.run(async (tx) => tx.select().from(forms).where(eq(forms.id, formId)));
   if (form === undefined) throw new UserError('This form no longer exists.');
   const refused = await refusal(ctx, form, userId);
+  if (typeof refused === 'string') return refuse(refused, false);
   if (refused !== null) return refused;
   if (await hasSubmitted(ctx, formId, userId, openedAt)) return 'You already submitted this form.';
   const draft = await loadDraft(ctx, formId, userId, false);
@@ -127,7 +137,17 @@ export async function submit(ctx: FormsContext, formId: string, userId: string, 
     return false;
   });
   const big = kept.find((file) => file.size > limit);
-  if (big !== undefined) return tooLarge(big.name, limit);
+  if (big !== undefined) {
+    // Try again shows the page with the file, to upload a smaller one.
+    const page = Math.floor(form.fields.findIndex((field) => field.id === big.fieldId) / PAGE_SIZE);
+    await ctx.db.run(async (tx) => {
+      await tx
+        .update(drafts)
+        .set({ page })
+        .where(and(eq(drafts.formId, formId), eq(drafts.userId, userId), eq(drafts.dry, false)));
+    });
+    return refuse(`${tooLarge(big.name, limit)} Press Try again to upload a smaller file.`, true);
+  }
   const submittedAt = new Date();
   const parts = renderSubmission({
     formName: form.name,
@@ -163,6 +183,7 @@ export async function submit(ctx: FormsContext, formId: string, userId: string, 
   return postSubmission(ctx, row.id, limit);
 }
 
+/** `files` are the submission's files that were posted. */
 function answerSummary(answer: Answer | undefined, files: SubmissionFile[]): string | null {
   if (answer === undefined) return null;
   let text: string;
@@ -184,8 +205,10 @@ function summary(head: string, submission: Submission, tail: string): string {
   const lines: string[] = [];
   let used = head.length + tail.length;
   const more = '\n…';
+  const dropped = new Set(submission.render.dropped.map((file) => file.name));
+  const posted = submission.files.filter((file) => !dropped.has(file.name));
   for (const field of submission.render.fields) {
-    const text = answerSummary(submission.answers[field.id], submission.files);
+    const text = answerSummary(submission.answers[field.id], posted);
     if (text === null) continue;
     const line = `\n**${field.label}:** ${text}`;
     if (used + line.length + more.length > MAX_CONTENT) {
@@ -209,7 +232,7 @@ function failure(ctx: FormsContext, form: Form, submissionId: string, reason: st
 
 function reasonOf(error: unknown): string {
   if (error instanceof MissingFileError) return `${error.file.name} is no longer available.`;
-  if (apiCode(error) !== undefined) return `Discord answered "${(error as Error).message}".`;
+  if (error instanceof DiscordAPIError) return `Discord answered "${error.message}".`;
   return 'something went wrong.';
 }
 

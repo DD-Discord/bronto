@@ -2,8 +2,9 @@ import { fakeModal, type RecordedRequest } from '@bronto/core/testing';
 import { Events, MessageFlags } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
+import { submissions } from '../src/db/schema.js';
 import { fillKey, queued } from '../src/submit.js';
-import { GUILD, inHandler, USER } from './harness.js';
+import { formsDb, GUILD, inHandler, USER } from './harness.js';
 import {
   clickIn,
   contentOf,
@@ -26,7 +27,7 @@ import {
   upload,
   type Filling,
 } from './filling.js';
-import { shownModal, textOf, type Json } from './ui.js';
+import { buttonId, shownModal, textOf, type Json } from './ui.js';
 
 let t: TestDatabase;
 let f: Filling;
@@ -126,6 +127,7 @@ describe('submitting', () => {
     await setForm(f, form.id, { active: false });
     const refused = await submitPage(f, last, { fields: { q0000006: 'Six' } });
     expect(contentOf(refused)).toBe('This form is currently closed.');
+    buttonId(replyOf(refused), 'Cancel');
     expect(await submissionRows(f)).toEqual([]);
     const [draft] = await draftRows(f);
     expect(draft!.answers).toMatchObject({ q0000001: { text: 'One' }, q0000006: { text: 'Six' } });
@@ -192,6 +194,7 @@ describe('submitting', () => {
     f.discord.messages.delete(draft!.files[0]!.messageId);
     const done = await submitPage(f, shownModal(await clickIn(f, replyOf(saved), 'Continue (2/2)')));
     expect(contentOf(done)).toContain("These files weren't posted: cover.png (no longer available).");
+    expect(contentOf(done)).not.toContain('**Files 1:**');
     const [row] = await submissionRows(f);
     expect(row!.status).toBe('posted');
     expect(messagesIn(f, SUBMIT)).toHaveLength(1);
@@ -256,8 +259,62 @@ describe('submitting', () => {
     await f.fb.bot.idle();
     expect(await submissionRows(f)).toHaveLength(1);
     expect(submits.map((fake) => contentOf(fake, fake.responses.length - 1))).toContain('You already submitted this form.');
+    expect(await draftRows(f)).toEqual([]);
     await submitPage(f, await openModal(f, opener), { fields: { q0000001: 'Again' } });
     expect(await submissionRows(f)).toHaveLength(2);
+  });
+});
+
+/** The draft-file messages: messages with attachments outside the channels the tests use. */
+const draftFileMessages = () => [...f.discord.messages.values()].filter((message) => message.attachments.length > 0 && message.channel_id !== TEXT && message.channel_id !== SUBMIT);
+
+describe('refusing a page', () => {
+  it('refuses an old Continue while the submission is posting and keeps its files', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [...[1, 2, 3, 4, 5].map((n) => text(n)), fileField(1)]);
+    const saved = await submitPage(f, await openModal(f, await openerId(f, form)), { fields: { q0000001: 'One' } });
+    const last = shownModal(await clickIn(f, replyOf(saved), 'Continue (2/2)'));
+    failNth(SUBMIT, 1);
+    expect(contentOf(await submitPage(f, last, { uploads: { f0000001: [upload(f, 'cover.png', 'png bytes')] } }))).toContain("couldn't post");
+    const again = shownModal(await clickIn(f, replyOf(saved), 'Continue (2/2)'));
+    const refused = await submitPage(f, again, { uploads: { f0000001: [upload(f, 'other.png', 'other bytes')] } });
+    expect(contentOf(refused)).toContain("isn't fully posted yet");
+    const [draft] = await draftRows(f);
+    expect(draft!.files.map((file) => file.name)).toEqual(['cover.png']);
+    expect(draftFileMessages()).toHaveLength(1);
+    const retried = await clickIn(f, replyOf(refused), 'Try again');
+    expect(contentOf(retried)).toContain('Submitted to');
+    expect(messagesIn(f, SUBMIT)[0]!.attachments.map((a: Json) => a.filename)).toEqual(['1-cover.png']);
+  });
+
+  it('a file of an earlier page over the limit offers Try again on that page and Cancel', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [fileField(1), ...[1, 2, 3, 4, 5].map((n) => text(n))]);
+    const opener = await openerId(f, form);
+    const saved = await submitPage(f, await openModal(f, opener), { uploads: { f0000001: [upload(f, 'big.png', 3 * 1024 * 1024)] } }, { attachmentSizeLimit: 8 * 1024 * 1024 });
+    const last = shownModal(await clickIn(f, replyOf(saved), 'Continue (2/2)'));
+    const refused = await submitPage(f, last, {}, { attachmentSizeLimit: 2 * 1024 * 1024 });
+    expect(contentOf(refused)).toContain('big.png is larger than 2 MB');
+    expect(await submissionRows(f)).toEqual([]);
+    const retried = shownModal(await clickIn(f, replyOf(refused), 'Try again'));
+    expect(retried.title).toBe('Story contest (1/2)');
+    await clickIn(f, replyOf(refused), 'Cancel');
+    expect(await draftRows(f)).toEqual([]);
+    expect(draftFileMessages()).toEqual([]);
+  });
+
+  it('offers Cancel when a once-per-member form was submitted meanwhile', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [1, 2, 3, 4, 5, 6].map((n) => text(n)));
+    const saved = await submitPage(f, await openModal(f, await openerId(f, form)), { fields: { q0000001: 'One' } });
+    const last = shownModal(await clickIn(f, replyOf(saved), 'Continue (2/2)'));
+    await formsDb(t).run(async (tx) => {
+      await tx.insert(submissions).values({ formId: form.id, userId: USER, answers: {}, channelId: SUBMIT, status: 'posted', once: true, render: { fields: [], parts: [], dropped: [] } });
+    });
+    const refused = await submitPage(f, last);
+    expect(contentOf(refused)).toBe('You already submitted this form.');
+    await clickIn(f, replyOf(refused), 'Cancel');
+    expect(await draftRows(f)).toEqual([]);
   });
 });
 
