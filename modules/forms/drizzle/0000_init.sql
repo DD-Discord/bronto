@@ -76,6 +76,7 @@ CREATE TABLE "forms"."submissions" (
 	"channel_id" text NOT NULL,
 	"status" text NOT NULL,
 	"part_message_ids" text[] DEFAULT '{}' NOT NULL,
+	"render" jsonb NOT NULL,
 	"once" boolean NOT NULL,
 	"guild_id" text NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,

@@ -1,5 +1,5 @@
 {
-  "id": "12408451-835f-478c-93e1-c9fd80b682ab",
+  "id": "c5a74f2d-0ebd-41c0-8603-5da28d442851",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -670,6 +670,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'{}'"
+        },
+        "render": {
+          "name": "render",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
         },
         "once": {
           "name": "once",
