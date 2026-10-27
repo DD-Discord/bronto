@@ -1,10 +1,19 @@
-import { defineCommand, defineSubcommand, UserError, type CommandDefinition } from '@bronto/core';
-import { PermissionFlagsBits } from 'discord.js';
+import { defineCommand, defineSubcommand, opt, UserError, type CommandDefinition } from '@bronto/core';
+import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import type { FormsContext } from './context.js';
 import { forms } from './db/schema.js';
 import { channelExists, ensureForum, storedForumId } from './forum.js';
+import { buttonsMessage, postOpener, suggestForms, suggestTemplates } from './post.js';
 
 const MAX_LISTED = 50;
+const OPENER_CHANNEL_TYPES = [
+  ChannelType.GuildText,
+  ChannelType.GuildAnnouncement,
+  ChannelType.GuildVoice,
+  ChannelType.PublicThread,
+  ChannelType.PrivateThread,
+  ChannelType.AnnouncementThread,
+];
 // Discord's limit for message content.
 const MAX_CONTENT = 2000;
 
@@ -53,6 +62,28 @@ export function createFormsCommand(): CommandDefinition {
         ephemeral: true,
         execute: async (ctx) => {
           await ctx.reply(await listReply(ctx));
+        },
+      }),
+      post: defineSubcommand({
+        description: 'Posts a button that opens a form',
+        ephemeral: true,
+        options: {
+          channel: opt.channel({ description: 'Where the button goes', required: true, channelTypes: OPENER_CHANNEL_TYPES }),
+          form: opt.string({ description: 'The form to open', required: true, autocomplete: suggestForms }),
+          label: opt.string({ description: 'Button text (default: the form name)', maxLength: 80 }),
+          template: opt.string({ description: 'Template to post with the button', autocomplete: suggestTemplates }),
+          message: opt.string({ description: 'Link to an earlier message with form buttons to add the button to' }),
+        },
+        execute: async (ctx, options) => {
+          await ctx.reply(await postOpener(ctx, options));
+        },
+      }),
+      buttons: defineSubcommand({
+        description: 'Lists the form buttons of a channel and removes them',
+        ephemeral: true,
+        options: { channel: opt.channel({ description: 'The channel to look at', required: true, channelTypes: OPENER_CHANNEL_TYPES }) },
+        execute: async (ctx, { channel }) => {
+          await ctx.reply(await buttonsMessage(ctx, channel.id));
         },
       }),
       init: defineSubcommand({

@@ -1,8 +1,9 @@
 import type { AnyThreadChannel, Channel, PartialDMChannel } from 'discord.js';
 import { and, eq, ne } from 'drizzle-orm';
 import type { FormsContext } from './context.js';
-import { forms, forums, type Form } from './db/schema.js';
+import { forms, forums, openers, type Form } from './db/schema.js';
 import { channelExists, storedForumId } from './forum.js';
+import { cleanupOpeners } from './openers.js';
 
 type Gone = Pick<Form, 'id' | 'name' | 'threadId'>;
 
@@ -10,11 +11,22 @@ function announce(ctx: FormsContext, gone: Gone[]): void {
   for (const { id, name, threadId } of gone) ctx.log.info({ formId: id, name, threadId }, 'Form deleted');
 }
 
-/** Deletes the form's row (its openers, drafts and submissions go with it) and logs it; false when it was already gone. */
+/**
+ * Deletes the form's row under a lock (its drafts and submissions go with it) and logs it, then removes its opener
+ * messages and sticky buttons from Discord. False when the form was already gone.
+ */
 export async function forgetForm(ctx: FormsContext, form: Gone): Promise<boolean> {
-  const rows = await ctx.db.run(async (tx) => tx.delete(forms).where(eq(forms.id, form.id)).returning());
-  announce(ctx, rows);
-  return rows.length > 0;
+  const removed = await ctx.db.run(async (tx) => {
+    const [row] = await tx.select().from(forms).where(eq(forms.id, form.id)).for('update');
+    if (row === undefined) return null;
+    const gone = await tx.delete(openers).where(eq(openers.formId, form.id)).returning();
+    await tx.delete(forms).where(eq(forms.id, form.id));
+    return { row, gone };
+  });
+  if (removed === null) return false;
+  announce(ctx, [removed.row]);
+  await cleanupOpeners(ctx, removed.gone);
+  return true;
 }
 
 /**
@@ -22,14 +34,17 @@ export async function forgetForm(ctx: FormsContext, form: Gone): Promise<boolean
  * forum while it was being checked.
  */
 async function forgetForum(ctx: FormsContext, forumId: string): Promise<void> {
-  const rows = await ctx.db.run(async (tx) => {
+  const removed = await ctx.db.run(async (tx) => {
     const [stored] = await tx.select({ id: forums.forumChannelId }).from(forums).for('update');
-    if (stored?.id !== forumId) return [];
+    if (stored?.id !== forumId) return null;
+    const gone = await tx.delete(openers).returning();
     const deleted = await tx.delete(forms).returning();
     await tx.delete(forums);
-    return deleted;
+    return { deleted, gone };
   });
-  announce(ctx, rows);
+  if (removed === null) return;
+  announce(ctx, removed.deleted);
+  await cleanupOpeners(ctx, removed.gone);
 }
 
 /** A post deleted in Discord deletes its form. */

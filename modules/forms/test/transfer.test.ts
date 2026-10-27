@@ -117,26 +117,16 @@ describe('export and import', () => {
 });
 
 describe('delete', () => {
-  it('is refused while openers exist, naming their channels', async () => {
+  it('deletes the form together with its opener rows', async () => {
     const form = await configured('Story contest');
     await formsDb(t).run(async (tx) => {
       await tx.insert(openers).values({ formId: form.id, channelId: TEXT, messageId: null, label: 'Apply' });
     });
-    const done = await clickPreview(fb, discord, form.threadId, 'Delete');
-    expect(payload(done).content).toContain(`<#${TEXT}>`);
-    expect(await storedForm(t, form.id)).toBeDefined();
-    expect(discord.channels.has(form.threadId)).toBe(true);
-  });
-
-  it('refuses at the confirmation too when an opener appeared meanwhile', async () => {
-    const form = await configured('Story contest');
     const ask = await clickPreview(fb, discord, form.threadId, 'Delete');
-    await formsDb(t).run(async (tx) => {
-      await tx.insert(openers).values({ formId: form.id, channelId: TEXT, messageId: null, label: 'Apply' });
-    });
     const done = await click(fb, form.threadId, buttonId(payload(ask), 'Delete'));
-    expect(JSON.stringify(payload(done))).toContain(`<#${TEXT}>`);
-    expect(discord.channels.has(form.threadId)).toBe(true);
+    expect(JSON.stringify(payload(done))).toContain('Form deleted.');
+    expect(await t.database.admin.select().from(openers)).toEqual([]);
+    expect(discord.channels.has(form.threadId)).toBe(false);
   });
 
   it('deletes the form, its post and its rows after confirmation', async () => {
