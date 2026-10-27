@@ -9,6 +9,7 @@ import { createModuleRuntimes, type ModuleRuntime } from '../src/runtime/context
 import { Dispatcher, guildIdOf, type HandlerResult } from '../src/runtime/dispatcher.js';
 import { ModuleEnablement } from '../src/runtime/enablement.js';
 import { defineEvent, gatewayEvent, on } from '../src/runtime/events.js';
+import { answer, COLLECTOR_TIMEOUT_MS, defineCollector, type Collected } from '../src/runtime/asks.js';
 import { defineGate, gate, GATE_TIMEOUT_MS, type GateResult, type GateVerdict } from '../src/runtime/gates.js';
 import { defineModule } from '../src/runtime/module.js';
 import { KeyedQueue } from '../src/runtime/queue.js';
@@ -818,5 +819,184 @@ describe('gates', () => {
     expect(run.ok).toBe(false);
     expect((run as { error: Error }).error.message).toMatch(/cannot check widgets\.deleting/);
     expect(asked).toEqual([]);
+  });
+});
+
+describe('collectors', () => {
+  const gathering = defineCollector<{ id: string }, string[]>('gathering');
+  const asked: string[] = [];
+  let behaviour: Record<string, (payload: { id: string }) => Promise<unknown> | unknown>;
+  const listener = (name: string, ask = gathering) =>
+    answer(ask, async (_ctx, payload) => {
+      asked.push(name);
+      return behaviour[name]?.(payload) as string[];
+    });
+  const owner = defineModule({ name: 'widgets', db: { schema: widgetsSchema, migrations: widgetsMigrations }, asks: { gathering } });
+  const first = defineModule({ name: 'col_first', dependsOn: [owner], listeners: [listener('col_first')] });
+  const second = defineModule({ name: 'col_second', dependsOn: [owner, first], listeners: [listener('col_second')] });
+  let runtimes: ModuleRuntime[];
+  let enablement: ModuleEnablement;
+  let dispatcher: Dispatcher;
+  let result: Collected<string[]>[] | undefined;
+  const collect = (guildId = 'g1') =>
+    dispatcher.runHandler(runtimes[0]!, guildId, 'u1', 'test', async (ctx) => {
+      result = await ctx.ask(gathering, { id: 't1' });
+    });
+
+  beforeAll(() => {
+    enablement = new ModuleEnablement(t.database.admin);
+    runtimes = createModuleRuntimes(
+      [owner, first, second].map((definition) => ({ packageName: `@test/${definition.name}`, definition, config: {} })),
+      { client: {} as Client, database: t.database, log: captureLog().log },
+    );
+    dispatcher = new Dispatcher({ runtimes, database: t.database, enablement, queue: new KeyedQueue(() => undefined) });
+  });
+
+  beforeEach(() => {
+    asked.length = 0;
+    behaviour = {};
+    result = undefined;
+  });
+
+  it('gathers answers in module order', async () => {
+    behaviour.col_first = () => ['a'];
+    behaviour.col_second = (payload) => [payload.id];
+    await collect();
+    expect(result).toEqual([
+      { module: 'col_first', value: ['a'] },
+      { module: 'col_second', value: ['t1'] },
+    ]);
+  });
+
+  it('skips a throwing listener and asks the rest', async () => {
+    behaviour.col_first = () => {
+      throw new Error('boom');
+    };
+    behaviour.col_second = () => ['b'];
+    await collect();
+    expect(result).toEqual([{ module: 'col_second', value: ['b'] }]);
+    expect(asked).toEqual(['col_first', 'col_second']);
+  });
+
+  it('skips a listener that times out', async () => {
+    vi.useFakeTimers();
+    try {
+      behaviour.col_first = () => new Promise(() => undefined);
+      behaviour.col_second = () => ['b'];
+      const done = collect();
+      await vi.advanceTimersByTimeAsync(COLLECTOR_TIMEOUT_MS + 1);
+      await done;
+      expect(result).toEqual([{ module: 'col_second', value: ['b'] }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a late answer', async () => {
+    vi.useFakeTimers();
+    try {
+      behaviour.col_first = () => new Promise((resolve) => setTimeout(() => resolve(['late']), COLLECTOR_TIMEOUT_MS + 100));
+      behaviour.col_second = () => ['b'];
+      const done = collect();
+      await vi.advanceTimersByTimeAsync(COLLECTOR_TIMEOUT_MS + 1);
+      await done;
+      const returned = result;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(result).toBe(returned);
+      expect(result).toHaveLength(1);
+      expect(result).toEqual([{ module: 'col_second', value: ['b'] }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('skips invalid answers', async () => {
+    const checked = defineCollector<null, string[]>('checked', { validate: Array.isArray as (value: unknown) => value is string[] });
+    const checkedOwner = defineModule({ name: 'col_owner', asks: { checked } });
+    const bad = defineModule({ name: 'col_bad', dependsOn: [checkedOwner], listeners: [answer(checked, () => 'nope' as unknown as string[])] });
+    const good = defineModule({ name: 'col_good', dependsOn: [checkedOwner, bad], listeners: [answer(checked, () => ['ok'])] });
+    const log = captureLog();
+    const rts = createModuleRuntimes(
+      [checkedOwner, bad, good].map((definition) => ({ packageName: `@test/${definition.name}`, definition, config: {} })),
+      { client: {} as Client, database: t.database, log: log.log },
+    );
+    const d = new Dispatcher({ runtimes: rts, database: t.database, enablement, queue: new KeyedQueue(() => undefined) });
+    let got: Collected<string[]>[] | undefined;
+    await d.runHandler(rts[0]!, 'g1', null, 'test', async (ctx) => {
+      got = await ctx.ask(checked, null);
+    });
+    expect(got).toEqual([{ module: 'col_good', value: ['ok'] }]);
+    expect(JSON.stringify(log.lines)).toContain('Ask listener gave an invalid answer');
+  });
+
+  it('skips disabled modules', async () => {
+    await enablement.set('g1', 'col_first', false);
+    try {
+      behaviour.col_first = () => ['a'];
+      behaviour.col_second = () => ['b'];
+      await collect();
+      expect(result).toEqual([{ module: 'col_second', value: ['b'] }]);
+      expect(asked).toEqual(['col_second']);
+    } finally {
+      await enablement.set('g1', 'col_first', true);
+    }
+  });
+
+  it('honours a custom timeoutMs', async () => {
+    const quick = defineCollector<null, string>('quick', { timeoutMs: 50 });
+    const quickOwner = defineModule({ name: 'col_quick_owner', asks: { quick } });
+    const slow = defineModule({
+      name: 'col_slow',
+      dependsOn: [quickOwner],
+      listeners: [answer(quick, async () => (await new Promise((r) => setTimeout(r, 100)), 'slow'))],
+    });
+    const fast = defineModule({ name: 'col_fast', dependsOn: [quickOwner, slow], listeners: [answer(quick, () => 'fast')] });
+    const rts = createModuleRuntimes(
+      [quickOwner, slow, fast].map((definition) => ({ packageName: `@test/${definition.name}`, definition, config: {} })),
+      { client: {} as Client, database: t.database, log: captureLog().log },
+    );
+    const d = new Dispatcher({ runtimes: rts, database: t.database, enablement, queue: new KeyedQueue(() => undefined) });
+    let got: Collected<string>[] | undefined;
+    await d.runHandler(rts[0]!, 'g1', null, 'test', async (ctx) => {
+      got = await ctx.ask(quick, null);
+    });
+    expect(got).toEqual([{ module: 'col_fast', value: 'fast' }]);
+  });
+
+  describe('ctx.ask guards', () => {
+    it('a module can only ask its own asks', async () => {
+      const run = await dispatcher.runHandler(runtimes[1]!, 'g1', null, 'test', async (ctx) => {
+        await ctx.ask(gathering, { id: 't1' });
+      });
+      expect(run.ok).toBe(false);
+      expect((run as { error: Error }).error.message).toBe(
+        'Module "col_first" cannot ask widgets.gathering; modules ask only their own asks.',
+      );
+      expect(asked).toEqual([]);
+    });
+
+    it('asking inside ctx.db.run throws', async () => {
+      const run = await dispatcher.runHandler(runtimes[0]!, 'g1', null, 'test', (ctx) =>
+        ctx.db.run(async () => {
+          await ctx.ask(gathering, { id: 't1' });
+        }),
+      );
+      expect(run.ok).toBe(false);
+      expect((run as { error: Error }).error.message).toBe(
+        'Module "widgets" asked widgets.gathering inside ctx.db.run; ask before opening the transaction.',
+      );
+      expect(asked).toEqual([]);
+    });
+
+    it('asking after the handler finished throws', async () => {
+      let late: HandlerContext | undefined;
+      await dispatcher.runHandler(runtimes[0]!, 'g1', null, 'test', (ctx) => {
+        late = ctx;
+      });
+      expect(() => late!.ask(gathering, { id: 't1' })).toThrow(
+        'Module "widgets" asked widgets.gathering after its handler finished; ask inside the handler or a queued task.',
+      );
+      expect(asked).toEqual([]);
+    });
   });
 });

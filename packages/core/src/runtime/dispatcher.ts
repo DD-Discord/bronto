@@ -306,6 +306,9 @@ export class Dispatcher {
         outcome = { module: runtime.name, kind: 'timeout' };
       } else if (!result.ok) {
         outcome = { module: runtime.name, kind: 'failed' };
+      } else if (ask.validate !== undefined && !ask.validate(value)) {
+        runtime.context.log.warn({ guildId, handler: `ask:${askLabel(ask)}` }, 'Ask listener gave an invalid answer');
+        outcome = { module: runtime.name, kind: 'invalid' };
       } else {
         outcome = { module: runtime.name, kind: 'answer', value };
       }

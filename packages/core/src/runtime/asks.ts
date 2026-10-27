@@ -4,6 +4,7 @@ import type { HandlerContext } from './types.js';
 /** What one listener did when asked. */
 export type AskOutcome =
   | { module: string; kind: 'answer'; value: unknown }
+  | { module: string; kind: 'invalid' }
   | { module: string; kind: 'failed' }
   | { module: string; kind: 'timeout' };
 
@@ -24,6 +25,8 @@ export interface AskDefinition<TPayload, TAnswer, TResult> {
   /** Owning module, set by defineModule. */
   owner: string | null;
   readonly strategy: AskStrategy<TResult, any>;
+  /** Checks a listener's answer; a failed check becomes an `invalid` outcome. Without it every answer is accepted. */
+  readonly validate?: (value: unknown) => boolean;
   /** Never set at runtime; carry the payload and answer types. */
   readonly payload?: TPayload;
   readonly answer?: TAnswer;
@@ -32,8 +35,9 @@ export interface AskDefinition<TPayload, TAnswer, TResult> {
 export function defineAsk<TPayload, TAnswer, TResult>(
   name: string,
   strategy: AskStrategy<TResult, any>,
+  validate?: (value: unknown) => boolean,
 ): AskDefinition<TPayload, TAnswer, TResult> {
-  return { name, owner: null, strategy };
+  return validate === undefined ? { name, owner: null, strategy } : { name, owner: null, strategy, validate };
 }
 
 export function askLabel(ask: AskDefinition<any, any, any>): string {
@@ -46,4 +50,31 @@ export function answer<TPayload, TAnswer>(
   handler: (ctx: HandlerContext, payload: TPayload) => Promise<TAnswer> | TAnswer,
 ): Listener {
   return { kind: 'ask', ask, handler };
+}
+
+/** How long a collector listener may take before it is skipped. */
+export const COLLECTOR_TIMEOUT_MS = 1500;
+
+/** One module's answer to a collector. */
+export interface Collected<A> {
+  module: string;
+  value: A;
+}
+
+// Asks every listener; answers are appended in module order, while invalid, failed and timed-out listeners are skipped.
+const collectorStrategy = (timeoutMs: number): AskStrategy<Collected<any>[], Collected<any>[]> => ({
+  timeoutMs,
+  initial: () => [],
+  next(state, outcome) {
+    return outcome.kind === 'answer' ? { state: [...state, { module: outcome.module, value: outcome.value }] } : { state };
+  },
+  finish: (state) => state,
+});
+
+/** A question one module asks all others to gather their answers; failing listeners are skipped. */
+export function defineCollector<TPayload, TAnswer>(
+  name: string,
+  options: { timeoutMs?: number; validate?: (value: unknown) => value is TAnswer } = {},
+): AskDefinition<TPayload, TAnswer, Collected<TAnswer>[]> {
+  return defineAsk(name, collectorStrategy(options.timeoutMs ?? COLLECTOR_TIMEOUT_MS), options.validate);
 }
