@@ -18,7 +18,7 @@ Contents:
   - [5. Slash commands](#5-slash-commands)
   - [6. Buttons, selects and modals](#6-buttons-selects-and-modals)
   - [7. Listening to Discord events](#7-listening-to-discord-events)
-  - [8. Events and APIs between modules](#8-events-and-apis-between-modules)
+  - [8. Events and asks between modules](#8-events-and-asks-between-modules)
   - [9. Lifecycle hooks](#9-lifecycle-hooks)
   - [10. Background work: queues and timers](#10-background-work-queues-and-timers)
   - [11. CRUD commands](#11-crud-commands)
@@ -71,7 +71,10 @@ export default defineModule({
   components: [...],             // buttons and modals
   listeners: [on(...)],          // Discord events and other modules' events
   events: {...},                 // events it emits
+  asks: {...},                   // asks it poses to other modules (gates, collectors)
   api: (ctx) => ({...}),         // functions other modules may call
+  dependsOn: [...],              // modules that must be loaded and on
+  optionalDependsOn: [...],      // modules it uses when present
   hooks: { start, guildReady, guildStopped, deleteGuildData },
   importLegacy: (ctx, path) => ..., // optional: data import from an older bot
 });
@@ -660,10 +663,11 @@ const message = await withWebhookErrors(webhook.token, () => webhook.send({
 - **Recovery:** catch an unusable webhook during resolution as well as during send/delete. Replace once with
   `ensureWebhook`, store the new credentials and retry; do not loop indefinitely.
 
-## 8. Events and APIs between modules
+## 8. Events and asks between modules
 
 Modules talk to each other in three ways: **events** for notifications ("this happened"), **APIs** for questions or
-requests ("tell me X", "do Y"), and **gates** for vetoes ("may this happen?").
+requests to one known module ("tell me X", "do Y"), and **asks** for questions put to every module that listens
+("may this happen?", "what do you add?"). Gates and collectors are ready-made asks.
 
 ### Events
 
@@ -750,10 +754,60 @@ export const badgesModule = defineModule({
 - **Boundaries:** a module with a `db` can't read another module's tables; the database refuses it (section 4), as a
   guard against mistakes rather than hostile code. Ask through its API. An API's `ctx.db` runs as the
   module that provides the API, so it reaches that module's tables.
+- **Optional use:** `optionalDependsOn` instead of `dependsOn` (see "Optional dependencies" below) when the module
+  works without the provider.
+
+### Asks
+
+An ask is a question one module poses to all modules that listen for it. Each listener answers as its own handler
+(with the caller's server and actor), and the ask's **strategy** folds the outcomes into the result of
+`ctx.ask(ask, payload)`. Gates and collectors below are asks with a fixed strategy; write your own for another way of
+combining answers.
+
+```ts
+import { answer, defineAsk, type AskOutcome } from '@bronto/core';
+
+export const boardAsks = {
+  // First listener that answers a string wins.
+  title: defineAsk<{ id: string }, string, string | null>(
+    'title',
+    {
+      timeoutMs: 2000,
+      initial: () => null,
+      next: (state, outcome: AskOutcome) =>
+        outcome.kind === 'answer' ? { done: String(outcome.value) } : { state },
+      finish: (state) => state,
+    },
+    (value) => typeof value === 'string',     // optional: reject other answers as `invalid`
+  ),
+};
+
+export const boardModule = defineModule({
+  name: 'board',
+  asks: boardAsks,            // claims ownership; only board may ask them
+  // ...
+});
+
+// In board, outside ctx.db.run:
+const title = await ctx.ask(boardAsks.title, { id });
+
+// In a module that lists board in dependsOn or optionalDependsOn:
+listeners: [answer(boardAsks.title, async (ctx, { id }) => titleOf(ctx, id))],
+```
+
+- **Outcomes:** each listener produces `answer`, `invalid` (the optional `validate` check failed), `failed` (it threw)
+  or `timeout`. The strategy's `next(state, outcome)` returns the new state, or `{ done: result }` to stop asking
+  further listeners; `finish(state)` produces the result once all were asked.
+- **Order:** listeners are asked one after another, in module dependency order, including loaded optional
+  dependencies. Modules switched off in the server are skipped.
+- **Timeouts are per listener:** `timeoutMs` bounds each listener, not the whole ask. A listener that overruns keeps
+  running in the background and its late answer is ignored.
+- **Outside transactions:** `ctx.ask` and `ctx.check` throw inside `ctx.db.run` and after the handler returned, because
+  listeners do their own database and Discord work.
 
 ### Gates
 
-A gate lets a module ask the other modules whether an action may happen, for example before deleting
+A gate is an ask for vetoes. It lets a module ask the other modules whether an action may happen, for example before deleting
 something another module still uses:
 
 ```ts
@@ -788,12 +842,67 @@ listeners: [
   asked.
 - **Allow or deny:** return nothing to allow, `{ deny: reason }` with a non-empty reason to deny.
 - **Fail closed:** a listener that throws denies with "<module> failed to answer"; one that doesn't answer within 5
-  seconds (`GATE_TIMEOUT_MS`) denies with "<module> did not answer in time" and keeps running in the background with
-  its answer ignored; any other answer (`false`, a string, an object without a non-empty string `deny`) denies with
+  seconds (`GATE_TIMEOUT_MS`, per listener) denies with "<module> did not answer in time" and keeps running in the
+  background with its answer ignored; any other answer (`false`, a string, an object without a non-empty string `deny`) denies with
   "<module> gave an invalid answer".
 - **Outside transactions:** listeners do their own database and Discord work, so `ctx.check` inside `ctx.db.run`
   throws. Like `emit`, it also throws after the handler returned.
 - **No lock:** nothing holds between the check and the action, so the action still re-checks what it depends on.
+
+### Collectors
+
+A collector is an ask that gathers something from every listener, for example lines other modules add to a board's
+footer. It **fails open**: a listener that throws, times out or gives an invalid answer is skipped (logged as a
+warning) and the others still count.
+
+```ts
+import { answer, defineCollector } from '@bronto/core';
+
+export const boardAsks = {
+  footerLines: defineCollector<{ boardId: string }, string>(
+    'footerLines',
+    { validate: (value): value is string => typeof value === 'string' },   // timeoutMs defaults to 1500
+  ),
+};
+
+// In board, outside ctx.db.run:
+const lines = await ctx.ask(boardAsks.footerLines, { boardId });   // Collected<string>[]
+const footer = lines.map(({ value }) => value).join('\n');
+
+// In a module that lists board in dependsOn or optionalDependsOn:
+listeners: [answer(boardAsks.footerLines, async (ctx, { boardId }) => `${await countOf(ctx, boardId)} reactions`)],
+```
+
+- **The result:** an array of `{ module, value }` in module order, empty when nobody answers.
+- **Timeout:** 1.5 seconds per listener (`COLLECTOR_TIMEOUT_MS`); pass `timeoutMs` to `defineCollector` to change it.
+- **Late answers** are ignored, and the listener keeps running in the background.
+
+### Optional dependencies
+
+List a module in `optionalDependsOn` when yours works without it. Unlike `dependsOn`, the other module may be missing
+from `config.yaml` or switched off in a server, and `/modules` enforces only hard dependencies.
+
+```ts
+export const badgesModule = defineModule({
+  name: 'badges',
+  optionalDependsOn: [karmaModule],
+  listeners: [
+    on(someEvent, async (ctx) => {
+      const karma = ctx.modules.optional(karmaModule);   // the API, or null
+      const total = karma === null ? 0 : await karma.pointsOf(userId);
+    }),
+  ],
+});
+```
+
+- **`null` means unavailable:** `ctx.modules.optional(def)` returns null when the module isn't loaded or is off in the
+  calling handler's server. Check it on every call, in the handler, not once at startup; calling it outside a handler
+  throws.
+- **Declared only:** `optional` throws for a module not listed in `optionalDependsOn`; `get` is for `dependsOn`
+  modules and stays unchanged.
+- **Load order:** a loaded optional dependency is ordered before your module, like a hard one, and cycles through
+  optional dependencies are rejected.
+- **Asks:** a module may answer asks of an optional dependency; its listeners run when that module is loaded and on.
 
 ## 9. Lifecycle hooks
 
@@ -1097,6 +1206,8 @@ Run one module's tests with `pnpm vitest run modules/karma`. `pnpm test` runs ev
   `dependsOn`). A module with a `db` runs as a role that reaches only its own schema, so other modules' and core's
   tables are off limits; a module without a `db` runs as the app role, which can reach core's per-server tables, but it
   shouldn't touch them.
+- **Asks:** call `ctx.check` and `ctx.ask` outside `ctx.db.run`. Gates fail closed, collectors skip failing
+  listeners. Use `optionalDependsOn` and `ctx.modules.optional` for modules you can live without.
 - **Per-server state:** rebuild timers and in-memory state in `guildReady` (idempotent) and drop them in
   `guildStopped`.
 - **Queues:** a queued task never waits for a task of its own key.

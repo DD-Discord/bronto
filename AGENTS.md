@@ -15,7 +15,7 @@
 - Interaction handlers answer only through `ctx.reply`/`ctx.followUp`/`ctx.defer`/`ctx.showModal` (components also `ctx.update`/`ctx.deferUpdate`), and throw `UserError` for messages meant for the user.
 - Module schema files import `guildTable`/`globalTable` from `@bronto/core/tables`; prefer this over `@bronto/core`, since drizzle-kit loads schema files and the main entry pulls in discord.js, pino and the runtime.
 - Never keep a transaction (`ctx.db.run`) open across a Discord API call.
-- Check gates (`ctx.check`) outside `ctx.db.run`; gate listeners answer in dependency order, the first denial wins, and errors, invalid answers and the 5 s timeout count as denials.
+- Check gates and asks (`ctx.check`, `ctx.ask`) outside `ctx.db.run`; listeners answer in dependency order, the first denial wins, and errors, invalid answers and the 5 s timeout count as denials; collectors skip failing listeners instead of denying.
 - A queued task (`ctx.queue.run`) never waits for a task of its own key.
 - Modules with timers or in-memory state per server stop them in `hooks.guildStopped` and rebuild them in `hooks.guildReady` (which may run more than once).
 - Docs come in three tiers. `docs/user/` (and `modules/<name>/docs/user/`) holds the pages `/help` shows in Discord and follows `docs/api/writing-user-docs.md`; a module sets `docs` and calls `checkDocs` in its tests. `docs/admin/` holds self-hosting docs and `docs/api/` the developer docs, both ordinary GitHub Markdown. Module READMEs only summarize and link to the tiers.
