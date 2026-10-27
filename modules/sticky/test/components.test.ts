@@ -140,6 +140,16 @@ describe('foreign webhooks', () => {
     expect(webhookRequests('POST').at(-1)).toMatchObject({ body: { components: [row('one')] } });
   });
 
+  it('replaces a webhook created by hand when rows are shown', async () => {
+    const old = discord.addWebhook(CHANNEL, undefined, { applicationId: null });
+    await start([], async () => void (await insertSticky(t, discord, { channelId: CHANNEL, webhookId: old.id, webhookToken: old.token })));
+    await say(CHANNEL);
+    const posts = webhookRequests('POST');
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.path).not.toContain(old.id);
+    expect(discord.webhooks.has(old.id)).toBe(false);
+  });
+
   it('keeps a foreign webhook without rows', async () => {
     answerWith = () => [];
     const old = await seedForeign();

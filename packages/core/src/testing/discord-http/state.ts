@@ -101,11 +101,11 @@ export class DiscordState {
     attachment.proxy_url = attachment.url.replace('cdn.discordapp.com', 'media.discordapp.net');
     return attachment;
   }
-  addWebhook(channelId: string, credentials?: WebhookCredentials, options: { applicationId?: string } = {}): WebhookCredentials {
+  addWebhook(channelId: string, credentials?: WebhookCredentials, options: { applicationId?: string | null } = {}): WebhookCredentials {
     const { id, token } = credentials ?? { id: this.newId(), token: `synthetic-token-${this.nextId}` };
     if (!this.channels.has(channelId)) this.addChannel(channelId, { guildId: this.guildIds[0] ?? '100000000000000001', type: ChannelType.GuildText });
     const channel = this.channels.get(channelId);
-    this.webhooks.set(id, { id, token, type: 1, name: 'Synthetic webhook', avatar: null, channel_id: channelId, guild_id: channel && 'guild_id' in channel ? channel.guild_id : this.guildIds[0], application_id: options.applicationId ?? this.applicationId } as APIWebhook);
+    this.webhooks.set(id, { id, token, type: 1, name: 'Synthetic webhook', avatar: null, channel_id: channelId, guild_id: channel && 'guild_id' in channel ? channel.guild_id : this.guildIds[0], application_id: 'applicationId' in options ? options.applicationId : this.applicationId } as APIWebhook);
     return { id, token };
   }
   removeWebhook(id: string): void { this.webhooks.delete(id); }

@@ -44,6 +44,7 @@ export default defineModule({
 - **Limit:** a message holds five rows. Sticky keeps the first five and logs a warning for the rest.
 - **Fail open:** a listener that throws, answers invalidly or takes longer than 1.5 s is skipped; the post goes out with the other rows.
 - **Staying current:** posts and template edits ask again, so a module that stopped contributing loses its rows at the next one. Call `refresh(channelId)` to update the live post right away, e.g. when your module's state for the channel changed.
+- **Webhook:** only a webhook owned by the bot can carry buttons. When rows are present and the sticky's webhook belongs to another application or was created by hand, sticky replaces it with its own at the next post.
 
 Buttons handled by your module go in your module's `components`, as usual.
 

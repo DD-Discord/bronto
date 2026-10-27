@@ -335,11 +335,11 @@ export class Reposter {
     ctx.emit(stickyEvents.posted, { channelId: sticky.channelId, messageId });
   }
 
-  /** Whether the sticky's webhook belongs to another application. A missing webhook counts as not foreign. */
+  /** Whether the sticky's webhook can't carry components: it belongs to another application or was created by hand. A missing webhook counts as not foreign. */
   private async isForeign(ctx: StickyContext, sticky: Sticky): Promise<boolean> {
     try {
       const webhook = await resolveWebhook(ctx.client, { id: sticky.webhookId, token: sticky.webhookToken });
-      return webhook.applicationId !== null && webhook.applicationId !== ctx.client.application?.id;
+      return webhook.applicationId !== ctx.client.application?.id;
     } catch (error) {
       if (error instanceof UnknownWebhookError) return false;
       throw error;
