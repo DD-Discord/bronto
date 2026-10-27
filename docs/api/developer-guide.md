@@ -171,8 +171,8 @@ To load the module:
      "@bronto/karma": {}
    ```
 
-3. For the Docker image, add a `COPY modules/karma/package.json modules/karma/package.json` line next to the other
-   manifests in the `Dockerfile`. The image installs dependencies from the manifests before it copies the sources.
+The Docker image needs no change: it installs every dependency of the root `package.json`, and its build fails when
+one of the listed modules can't resolve its imports.
 
 Start the bot with `pnpm bronto start`. The log line "Bot started" lists the loaded modules, and `/modules list` shows
 them in each server.
