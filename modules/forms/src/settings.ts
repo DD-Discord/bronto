@@ -1,4 +1,4 @@
-import { defineModal, type ButtonContext } from '@bronto/core';
+import { defineModal, type ButtonContext, type ReplyMessage } from '@bronto/core';
 import {
   ChannelSelectMenuBuilder,
   ChannelType,
@@ -37,8 +37,11 @@ export const settingsInputOf = (form: Form): SettingsInput => ({
   oncePerMember: form.oncePerMember,
 });
 
-/** The settings modal, filled with `input`. */
-export function settingsModalFor(ctx: FormsContext, form: Form, input: SettingsInput): ModalBuilder {
+/**
+ * The settings modal, filled with `input`. `inPlace` is for a modal opened from a private message (Try again), whose
+ * submit edits that message; opened from the public preview, the submit answers with a new private message.
+ */
+export function settingsModalFor(ctx: FormsContext, form: Form, input: SettingsInput, inPlace = false): ModalBuilder {
   const name = new TextInputBuilder().setCustomId('name').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(MAX_NAME).setValue(input.name.slice(0, MAX_NAME));
   const channel = new ChannelSelectMenuBuilder()
     .setCustomId('channel')
@@ -62,7 +65,7 @@ export function settingsModalFor(ctx: FormsContext, form: Form, input: SettingsI
       { label: 'One submission per member', value: 'once', default: input.oncePerMember },
     );
   return new ModalBuilder()
-    .setCustomId(ctx.customId(settingsModalDefinition, [form.id]))
+    .setCustomId(ctx.customId(settingsModalDefinition, inPlace ? [form.id, 'edit'] : [form.id]))
     .setTitle('Form settings')
     .addLabelComponents(
       new LabelBuilder().setLabel('Name').setTextInputComponent(name),
@@ -73,7 +76,7 @@ export function settingsModalFor(ctx: FormsContext, form: Form, input: SettingsI
     );
 }
 
-registerRetry('settings', (ctx, form, draft) => settingsModalFor(ctx, form, draft.input));
+registerRetry('settings', (ctx, form, draft) => settingsModalFor(ctx, form, draft.input, true));
 
 /** Answers the preview's Settings button with the modal. */
 export async function openSettings(ctx: ButtonContext): Promise<void> {
@@ -116,9 +119,12 @@ export async function checkSettingsAllowed(ctx: FormsContext, member: GuildMembe
 export const settingsModalDefinition = defineModal({
   name: 'settings-modal',
   ...editorBinding,
+  // A submit from the preview answers with a new message; acknowledging without one keeps that possible after a defer.
+  defer: 'update',
   execute: async (ctx, args) => {
     requireEditor(ctx);
     const formId = args[0] ?? '';
+    const answer = (message: ReplyMessage) => (args[1] === 'edit' ? ctx.update(message) : ctx.reply(message));
     const fields = ctx.interaction.fields;
     const pings = fields.getSelectedMentionables('pings');
     const chosen = fields.getCheckboxGroup('options');
@@ -146,10 +152,10 @@ export const settingsModalDefinition = defineModal({
         allowedRoleIds: input.allowedRoleIds,
         oncePerMember: input.oncePerMember,
       }));
-      await ctx.reply(savedMessage('Settings saved.', postUpdated));
+      await answer({ content: savedMessage('Settings saved.', postUpdated), components: [] });
     } catch (error) {
       if (!(error instanceof TryAgainError)) throw error;
-      await ctx.reply(retryReply(ctx, formId, error));
+      await answer(retryReply(ctx, formId, error));
     }
   },
 });

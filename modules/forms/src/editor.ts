@@ -91,6 +91,7 @@ registerRetry('field', (ctx, form, draft) => fieldModalFor(ctx, form, draft.type
 export const fieldModalDefinition = defineModal({
   name: 'field-modal',
   ...editorBinding,
+  defer: 'update',
   execute: async (ctx, args) => {
     requireEditor(ctx);
     const formId = args[0] ?? '';
@@ -100,10 +101,10 @@ export const fieldModalDefinition = defineModal({
       const input = readInput(ctx, type);
       const saved = await saveField(ctx, formId, type, fieldId, input);
       const note = savedMessage(`${fieldId === null ? 'Added' : 'Saved'} "${input.label.trim()}".`, saved.postUpdated);
-      await ctx.reply(detailMessage(ctx, saved.form, saved.fieldId, note));
+      await ctx.update(detailMessage(ctx, saved.form, saved.fieldId, note));
     } catch (error) {
       if (!(error instanceof TryAgainError)) throw error;
-      await ctx.reply(retryReply(ctx, formId, error));
+      await ctx.update(retryReply(ctx, formId, error));
     }
   },
 });
@@ -177,6 +178,7 @@ export async function openEditField(ctx: ButtonContext): Promise<void> {
 export const fieldPageButton = defineButton({
   name: 'field-page',
   ...editorBinding,
+  defer: 'update',
   execute: async (ctx, args) => {
     requireEditor(ctx);
     const form = await formById(ctx, args[0] ?? '');
@@ -187,6 +189,7 @@ export const fieldPageButton = defineButton({
 export const fieldPickSelect = defineSelect({
   name: 'field-pick',
   ...editorBinding,
+  defer: 'update',
   execute: async (ctx, args) => {
     requireEditor(ctx);
     const form = await formById(ctx, args[0] ?? '');
@@ -244,6 +247,7 @@ function readLimits(ctx: Parameters<typeof fieldLimitsModal.execute>[0], kind: L
 export const fieldLimitsModal = defineModal({
   name: 'field-limits-modal',
   ...editorBinding,
+  defer: 'update',
   execute: async (ctx, args) => {
     requireEditor(ctx);
     const formId = args[0] ?? '';
@@ -264,10 +268,10 @@ export const fieldLimitsModal = defineModal({
           throw error;
         }
       });
-      await ctx.reply(detailMessage(ctx, saved.form, fieldId, savedMessage('Saved.', saved.postUpdated)));
+      await ctx.update(detailMessage(ctx, saved.form, fieldId, savedMessage('Saved.', saved.postUpdated)));
     } catch (error) {
       if (!(error instanceof TryAgainError)) throw error;
-      await ctx.reply(retryReply(ctx, formId, error));
+      await ctx.update(retryReply(ctx, formId, error));
     }
   },
 });
