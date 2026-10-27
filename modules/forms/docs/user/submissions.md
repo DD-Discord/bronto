@@ -1,6 +1,6 @@
 # Submissions
 
-Each submission is posted to the form's submissions channel when the member submits the last page.
+Each submission is posted when the member submits the last page: in the submissions channel set in **Settings**, or in the form's own post when no channel is set. An archived post is reopened for it.
 
 ## What is posted
 

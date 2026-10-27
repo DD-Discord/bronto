@@ -83,8 +83,7 @@ export async function postingRefusal(ctx: FormsContext, form: Form, userId: stri
 
 /**
  * Why the member can't fill in the form now, checked in order: closed, not one of the allowed roles, already
- * submitted (a submission still being posted offers Try again and Discard instead), no fields, no channel. Null when
- * they can.
+ * submitted (a submission still being posted offers Try again and Discard instead), no fields. Null when they can.
  */
 export async function refusal(ctx: FormsContext, form: Form, userId: string): Promise<Reply | null> {
   if (!form.active) return 'This form is currently closed.';
@@ -97,7 +96,6 @@ export async function refusal(ctx: FormsContext, form: Form, userId: string): Pr
   if (posting !== null) return posting;
   if (form.oncePerMember && (await hasSubmitted(ctx, form.id, userId))) return 'You already submitted this form.';
   if (form.fields.length === 0) return 'This form has no fields yet.';
-  if (form.channelId === null) return 'This form has no channel for submissions yet.';
   return null;
 }
 
@@ -170,7 +168,7 @@ export async function submit(ctx: FormsContext, formId: string, userId: string, 
         submittedAt,
         answers: draft.answers,
         files: draft.files,
-        channelId: form.channelId!,
+        channelId: form.channelId ?? form.threadId,
         status: 'posting',
         once: form.oncePerMember,
         render: { fields: form.fields, parts, dropped },
@@ -272,8 +270,10 @@ export async function postSubmission(ctx: FormsContext, submissionId: string, li
     const start = submission.partMessageIds.length;
     const pending = new Set(parts.slice(start).flatMap((part) => part.fileKeys));
     const data = await downloadFiles(ctx, submission.files.filter((file) => pending.has(file.key)), limit);
-    const channel = await ctx.client.channels.fetch(submission.channelId);
+    // Fresh, so that an archived post is noticed.
+    const channel = await ctx.client.channels.fetch(submission.channelId, { force: true });
     if (channel === null || !channel.isSendable()) return failure(ctx, form, submissionId, "the submissions channel can't be posted in.");
+    if (channel.isThread() && channel.archived === true) await channel.setArchived(false);
     for (const [index, part] of parts.entries()) {
       if (index < start) continue;
       const message = await channel.send({

@@ -346,3 +346,36 @@ describe('the member queue', () => {
     expect(await draftRows(f)).toEqual([]);
   });
 });
+
+describe("the form's post as the default channel", () => {
+  it("posts into the form's own post when no channel is set", async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1)], { channelId: null });
+    const done = await submitPage(f, await openModal(f, await openerId(f, form)), { fields: { q0000001: 'Hello' } });
+    expect(contentOf(done)).toContain('Submitted to **Story contest**.');
+    expect(postsTo(SUBMIT)).toHaveLength(0);
+    expect(messagesIn(f, form.threadId).map(textOf).join('\n')).toContain('Hello');
+    expect((await submissionRows(f))[0]).toMatchObject({ status: 'posted', channelId: form.threadId });
+  });
+
+  it('unarchives an archived post before posting and leaves it unlocked', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1)], { channelId: null });
+    const opener = await openerId(f, form);
+    const modal = await openModal(f, opener);
+    const thread = (await f.fb.client.channels.fetch(form.threadId)) as import('discord.js').ThreadChannel;
+    await thread.setArchived(true);
+    expect(f.discord.channels.get(form.threadId)).toMatchObject({ thread_metadata: { archived: true } });
+    await submitPage(f, modal, { fields: { q0000001: 'Hello' } });
+    expect(f.discord.channels.get(form.threadId)).toMatchObject({ thread_metadata: { archived: false, locked: false } });
+    expect(messagesIn(f, form.threadId).map(textOf).join('\n')).toContain('Hello');
+  });
+
+  it('still posts into a chosen channel', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1)]);
+    await submitPage(f, await openModal(f, await openerId(f, form)), { fields: { q0000001: 'Hello' } });
+    expect(messagesIn(f, SUBMIT).map(textOf).join('\n')).toContain('Hello');
+    expect(messagesIn(f, form.threadId).map(textOf).join('\n')).not.toContain('Hello');
+  });
+});

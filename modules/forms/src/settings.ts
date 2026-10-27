@@ -43,7 +43,7 @@ export function settingsModalFor(ctx: FormsContext, form: Form, input: SettingsI
   const channel = new ChannelSelectMenuBuilder()
     .setCustomId('channel')
     .addChannelTypes(...CHANNEL_TYPES)
-    .setPlaceholder('Where submissions are posted')
+    .setPlaceholder('This post')
     .setMinValues(0)
     .setMaxValues(1)
     .setRequired(false);
@@ -66,7 +66,7 @@ export function settingsModalFor(ctx: FormsContext, form: Form, input: SettingsI
     .setTitle('Form settings')
     .addLabelComponents(
       new LabelBuilder().setLabel('Name').setTextInputComponent(name),
-      new LabelBuilder().setLabel('Submissions channel').setChannelSelectMenuComponent(channel),
+      new LabelBuilder().setLabel('Submissions channel').setDescription('Leave empty to post submissions in this form\'s post.').setChannelSelectMenuComponent(channel),
       new LabelBuilder().setLabel('Pings').setDescription('Users and roles pinged by each submission.').setMentionableSelectMenuComponent(pings),
       new LabelBuilder().setLabel('Allowed roles').setDescription('Only these roles can fill in the form.').setRoleSelectMenuComponent(roles),
       new LabelBuilder().setLabel('Options').setCheckboxGroupComponent(options),

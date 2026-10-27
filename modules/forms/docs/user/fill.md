@@ -20,7 +20,7 @@ When a page with a file upload is shown again, the files you uploaded before are
 
 ## When you cannot open a form
 
-You are told if the form is closed (not active), if it has no fields or no channel for submissions yet, if only certain roles may fill it in, or if you already submitted a form that allows one submission per member.
+You are told if the form is closed (not active), if it has no fields yet, if only certain roles may fill it in, or if you already submitted a form that allows one submission per member.
 
 If that happens when you send the last page, your draft is kept and you get **Cancel** to delete it. A file that is too large for this server gets **Try again**, which shows its page so you can upload a smaller one.
 

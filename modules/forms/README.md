@@ -1,6 +1,6 @@
 # @bronto/forms
 
-Forms that members fill in from a button in a channel. Each form is a post in a forum channel: you add fields, set where the answers go and who gets pinged, and put a button for it in any channel. Members answer in Discord's pop-up forms, and the submission appears in the channel you chose, with uploaded files attached.
+Forms that members fill in from a button in a channel. Each form is a post in a forum channel: you add fields, set where the answers go (the form's post, or a channel) and who gets pinged, and put a button for it in any channel. Members answer in Discord's pop-up forms, and the submission appears in the form's post or the channel you chose, with uploaded files attached.
 
 Buttons go on a message made from a template of `@bronto/templates`, or on a channel's sticky when `@bronto/sticky` is loaded.
 

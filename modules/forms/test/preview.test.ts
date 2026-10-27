@@ -52,7 +52,7 @@ describe('previewMessage', () => {
     const text = textOf(message);
     expect(text).toContain('Active');
     expect(text).toContain('many per member');
-    expect(text).toContain('<#100000000000000777>');
+    expect(text).toContain('Submissions: <#100000000000000777>');
     expect(text).toContain('<@&100000000000000888>');
     expect(text).toContain('**Page 2**');
     expect(text).toContain('6. Question 6');
@@ -63,6 +63,11 @@ describe('previewMessage', () => {
     const message = await inHandler(fb, async (ctx) => previewMessage(ctx, form([])));
     const line = /Pings: [^"\\]*/.exec(textOf(message))![0];
     expect(line).toBe('Pings: <@&100000000000000888>');
+  });
+
+  it('says the post is used when no channel is set', async () => {
+    const message = await inHandler(fb, async (ctx) => previewMessage(ctx, { ...form([]), channelId: null }));
+    expect(textOf(message)).toContain('Submissions: this post');
   });
 
   it('prints "none" when nobody is pinged', async () => {

@@ -38,7 +38,7 @@ function settingsSummary(form: Form): string {
   return [
     `## ${form.name}`,
     `**${form.active ? 'Active' : 'Inactive'}** · ${form.oncePerMember ? 'once per member' : 'many per member'}`,
-    `Submissions go to: ${form.channelId === null ? 'not set' : `<#${form.channelId}>`}`,
+    `Submissions: ${form.channelId === null ? 'this post' : `<#${form.channelId}>`}`,
     `Pings: ${pings(form)}`,
     `Allowed roles: ${form.allowedRoleIds.length === 0 ? 'everyone' : mentions('@&', form.allowedRoleIds)}`,
   ].join('\n');

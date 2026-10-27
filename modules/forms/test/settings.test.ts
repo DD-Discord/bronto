@@ -89,6 +89,25 @@ describe('settings modal', () => {
     expect(refreshOpeners).toHaveBeenCalledWith(expect.anything(), form.id);
   });
 
+  it('goes back to the form post when the channel is cleared', async () => {
+    const modal = await openSettings();
+    await submitModal(fb, form.threadId, modal, { selections: { channel: [SHOWN], roles: [], options: ['once'] }, mentionables: { pings: {} } });
+    expect((await storedForm(t, form.id)).channelId).toBe(SHOWN);
+    expect(textOf(toJson(discord.messages.get(form.threadId)))).toContain(`Submissions: <#${SHOWN}>`);
+    const again = await openSettings();
+    expect(modalInputs(again).channel!.default_values).toEqual([{ id: SHOWN, type: 'channel' }]);
+    const done = await submitModal(fb, form.threadId, again, { selections: { channel: [], roles: [], options: ['once'] }, mentionables: { pings: {} } });
+    expect(payload(done).content).toContain('saved');
+    expect((await storedForm(t, form.id)).channelId).toBeNull();
+    expect(textOf(toJson(discord.messages.get(form.threadId)))).toContain('Submissions: this post');
+  });
+
+  it('starts a new form without a channel and says the post is used', async () => {
+    expect(form.channelId).toBeNull();
+    expect(textOf(toJson(discord.messages.get(form.threadId)))).toContain('Submissions: this post');
+    expect(modalInputs(await openSettings()).channel!.required).toBeFalsy();
+  });
+
   it('leaves the openers alone when neither activity nor name changed', async () => {
     const modal = await openSettings();
     await submitModal(fb, form.threadId, modal, { selections: { channel: [SHOWN], roles: [], options: ['once'] }, mentionables: { pings: {} } });

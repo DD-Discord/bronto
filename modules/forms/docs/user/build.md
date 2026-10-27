@@ -23,7 +23,7 @@ Removing a field keeps the answers already submitted. Members fill in five field
 The **Settings** button opens one pop-up:
 
 - **Name** of the form.
-- **Submissions channel**: where answers are posted. A form without one cannot be filled in.
+- **Submissions channel**: where answers are posted. Leave it empty to post them in the form's own post, which is where a new form sends them.
 - **Pings**: up to 25 users and roles together. They are pinged by the first message of each submission. You can only pick roles you may mention, and not @everyone.
 - **Allowed roles**: only these roles can fill in the form. Empty means everyone.
 - **Active**: members can fill in the form only while this is checked.

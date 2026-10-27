@@ -1,6 +1,6 @@
 # Forms
 
-Forms that members fill in from a button, with the answers posted to a channel you choose.
+Forms that members fill in from a button, with the answers posted in the form's post or in a channel you choose.
 
 Each form is a post in the forms forum. The post's first message shows the form's settings and fields, with buttons to change them. Members open the form from a button you put in a channel, answer in pop-up forms and get their submission posted for the team. Anyone who may post in the forum can create and change forms.
 
