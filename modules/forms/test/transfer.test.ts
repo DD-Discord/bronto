@@ -124,6 +124,8 @@ describe('delete', () => {
     });
     const done = await clickPreview(fb, discord, form.threadId, 'Delete');
     expect(payload(done).content).toContain(`<#${TEXT}>`);
+    expect(payload(done).content).toContain('form buttons');
+    expect(payload(done).content).not.toContain('opener');
     expect(await storedForm(t, form.id)).toBeDefined();
     expect(discord.channels.has(form.threadId)).toBe(true);
   });

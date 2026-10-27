@@ -80,7 +80,7 @@ export const importModal = defineModal({
     const text = (await uploadedText(ctx)) ?? ctx.field('json');
     if (text.trim() === '') throw new UserError('Paste form JSON or upload a .json file.');
     const parsed = importForm(text);
-    const reason = await checkSettingsAllowed(ctx, await actingMember(ctx), parsed.settings);
+    const reason = await checkSettingsAllowed(ctx, await actingMember(ctx), parsed.settings, form);
     if (reason !== null) throw new UserError(reason);
     const { postUpdated } = await changeForm(ctx, form.id, (current) => {
       const fields = usableIds(parsed.fields, current);
@@ -113,9 +113,9 @@ export async function openImport(ctx: ButtonContext): Promise<void> {
   );
 }
 
-/** Why the form can't be deleted: its openers must go first. */
+/** Why the form can't be deleted: its buttons must go first. */
 const blockedMessage = (form: Form, channels: string[]) =>
-  `Can't delete "${form.name}" while it has openers. Remove them in ${channels.map((id) => `<#${id}>`).join(' ')} first.`;
+  `Can't delete "${form.name}" while it has form buttons. Remove them in ${channels.map((id) => `<#${id}>`).join(' ')} first.`;
 
 async function deleteThread(ctx: FormsContext, threadId: string): Promise<void> {
   try {

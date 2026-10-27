@@ -83,17 +83,18 @@ export async function openSettings(ctx: ButtonContext): Promise<void> {
   await ctx.showModal(settingsModalFor(ctx, form, settingsInputOf(form)));
 }
 
+type Checked = Pick<FormSettings, 'channelId' | 'pingRoleIds'>;
+
 /**
  * Why the member may not set these settings, or null when they may: pinging a role they can't mention, pinging
- * @everyone, or sending submissions to a channel they can't view.
+ * @everyone, or sending submissions to a channel they can't view. Only what differs from `current` is checked, so
+ * other changes can be saved over values someone else set.
  */
-export async function checkSettingsAllowed(
-  ctx: FormsContext,
-  member: GuildMember,
-  settings: Pick<FormSettings, 'channelId' | 'pingRoleIds'>,
-): Promise<string | null> {
+export async function checkSettingsAllowed(ctx: FormsContext, member: GuildMember, settings: Checked, current: Checked): Promise<string | null> {
   const guild = member.guild;
+  const kept = new Set(current.pingRoleIds);
   for (const roleId of settings.pingRoleIds) {
+    if (kept.has(roleId)) continue;
     // The @everyone role has the ID of the server.
     if (roleId === guild.id) return "A submission can't ping @everyone.";
     const role = guild.roles.cache.get(roleId);
@@ -102,7 +103,7 @@ export async function checkSettingsAllowed(
       return `You can't mention the role **${escapeMarkdown(role.name)}**, so submissions can't ping it.`;
     }
   }
-  if (settings.channelId !== null) {
+  if (settings.channelId !== null && settings.channelId !== current.channelId) {
     const channel = await ctx.client.channels.fetch(settings.channelId).catch((error: unknown) => {
       if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return null;
       throw error;
@@ -134,8 +135,8 @@ export const settingsModalDefinition = defineModal({
     const draft: Draft = { kind: 'settings', input };
     try {
       if (input.name === '') throw new TryAgainError("The name can't be empty.", draft);
-      await formById(ctx, formId);
-      const reason = await checkSettingsAllowed(ctx, await actingMember(ctx), input);
+      const form = await formById(ctx, formId);
+      const reason = await checkSettingsAllowed(ctx, await actingMember(ctx), input, form);
       if (reason !== null) throw new TryAgainError(reason, draft);
       const { postUpdated } = await changeForm(ctx, formId, () => ({
         name: input.name,

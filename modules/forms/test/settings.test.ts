@@ -2,10 +2,11 @@ import { FakeDiscordHttp } from '@bronto/core/testing';
 import { ChannelType, OverwriteType, PermissionFlagsBits } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
-import type { Form } from '../src/db/schema.js';
+import { eq } from 'drizzle-orm';
+import { forms, type Form } from '../src/db/schema.js';
 import { refreshOpeners } from '../src/openers.js';
 import { checkSettingsAllowed } from '../src/settings.js';
-import { GUILD, inHandler, prepareFormsBot, ready, type FormsBot } from './harness.js';
+import { formsDb, GUILD, inHandler, prepareFormsBot, ready, type FormsBot } from './harness.js';
 import { buttonId, click, clickPreview, makeForm, modalInputs, payload, shownModal, storeForum, storedForm, submitModal, textOf, toJson } from './ui.js';
 
 vi.mock('../src/openers.js', () => ({ refreshOpeners: vi.fn(async () => undefined) }));
@@ -109,6 +110,33 @@ describe('settings modal', () => {
     expect(modalInputs(shownModal(again)).name!.value).toBe('Typed name');
   });
 
+  it('saves over a stored ping role and channel the member could not set', async () => {
+    await formsDb(t).run(async (tx) => {
+      await tx.update(forms).set({ pingRoleIds: [PLAIN_ROLE], channelId: HIDDEN }).where(eq(forms.id, form.id));
+    });
+    const modal = await openSettings({ userId: MEMBER });
+    const done = await submitModal(
+      fb,
+      form.threadId,
+      modal,
+      { selections: { channel: [HIDDEN], roles: [], options: ['active'] }, mentionables: { pings: { roles: [PLAIN_ROLE] } } },
+      { userId: MEMBER },
+    );
+    expect(payload(done).content).toContain('saved');
+    expect(await storedForm(t, form.id)).toMatchObject({ active: true, pingRoleIds: [PLAIN_ROLE], channelId: HIDDEN });
+  });
+
+  it('imports over a stored ping role and channel the member could not set', async () => {
+    await formsDb(t).run(async (tx) => {
+      await tx.update(forms).set({ pingRoleIds: [PLAIN_ROLE], channelId: HIDDEN }).where(eq(forms.id, form.id));
+    });
+    const json = JSON.stringify({ version: 1, settings: { name: 'Story contest', active: true, channelId: HIDDEN, pingUserIds: [], pingRoleIds: [PLAIN_ROLE], allowedRoleIds: [], oncePerMember: true }, fields: [] });
+    const open = await clickPreview(fb, discord, form.threadId, 'Import', { userId: MEMBER });
+    const done = await submitModal(fb, form.threadId, shownModal(open), { fields: { json }, uploads: { file: [] } }, { userId: MEMBER });
+    expect(payload(done).content).toContain('imported');
+    expect((await storedForm(t, form.id)).active).toBe(true);
+  });
+
   it('refuses a channel the member cannot view', async () => {
     const modal = await openSettings({ userId: MEMBER });
     const done = await submitModal(
@@ -129,27 +157,35 @@ describe('checkSettingsAllowed', () => {
   it('allows a role mentionable by anyone, or any role for a member who can mention everyone', async () => {
     discord.guilds.get(GUILD)!.roles.find((r) => r.id === OPEN_ROLE)!.mentionable = true;
     discord.addMember(GUILD, '100000000000000051');
-    expect(await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, await memberOf(MEMBER), settings({ pingRoleIds: [OPEN_ROLE] })))).toBeNull();
+    expect(await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, await memberOf(MEMBER), settings({ pingRoleIds: [OPEN_ROLE] }), settings()))).toBeNull();
     const owner = await memberOf('100000000000000099');
-    expect(await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, owner, settings({ pingRoleIds: [PLAIN_ROLE] })))).toBeNull();
+    expect(await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, owner, settings({ pingRoleIds: [PLAIN_ROLE] }), settings()))).toBeNull();
   });
 
   it('refuses a role the member cannot mention, naming it', async () => {
-    const reason = await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, await memberOf(MEMBER), settings({ pingRoleIds: [PLAIN_ROLE] })));
+    const reason = await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, await memberOf(MEMBER), settings({ pingRoleIds: [PLAIN_ROLE] }), settings()));
     expect(reason).toContain('Judges');
   });
 
   it('refuses to ping @everyone, even for the owner', async () => {
     const owner = await memberOf('100000000000000099');
-    const reason = await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, owner, settings({ pingRoleIds: [GUILD] })));
+    const reason = await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, owner, settings({ pingRoleIds: [GUILD] }), settings()));
     expect(reason).toContain('@everyone');
   });
 
+  it('checks only ping roles and a channel that differ from the current ones', async () => {
+    const current = { channelId: HIDDEN, pingRoleIds: [PLAIN_ROLE] };
+    const member = await memberOf(MEMBER);
+    expect(await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, member, current, current))).toBeNull();
+    const added = await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, member, { channelId: HIDDEN, pingRoleIds: [PLAIN_ROLE] }, settings()));
+    expect(added).toContain('Judges');
+  });
+
   it('refuses a channel the member cannot view and one that does not exist', async () => {
-    const hidden = await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, await memberOf(MEMBER), settings({ channelId: HIDDEN })));
+    const hidden = await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, await memberOf(MEMBER), settings({ channelId: HIDDEN }), settings()));
     expect(hidden).toContain(`<#${HIDDEN}>`);
-    const missing = await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, await memberOf(MEMBER), settings({ channelId: '100000000000000999' })));
+    const missing = await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, await memberOf(MEMBER), settings({ channelId: '100000000000000999' }), settings()));
     expect(missing).toContain('100000000000000999');
-    expect(await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, await memberOf(MEMBER), settings({ channelId: SHOWN })))).toBeNull();
+    expect(await inHandler(fb, async (ctx) => checkSettingsAllowed(ctx, await memberOf(MEMBER), settings({ channelId: SHOWN }), settings()))).toBeNull();
   });
 });
