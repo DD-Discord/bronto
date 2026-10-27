@@ -175,6 +175,9 @@ importers:
       '@bronto/example-notes':
         specifier: workspace:*
         version: link:examples/notes
+      '@bronto/forms':
+        specifier: workspace:*
+        version: link:modules/forms
       '@bronto/sticky':
         specifier: workspace:*
         version: link:modules/sticky
@@ -237,6 +240,30 @@ importers:
       '@bronto/core':
         specifier: workspace:*
         version: link:../../packages/core
+      discord.js:
+        specifier: 14.27.0
+        version: 14.27.0
+      drizzle-kit:
+        specifier: 0.31.11
+        version: 0.31.11
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@types/pg@8.23.1)(pg@8.23.1)
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+
+  modules/forms:
+    devDependencies:
+      '@bronto/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@bronto/sticky':
+        specifier: workspace:*
+        version: link:../sticky
+      '@bronto/templates':
+        specifier: workspace:*
+        version: link:../templates
       discord.js:
         specifier: 14.27.0
         version: 14.27.0

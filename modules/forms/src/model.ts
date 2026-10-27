@@ -1,0 +1,154 @@
+import { UserError } from '@bronto/core';
+import { randomInt } from 'node:crypto';
+import { z } from 'zod';
+
+/** Fields per modal page (Discord allows 5 labelled components per modal). */
+export const PAGE_SIZE = 5;
+
+export type FieldType = 'short' | 'long' | 'select' | 'radio' | 'checkboxes' | 'file';
+
+const MAX_LABEL = 45;
+const MAX_DESCRIPTION = 100;
+const MAX_TEXT = 4000;
+const MAX_OPTIONS = 25;
+const MAX_OPTION = 100;
+const MAX_FILES = 10;
+const MAX_FILE_TYPES = 10;
+const MAX_PINGS = 100;
+
+const fieldId = z.string().regex(/^[a-z0-9]{8}$/, 'must be 8 lowercase letters or digits');
+const label = z.string().min(1).max(MAX_LABEL);
+const description = z.string().min(1).max(MAX_DESCRIPTION);
+const snowflake = z.string().regex(/^\d{17,20}$/, 'must be a Discord ID');
+
+const base = {
+  id: fieldId,
+  label,
+  description: description.optional(),
+  required: z.boolean(),
+};
+
+const options = z
+  .array(z.string().min(1).max(MAX_OPTION))
+  .min(1)
+  .max(MAX_OPTIONS)
+  .refine((list) => new Set(list).size === list.length, 'option labels must be unique');
+
+const textField = z.strictObject({
+  ...base,
+  type: z.enum(['short', 'long']),
+  minLength: z.number().int().min(0).max(MAX_TEXT).optional(),
+  maxLength: z.number().int().min(1).max(MAX_TEXT).optional(),
+  placeholder: z.string().min(1).max(MAX_DESCRIPTION).optional(),
+});
+
+const choiceField = z.strictObject({
+  ...base,
+  type: z.enum(['select', 'checkboxes']),
+  options,
+  minChoices: z.number().int().min(0).max(MAX_OPTIONS).optional(),
+  maxChoices: z.number().int().min(1).max(MAX_OPTIONS).optional(),
+});
+
+const radioField = z.strictObject({
+  ...base,
+  type: z.literal('radio'),
+  options,
+});
+
+/** `image`, `video`, `audio` or a dotted extension such as `.pdf`. */
+const fileType = z.union([z.enum(['image', 'video', 'audio']), z.string().regex(/^\.[A-Za-z0-9]{1,15}$/, 'must be image, video, audio or an extension like .pdf')]);
+
+const fileField = z.strictObject({
+  ...base,
+  type: z.literal('file'),
+  maxFiles: z.number().int().min(1).max(MAX_FILES),
+  fileTypes: z.array(fileType).max(MAX_FILE_TYPES),
+});
+
+export const fieldSchema = z
+  .discriminatedUnion('type', [textField, choiceField, radioField, fileField])
+  .superRefine((field, ctx) => {
+    if (field.type === 'short' || field.type === 'long') {
+      if (field.minLength !== undefined && field.maxLength !== undefined && field.minLength > field.maxLength) {
+        ctx.addIssue({ code: 'custom', path: ['minLength'], message: 'minLength must not exceed maxLength' });
+      }
+    } else if (field.type === 'select' || field.type === 'checkboxes') {
+      if (field.maxChoices !== undefined && field.maxChoices > field.options.length) {
+        ctx.addIssue({ code: 'custom', path: ['maxChoices'], message: 'maxChoices must not exceed the number of options' });
+      }
+      if (field.minChoices !== undefined && field.minChoices > (field.maxChoices ?? field.options.length)) {
+        ctx.addIssue({ code: 'custom', path: ['minChoices'], message: 'minChoices must not exceed maxChoices' });
+      }
+    }
+  });
+
+export type Field = z.infer<typeof fieldSchema>;
+
+const settingsSchema = z.strictObject({
+  name: z.string().min(1).max(MAX_LABEL),
+  active: z.boolean(),
+  channelId: snowflake.nullable(),
+  pingUserIds: z.array(snowflake).max(MAX_PINGS),
+  pingRoleIds: z.array(snowflake).max(MAX_PINGS),
+  allowedRoleIds: z.array(snowflake).max(MAX_PINGS),
+  oncePerMember: z.boolean(),
+});
+
+export type FormSettings = z.infer<typeof settingsSchema>;
+
+export const formJsonSchema = z
+  .strictObject({
+    version: z.literal(1),
+    settings: settingsSchema,
+    fields: z.array(fieldSchema),
+  })
+  .superRefine((form, ctx) => {
+    const seen = new Set<string>();
+    form.fields.forEach((field, index) => {
+      if (seen.has(field.id)) {
+        ctx.addIssue({ code: 'custom', path: ['fields', index, 'id'], message: `duplicate field ID "${field.id}"` });
+      }
+      seen.add(field.id);
+    });
+  });
+
+/** Splits fields into modal pages of `PAGE_SIZE`, keeping their order. */
+export function pages(fields: Field[]): Field[][] {
+  const result: Field[][] = [];
+  for (let i = 0; i < fields.length; i += PAGE_SIZE) result.push(fields.slice(i, i + PAGE_SIZE));
+  return result;
+}
+
+const ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
+
+/** A random 8-character base36 ID that is not in `existing`. */
+export function newFieldId(existing: Iterable<string>): string {
+  const used = new Set(existing);
+  for (;;) {
+    let id = '';
+    for (let i = 0; i < 8; i++) id += ID_ALPHABET[randomInt(ID_ALPHABET.length)];
+    if (!used.has(id)) return id;
+  }
+}
+
+export function exportForm(settings: FormSettings, fields: Field[]): string {
+  return JSON.stringify({ version: 1, settings, fields }, null, 2);
+}
+
+/** Parses an exported form; throws a `UserError` naming the first problem and its path. */
+export function importForm(text: string): { settings: FormSettings; fields: Field[] } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new UserError('That is not valid JSON.');
+  }
+  const parsed = formJsonSchema.safeParse(raw);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0]!;
+    const path = issue.path.join('.');
+    throw new UserError(`Invalid form${path ? ` at ${path}` : ''}: ${issue.message}`);
+  }
+  return { settings: parsed.data.settings, fields: parsed.data.fields };
+}
