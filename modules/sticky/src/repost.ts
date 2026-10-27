@@ -196,20 +196,7 @@ export class Reposter {
           task.log.warn({ err: error, channelId: record.channelId }, 'Deleting the sticky post failed');
         }
       }
-      const shared = await task.db.run(async (tx) =>
-        tx
-          .select({ channelId: stickies.channelId })
-          .from(stickies)
-          .where(and(eq(stickies.webhookId, sticky.webhookId), ne(stickies.channelId, record.channelId)))
-          .limit(1),
-      );
-      if (shared.length === 0) {
-        try {
-          await withWebhookErrors(sticky.webhookToken, () => task.client.deleteWebhook(sticky.webhookId, { token: sticky.webhookToken }));
-        } catch (error) {
-          if (!(error instanceof UnknownWebhookError)) throw error;
-        }
-      }
+      await this.deleteWebhookUnlessShared(task, sticky, record.channelId);
     });
     ctx.emit(stickyEvents.deleted, { channelId: record.channelId });
   }
@@ -251,11 +238,14 @@ export class Reposter {
       return;
     }
     const components = await this.componentsFor(ctx, channelId);
+    // Discord rejects components from webhooks of other applications, so such a webhook is swapped out.
+    const foreign = components.length > 0 && await this.isForeign(ctx, sticky);
     try {
+      if (foreign) throw new UnknownWebhookError();
       await this.post(ctx, sticky, message, components, lastMessageId);
     } catch (error) {
       if (!(error instanceof UnknownWebhookError)) throw error;
-      const replacement = await this.replaceWebhook(ctx, sticky);
+      const replacement = await this.replaceWebhook(ctx, sticky, foreign);
       // Only the deleted webhook could remove its posts; the bot removes the last one with its own permissions.
       if (lastMessageId !== null) {
         try {
@@ -284,6 +274,7 @@ export class Reposter {
     const message = await messageOf(ctx, sticky);
     if (message === null) return;
     const components = await this.componentsFor(ctx, channelId);
+    if (components.length > 0 && await this.isForeign(ctx, sticky)) return this.repost(ctx, channelId);
     try {
       const webhook = await resolveWebhook(ctx.client, { id: sticky.webhookId, token: sticky.webhookToken });
       await withWebhookErrors(sticky.webhookToken, () => webhook.editMessage(lastMessageId, {
@@ -344,10 +335,39 @@ export class Reposter {
     ctx.emit(stickyEvents.posted, { channelId: sticky.channelId, messageId });
   }
 
-  private async replaceWebhook(ctx: StickyContext, sticky: Sticky): Promise<IncomingWebhook> {
+  /** Whether the sticky's webhook belongs to another application. A missing webhook counts as not foreign. */
+  private async isForeign(ctx: StickyContext, sticky: Sticky): Promise<boolean> {
+    try {
+      const webhook = await resolveWebhook(ctx.client, { id: sticky.webhookId, token: sticky.webhookToken });
+      return webhook.applicationId !== null && webhook.applicationId !== ctx.client.application?.id;
+    } catch (error) {
+      if (error instanceof UnknownWebhookError) return false;
+      throw error;
+    }
+  }
+
+  /** Deletes the sticky's webhook unless a sticky of another channel uses it too. */
+  private async deleteWebhookUnlessShared(ctx: StickyContext, sticky: Sticky, channelId: string): Promise<void> {
+    const shared = await ctx.db.run(async (tx) =>
+      tx
+        .select({ channelId: stickies.channelId })
+        .from(stickies)
+        .where(and(eq(stickies.webhookId, sticky.webhookId), ne(stickies.channelId, channelId)))
+        .limit(1),
+    );
+    if (shared.length > 0) return;
+    try {
+      await withWebhookErrors(sticky.webhookToken, () => ctx.client.deleteWebhook(sticky.webhookId, { token: sticky.webhookToken }));
+    } catch (error) {
+      if (!(error instanceof UnknownWebhookError)) throw error;
+    }
+  }
+
+  /** Creates a webhook for the sticky; a webhook of another application is deleted unless shared, but never fails the swap. */
+  private async replaceWebhook(ctx: StickyContext, sticky: Sticky, foreign = false): Promise<IncomingWebhook> {
     const { webhook } = await ensureWebhook(
       ctx.client, sticky.channelId,
-      { id: sticky.webhookId, token: sticky.webhookToken },
+      foreign ? null : { id: sticky.webhookId, token: sticky.webhookToken },
       ctx.config.webhookName,
     );
     await ctx.db.run(async (tx) => {
@@ -357,7 +377,14 @@ export class Reposter {
         .where(eq(stickies.channelId, sticky.channelId));
     });
     this.index.updateWebhook(sticky.channelId, webhook.id);
-    ctx.log.info({ channelId: sticky.channelId }, 'Replaced the deleted webhook of a sticky');
+    if (foreign) {
+      try {
+        await this.deleteWebhookUnlessShared(ctx, sticky, sticky.channelId);
+      } catch (error) {
+        ctx.log.warn({ err: error, channelId: sticky.channelId }, 'Deleting the replaced webhook failed');
+      }
+    }
+    ctx.log.info({ channelId: sticky.channelId, foreign }, foreign ? 'Replaced the webhook of another application' : 'Replaced the deleted webhook of a sticky');
     return webhook;
   }
 

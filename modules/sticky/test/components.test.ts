@@ -106,6 +106,74 @@ describe('components collector', () => {
   });
 });
 
+describe('foreign webhooks', () => {
+  const FOREIGN_APP = '100000000000000092';
+
+  async function seedForeign(): Promise<{ id: string; token: string }> {
+    const webhook = discord.addWebhook(CHANNEL, undefined, { applicationId: FOREIGN_APP });
+    await start([], async () => void (await insertSticky(t, discord, { channelId: CHANNEL, webhookId: webhook.id, webhookToken: webhook.token })));
+    return webhook;
+  }
+
+  it('replaces a foreign webhook when rows are shown', async () => {
+    const old = await seedForeign();
+    await say(CHANNEL);
+    const posts = webhookRequests('POST');
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.path).not.toContain(old.id);
+    expect(posts[0]).toMatchObject({ body: { components: [row('one')] } });
+    const { rows } = await t.database.adminPool.query('select webhook_id from sticky.stickies where channel_id = $1', [CHANNEL]);
+    expect(rows[0].webhook_id).not.toBe(old.id);
+    expect(discord.webhooks.has(old.id)).toBe(false);
+  });
+
+  it('removes the previous post through the channel when replacing', async () => {
+    const old = await seedForeign();
+    answerWith = () => [];
+    await say(CHANNEL);
+    const previous = discord.sent[0]!.id;
+    answerWith = () => [row('one')];
+    await say(CHANNEL);
+    expect(sb.requests.some((r) => r.method === 'DELETE' && r.path === `/channels/${CHANNEL}/messages/${previous}`)).toBe(true);
+    expect(discord.messages.has(previous)).toBe(false);
+    expect(webhookRequests('POST').at(-1)!.path).not.toContain(old.id);
+    expect(webhookRequests('POST').at(-1)).toMatchObject({ body: { components: [row('one')] } });
+  });
+
+  it('keeps a foreign webhook without rows', async () => {
+    answerWith = () => [];
+    const old = await seedForeign();
+    await say(CHANNEL);
+    expect(webhookRequests('POST')).toHaveLength(1);
+    expect(webhookRequests('POST')[0]!.path).toContain(old.id);
+    expect(discord.webhooks.has(old.id)).toBe(true);
+  });
+
+  it('keeps a foreign webhook another sticky shares', async () => {
+    const old = discord.addWebhook(CHANNEL, undefined, { applicationId: FOREIGN_APP });
+    await start([], async () => {
+      await insertSticky(t, discord, { channelId: CHANNEL, webhookId: old.id, webhookToken: old.token });
+      await insertSticky(t, discord, { channelId: QUIET_CHANNEL, webhookId: old.id, webhookToken: old.token });
+    });
+    await say(CHANNEL);
+    expect(discord.webhooks.has(old.id)).toBe(true);
+  });
+
+  it('refresh falls back to a repost on a foreign webhook', async () => {
+    answerWith = () => [];
+    const old = await seedForeign();
+    await say(CHANNEL);
+    answerWith = () => [row('two')];
+    const runtime = sb.bot.runtimes.find((entry) => entry.name === 'sticky_buttons')!;
+    await sb.bot.dispatcher.runHandler(runtime, GUILD, null, 'test', async (ctx) => ctx.modules.get(sticky).refresh(CHANNEL));
+    await sb.bot.idle();
+    expect(webhookRequests('PATCH')).toHaveLength(0);
+    expect(webhookRequests('POST')).toHaveLength(2);
+    expect(webhookRequests('POST')[1]!.path).not.toContain(old.id);
+    expect(webhookRequests('POST')[1]).toMatchObject({ body: { components: [row('two')] } });
+  });
+});
+
 describe('api', () => {
   async function asOther<T>(run: (ctx: HandlerContext, api: StickyApi) => Promise<T>): Promise<T> {
     const runtime = sb.bot.runtimes.find((entry) => entry.name === 'sticky_buttons')!;
