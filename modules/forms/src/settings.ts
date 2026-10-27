@@ -9,6 +9,7 @@ import {
   ModalBuilder,
   PermissionFlagsBits,
   RESTJSONErrorCodes,
+  DiscordAPIError,
   RoleSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
@@ -106,7 +107,7 @@ export async function checkSettingsAllowed(ctx: FormsContext, member: GuildMembe
   }
   if (settings.channelId !== null && settings.channelId !== current.channelId) {
     const channel = await ctx.client.channels.fetch(settings.channelId).catch((error: unknown) => {
-      if ((error as { code?: unknown } | null)?.code === RESTJSONErrorCodes.UnknownChannel) return null;
+      if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return null;
       throw error;
     });
     if (channel === null || channel.isDMBased() || channel.guildId !== guild.id) return `The channel <#${settings.channelId}> doesn't exist in this server.`;
