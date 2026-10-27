@@ -15,7 +15,7 @@ import type { FormsContext } from './context.js';
 import type { Form } from './db/schema.js';
 import { pages, type Field } from './model.js';
 
-// Discord caps the text of all text displays in a message at 4000 characters.
+// Discord caps the text of all text displays and button labels in a message at 4000 characters.
 const TEXT_BUDGET = 4000;
 
 const TYPE_NAMES: Record<Field['type'], string> = {
@@ -29,12 +29,17 @@ const TYPE_NAMES: Record<Field['type'], string> = {
 
 const mentions = (prefix: string, ids: string[]) => (ids.length === 0 ? 'none' : ids.map((id) => `<${prefix}${id}>`).join(' '));
 
+function pings(form: Form): string {
+  const all = [...form.pingUserIds.map((id) => `<@${id}>`), ...form.pingRoleIds.map((id) => `<@&${id}>`)];
+  return all.length === 0 ? 'none' : all.join(' ');
+}
+
 function settingsSummary(form: Form): string {
   return [
     `## ${form.name}`,
     `**${form.active ? 'Active' : 'Inactive'}** · ${form.oncePerMember ? 'once per member' : 'many per member'}`,
     `Submissions go to: ${form.channelId === null ? 'not set' : `<#${form.channelId}>`}`,
-    `Pings: ${mentions('@', form.pingUserIds)} ${form.pingRoleIds.length > 0 ? mentions('@&', form.pingRoleIds) : ''}`.trimEnd(),
+    `Pings: ${pings(form)}`,
     `Allowed roles: ${form.allowedRoleIds.length === 0 ? 'everyone' : mentions('@&', form.allowedRoleIds)}`,
   ].join('\n');
 }
@@ -75,23 +80,38 @@ function button(ctx: FormsContext, definition: typeof addFieldButton, threadId: 
     .setDisabled(disabled);
 }
 
+type PreviewButton = { definition: typeof addFieldButton; label: string; style: ButtonStyle; disabled?: boolean };
+
+/** The preview's button rows; their labels count toward Discord's text limit. */
+function buttonRows(form: Form): PreviewButton[][] {
+  return [
+    [
+      { definition: addFieldButton, label: 'Add field', style: ButtonStyle.Primary },
+      { definition: editFieldButton, label: 'Edit field', style: ButtonStyle.Secondary, disabled: form.fields.length === 0 },
+      { definition: settingsButton, label: 'Settings', style: ButtonStyle.Secondary },
+    ],
+    [
+      { definition: exportButton, label: 'Export', style: ButtonStyle.Secondary },
+      { definition: importButton, label: 'Import', style: ButtonStyle.Secondary },
+      { definition: deleteButton, label: 'Delete', style: ButtonStyle.Danger },
+    ],
+  ];
+}
+
 /** The starter message of a form's post: its settings and fields, and the buttons that change them. */
 export function previewMessage(ctx: FormsContext, form: Form): ReplyMessage {
   const summary = settingsSummary(form);
+  const rows = buttonRows(form);
+  const labels = rows.flat().reduce((sum, entry) => sum + entry.label.length, 0);
   const container = new ContainerBuilder()
     .addTextDisplayComponents(new TextDisplayBuilder().setContent(summary))
     .addSeparatorComponents(new SeparatorBuilder())
-    .addTextDisplayComponents(new TextDisplayBuilder().setContent(fieldList(form.fields, TEXT_BUDGET - summary.length)))
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(fieldList(form.fields, TEXT_BUDGET - summary.length - labels)))
     .addActionRowComponents(
-      new ActionRowBuilder<ButtonBuilder>().addComponents(
-        button(ctx, addFieldButton, form.threadId, 'Add field', ButtonStyle.Primary),
-        button(ctx, editFieldButton, form.threadId, 'Edit field', ButtonStyle.Secondary, form.fields.length === 0),
-        button(ctx, settingsButton, form.threadId, 'Settings', ButtonStyle.Secondary),
-      ),
-      new ActionRowBuilder<ButtonBuilder>().addComponents(
-        button(ctx, exportButton, form.threadId, 'Export', ButtonStyle.Secondary),
-        button(ctx, importButton, form.threadId, 'Import', ButtonStyle.Secondary),
-        button(ctx, deleteButton, form.threadId, 'Delete', ButtonStyle.Danger),
+      rows.map((row) =>
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          row.map((entry) => button(ctx, entry.definition, form.threadId, entry.label, entry.style, entry.disabled)),
+        ),
       ),
     );
   return { components: [container], flags: MessageFlags.IsComponentsV2 };
