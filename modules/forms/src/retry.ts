@@ -2,7 +2,7 @@ import { defineButton, UserError, type ReplyMessage } from '@bronto/core';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, type ModalBuilder } from 'discord.js';
 import { randomBytes } from 'node:crypto';
 import type { FormsContext } from './context.js';
-import type { FieldInput } from './fields.js';
+import type { FieldInput, LimitsInput } from './fields.js';
 import type { FieldType } from './model.js';
 import { formById, requireEditor } from './permissions.js';
 import type { Form } from './db/schema.js';
@@ -22,6 +22,7 @@ export interface SettingsInput {
 /** What a member typed into a modal that [Try again] fills back in. */
 export type Draft =
   | { kind: 'field'; type: FieldType; fieldId: string | null; input: FieldInput }
+  | { kind: 'limits'; fieldId: string; input: LimitsInput }
   | { kind: 'settings'; input: SettingsInput };
 
 /** Wrong input: the reply names the problem and offers [Try again] with what was typed. */

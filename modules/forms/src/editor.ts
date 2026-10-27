@@ -9,14 +9,21 @@ import {
 import type { FormsContext } from './context.js';
 import type { Form } from './db/schema.js';
 import {
+  applyLimits,
   buildField,
   FIELD_TYPE_NAMES,
   FIELD_TYPES,
   FieldInputError,
   fieldModal,
+  fieldSummary,
   inputOf,
+  LIMITS_BUTTON,
+  limitsInputOf,
+  limitsKindOf,
+  limitsModal,
   parsePosition,
   type FieldInput,
+  type LimitsInput,
 } from './fields.js';
 import { newFieldId, type Field, type FieldType } from './model.js';
 import { formById, formForThread, requireEditor } from './permissions.js';
@@ -42,11 +49,11 @@ export function fieldModalFor(ctx: FormsContext, form: Form, type: FieldType, fi
   return fieldModal(customId, type, fieldId !== null, input);
 }
 
-function readInput(ctx: Parameters<typeof fieldModalDefinition.execute>[0]): FieldInput {
+function readInput(ctx: Parameters<typeof fieldModalDefinition.execute>[0], type: FieldType): FieldInput {
   return {
     label: ctx.field('label'),
     description: ctx.field('description'),
-    options: ctx.field('options'),
+    options: type === 'select' || type === 'radio' || type === 'checkboxes' ? ctx.field('options') : '',
     position: ctx.field('position'),
     required: ctx.interaction.fields.getCheckbox('required'),
   };
@@ -55,11 +62,13 @@ function readInput(ctx: Parameters<typeof fieldModalDefinition.execute>[0]): Fie
 /** Saves the field a modal describes: a new one when `fieldId` is null, otherwise the stored one with that ID. */
 async function saveField(ctx: FormsContext, formId: string, type: FieldType, fieldId: string | null, input: FieldInput) {
   const draft: Draft = { kind: 'field', type, fieldId, input };
-  return changeForm(ctx, formId, (form) => {
+  let savedId = fieldId ?? '';
+  const saved = await changeForm(ctx, formId, (form) => {
     const index = fieldId === null ? -1 : form.fields.findIndex((field) => field.id === fieldId);
     if (fieldId !== null && index < 0) throw new UserError('That field no longer exists.');
     const previous = index < 0 ? null : form.fields[index]!;
     const id = fieldId ?? newFieldId([...form.fields.map((field) => field.id), ...form.removedFieldIds]);
+    savedId = id;
     let field: Field;
     let target: number | null;
     try {
@@ -74,6 +83,7 @@ async function saveField(ctx: FormsContext, formId: string, type: FieldType, fie
     fields.splice(target ?? (index >= 0 ? index : fields.length), 0, field);
     return { fields };
   });
+  return { ...saved, fieldId: savedId };
 }
 
 registerRetry('field', (ctx, form, draft) => fieldModalFor(ctx, form, draft.type, draft.fieldId, draft.input));
@@ -87,9 +97,10 @@ export const fieldModalDefinition = defineModal({
     const type = typeArg(args[1]);
     const fieldId = args[2] === undefined || args[2] === '-' ? null : args[2];
     try {
-      const input = readInput(ctx);
+      const input = readInput(ctx, type);
       const saved = await saveField(ctx, formId, type, fieldId, input);
-      await ctx.reply(savedMessage(`${fieldId === null ? 'Added' : 'Saved'} "${input.label.trim()}".`, saved.postUpdated));
+      const note = savedMessage(`${fieldId === null ? 'Added' : 'Saved'} "${input.label.trim()}".`, saved.postUpdated);
+      await ctx.reply(detailMessage(ctx, saved.form, saved.fieldId, note));
     } catch (error) {
       if (!(error instanceof TryAgainError)) throw error;
       await ctx.reply(retryReply(ctx, formId, error));
@@ -115,9 +126,22 @@ export const fieldTypeSelect = defineSelect({
     requireEditor(ctx);
     const form = await formById(ctx, args[0] ?? '');
     const type = typeArg(ctx.values[0]);
-    await ctx.showModal(fieldModalFor(ctx, form, type, null, inputOf(null, type, null)));
+    await ctx.showModal(fieldModalFor(ctx, form, type, null, inputOf(null, null)));
   },
 });
+
+/** The field's summary with buttons to edit it, change its type-specific settings (if its type has any) and remove it. */
+function detailMessage(ctx: FormsContext, form: Form, fieldId: string, note?: string): ReplyMessage {
+  const index = form.fields.findIndex((field) => field.id === fieldId);
+  const field = form.fields[index]!;
+  const button = (definition: typeof fieldEditButton, label: string, style: ButtonStyle) =>
+    new ButtonBuilder().setCustomId(ctx.customId(definition, [form.id, field.id])).setLabel(label).setStyle(style);
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button(fieldEditButton, 'Edit', ButtonStyle.Primary));
+  const kind = limitsKindOf(field.type);
+  if (kind !== null) row.addComponents(button(fieldLimitsButton, LIMITS_BUTTON[kind], ButtonStyle.Secondary));
+  row.addComponents(button(fieldRemoveButton, 'Remove field', ButtonStyle.Danger));
+  return { content: note === undefined ? fieldSummary(field, index) : `${note}\n\n${fieldSummary(field, index)}`, components: [row] };
+}
 
 function picker(ctx: FormsContext, form: Form, page: number): ReplyMessage {
   const pages = Math.max(1, Math.ceil(form.fields.length / PICKER_SIZE));
@@ -168,18 +192,7 @@ export const fieldPickSelect = defineSelect({
     const form = await formById(ctx, args[0] ?? '');
     const index = form.fields.findIndex((field) => field.id === ctx.values[0]);
     if (index < 0) throw new UserError('That field no longer exists.');
-    const field = form.fields[index]!;
-    const button = (definition: typeof fieldEditButton, label: string, style: ButtonStyle) =>
-      new ButtonBuilder().setCustomId(ctx.customId(definition, [form.id, field.id])).setLabel(label).setStyle(style);
-    await ctx.update({
-      content: `**${index + 1}. ${field.label}** · ${FIELD_TYPE_NAMES[field.type].toLowerCase()} · ${field.required ? 'required' : 'optional'}`,
-      components: [
-        new ActionRowBuilder<ButtonBuilder>().addComponents(
-          button(fieldEditButton, 'Edit', ButtonStyle.Primary),
-          button(fieldRemoveButton, 'Remove field', ButtonStyle.Danger),
-        ),
-      ],
-    });
+    await ctx.update(detailMessage(ctx, form, form.fields[index]!.id));
   },
 });
 
@@ -192,7 +205,70 @@ export const fieldEditButton = defineButton({
     const index = form.fields.findIndex((field) => field.id === args[1]);
     if (index < 0) throw new UserError('That field no longer exists.');
     const field = form.fields[index]!;
-    await ctx.showModal(fieldModalFor(ctx, form, field.type, field.id, inputOf(field, field.type, index + 1)));
+    await ctx.showModal(fieldModalFor(ctx, form, field.type, field.id, inputOf(field, index + 1)));
+  },
+});
+
+function limitsModalFor(ctx: FormsContext, form: Form, fieldId: string, input: LimitsInput): ModalBuilder {
+  return limitsModal(ctx.customId(fieldLimitsModal, [form.id, fieldId]), input);
+}
+
+registerRetry('limits', (ctx, form, draft) => limitsModalFor(ctx, form, draft.fieldId, draft.input));
+
+/** Opens the type-specific pop-up of a field: `[formId, fieldId]`. */
+export const fieldLimitsButton = defineButton({
+  name: 'field-limits',
+  ...editorBinding,
+  execute: async (ctx, args) => {
+    requireEditor(ctx);
+    const form = await formById(ctx, args[0] ?? '');
+    const field = form.fields.find((candidate) => candidate.id === args[1]);
+    if (field === undefined) throw new UserError('That field no longer exists.');
+    const input = limitsInputOf(field);
+    if (input === null) throw new UserError("That field doesn't have these settings.");
+    await ctx.showModal(limitsModalFor(ctx, form, field.id, input));
+  },
+});
+
+function readLimits(ctx: Parameters<typeof fieldLimitsModal.execute>[0], kind: LimitsInput['kind']): LimitsInput {
+  switch (kind) {
+    case 'text':
+      return { kind, placeholder: ctx.field('placeholder'), minLength: ctx.field('minLength'), maxLength: ctx.field('maxLength') };
+    case 'choice':
+      return { kind, minChoices: ctx.field('minChoices'), maxChoices: ctx.field('maxChoices') };
+    case 'file':
+      return { kind, maxFiles: ctx.field('maxFiles'), fileTypes: ctx.field('fileTypes') };
+  }
+}
+
+export const fieldLimitsModal = defineModal({
+  name: 'field-limits-modal',
+  ...editorBinding,
+  execute: async (ctx, args) => {
+    requireEditor(ctx);
+    const formId = args[0] ?? '';
+    const fieldId = args[1] ?? '';
+    try {
+      let input: LimitsInput | undefined;
+      const saved = await changeForm(ctx, formId, (form) => {
+        const index = form.fields.findIndex((field) => field.id === fieldId);
+        if (index < 0) throw new UserError('That field no longer exists.');
+        const field = form.fields[index]!;
+        const kind = limitsKindOf(field.type);
+        if (kind === null) throw new UserError("That field doesn't have these settings.");
+        input = readLimits(ctx, kind);
+        try {
+          return { fields: form.fields.map((candidate, i) => (i === index ? applyLimits(field, input!) : candidate)) };
+        } catch (error) {
+          if (error instanceof FieldInputError) throw new TryAgainError(error.message, { kind: 'limits', fieldId, input: input! });
+          throw error;
+        }
+      });
+      await ctx.reply(detailMessage(ctx, saved.form, fieldId, savedMessage('Saved.', saved.postUpdated)));
+    } catch (error) {
+      if (!(error instanceof TryAgainError)) throw error;
+      await ctx.reply(retryReply(ctx, formId, error));
+    }
   },
 });
 
@@ -216,4 +292,4 @@ export const fieldRemoveButton = defineButton({
   },
 });
 
-export const editorComponents = [fieldModalDefinition, fieldTypeSelect, fieldPageButton, fieldPickSelect, fieldEditButton, fieldRemoveButton];
+export const editorComponents = [fieldModalDefinition, fieldTypeSelect, fieldPageButton, fieldPickSelect, fieldEditButton, fieldLimitsButton, fieldLimitsModal, fieldRemoveButton];
