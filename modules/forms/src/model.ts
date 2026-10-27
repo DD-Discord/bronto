@@ -12,6 +12,7 @@ const MAX_DESCRIPTION = 100;
 const MAX_TEXT = 4000;
 const MAX_OPTIONS = 25;
 const MAX_OPTION = 100;
+const MAX_GROUP_OPTIONS = 10;
 const MAX_FILES = 10;
 const MAX_FILE_TYPES = 10;
 const MAX_PINGS = 100;
@@ -28,11 +29,13 @@ const base = {
   required: z.boolean(),
 };
 
-const options = z
-  .array(z.string().min(1).max(MAX_OPTION))
-  .min(1)
-  .max(MAX_OPTIONS)
-  .refine((list) => new Set(list).size === list.length, 'option labels must be unique');
+/** Option lists: select menus hold 1-25 options, radio groups 2-10, checkbox groups 1-10. */
+const optionList = (min: number, max: number) =>
+  z
+    .array(z.string().min(1).max(MAX_OPTION))
+    .min(min)
+    .max(max)
+    .refine((list) => new Set(list).size === list.length, 'option labels must be unique');
 
 const textField = z.strictObject({
   ...base,
@@ -42,18 +45,26 @@ const textField = z.strictObject({
   placeholder: z.string().min(1).max(MAX_DESCRIPTION).optional(),
 });
 
-const choiceField = z.strictObject({
+const selectField = z.strictObject({
   ...base,
-  type: z.enum(['select', 'checkboxes']),
-  options,
+  type: z.literal('select'),
+  options: optionList(1, MAX_OPTIONS),
   minChoices: z.number().int().min(0).max(MAX_OPTIONS).optional(),
   maxChoices: z.number().int().min(1).max(MAX_OPTIONS).optional(),
+});
+
+const checkboxesField = z.strictObject({
+  ...base,
+  type: z.literal('checkboxes'),
+  options: optionList(1, MAX_GROUP_OPTIONS),
+  minChoices: z.number().int().min(0).max(MAX_GROUP_OPTIONS).optional(),
+  maxChoices: z.number().int().min(1).max(MAX_GROUP_OPTIONS).optional(),
 });
 
 const radioField = z.strictObject({
   ...base,
   type: z.literal('radio'),
-  options,
+  options: optionList(2, MAX_GROUP_OPTIONS),
 });
 
 /** `image`, `video`, `audio` or a dotted extension such as `.pdf`. */
@@ -67,7 +78,7 @@ const fileField = z.strictObject({
 });
 
 export const fieldSchema = z
-  .discriminatedUnion('type', [textField, choiceField, radioField, fileField])
+  .discriminatedUnion('type', [textField, selectField, checkboxesField, radioField, fileField])
   .superRefine((field, ctx) => {
     if (field.type === 'short' || field.type === 'long') {
       if (field.minLength !== undefined && field.maxLength !== undefined && field.minLength > field.maxLength) {

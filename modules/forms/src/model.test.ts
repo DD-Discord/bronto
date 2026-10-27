@@ -40,6 +40,11 @@ describe('pages', () => {
 });
 
 describe('fieldSchema', () => {
+  it('accepts a 25-option select', () => {
+    const options = Array.from({ length: 25 }, (_, i) => `o${i}`);
+    expect(fieldSchema.safeParse({ id: 'aaaaaaa1', type: 'select', label: 'Pick', required: true, options, maxChoices: 25 }).success).toBe(true);
+  });
+
   it('accepts every field type', () => {
     for (const f of fields) expect(fieldSchema.safeParse(f).success).toBe(true);
   });
@@ -55,6 +60,10 @@ describe('fieldSchema', () => {
     ['no options', { id: 'aaaaaaa1', type: 'select', label: 'Pick', required: true, options: [] }],
     ['a 101-character option', { id: 'aaaaaaa1', type: 'select', label: 'Pick', required: true, options: ['x'.repeat(101)] }],
     ['duplicate option labels', { id: 'aaaaaaa1', type: 'radio', label: 'Pick', required: true, options: ['A', 'A'] }],
+    ['a radio with 1 option', { id: 'aaaaaaa1', type: 'radio', label: 'Pick', required: true, options: ['A'] }],
+    ['a radio with 11 options', { id: 'aaaaaaa1', type: 'radio', label: 'Pick', required: true, options: Array.from({ length: 11 }, (_, i) => `o${i}`) }],
+    ['checkboxes with 11 options', { id: 'aaaaaaa1', type: 'checkboxes', label: 'Pick', required: true, options: Array.from({ length: 11 }, (_, i) => `o${i}`) }],
+    ['checkboxes maxChoices 11', { id: 'aaaaaaa1', type: 'checkboxes', label: 'Pick', required: true, options: ['A', 'B'], maxChoices: 11 }],
     ['maxChoices above the option count', { id: 'aaaaaaa1', type: 'checkboxes', label: 'Pick', required: true, options: ['A', 'B'], maxChoices: 3 }],
     ['minChoices above maxChoices', { id: 'aaaaaaa1', type: 'checkboxes', label: 'Pick', required: true, options: ['A', 'B'], minChoices: 2, maxChoices: 1 }],
     ['maxFiles 11', { id: 'aaaaaaa1', type: 'file', label: 'Up', required: true, maxFiles: 11, fileTypes: [] }],
