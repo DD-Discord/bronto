@@ -2,6 +2,7 @@ import { UserError } from '@bronto/core';
 import { eq } from 'drizzle-orm';
 import type { FormsContext } from './context.js';
 import { forms, type Form } from './db/schema.js';
+import { pruneDraftFiles } from './drafts.js';
 import { refreshOpeners } from './openers.js';
 import { updatePreview } from './preview.js';
 
@@ -30,8 +31,8 @@ async function showChange(ctx: FormsContext, before: Form, form: Form): Promise<
 
 /**
  * Applies `change` to the form under a row lock, then shows the result: the post is renamed with the form, the preview
- * edited in place, and the openers refreshed when their name or activity changed. `postUpdated` is false when the
- * post couldn't be brought up to date; the change itself is saved.
+ * edited in place, the openers refreshed when their name or activity changed, and draft files of removed file fields
+ * deleted. `postUpdated` is false when the post couldn't be brought up to date; the change itself is saved.
  */
 export async function changeForm(
   ctx: FormsContext,
@@ -50,6 +51,14 @@ export async function changeForm(
       await refreshOpeners(ctx, formId);
     } catch (error) {
       ctx.log.warn({ err: error, formId }, 'Refreshing the openers of a changed form failed');
+    }
+  }
+  const fileFields = (fields: Form['fields']) => fields.filter((field) => field.type === 'file').map((field) => field.id);
+  if (fileFields(before.fields).some((id) => !fileFields(form.fields).includes(id))) {
+    try {
+      await pruneDraftFiles(ctx, form);
+    } catch (error) {
+      ctx.log.warn({ err: error, formId }, 'Removing draft files of removed fields failed');
     }
   }
   return { before, form, postUpdated };

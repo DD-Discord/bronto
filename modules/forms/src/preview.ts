@@ -10,7 +10,7 @@ import {
   SeparatorBuilder,
   TextDisplayBuilder,
 } from 'discord.js';
-import { addFieldButton, deleteButton, editFieldButton, exportButton, importButton, settingsButton } from './buttons.js';
+import { addFieldButton, deleteButton, editFieldButton, exportButton, importButton, settingsButton, tryButton } from './buttons.js';
 import type { FormsContext } from './context.js';
 import type { Form } from './db/schema.js';
 import { pages, type Field } from './model.js';
@@ -89,6 +89,7 @@ function buttonRows(form: Form): PreviewButton[][] {
       { definition: addFieldButton, label: 'Add field', style: ButtonStyle.Primary },
       { definition: editFieldButton, label: 'Edit field', style: ButtonStyle.Secondary, disabled: form.fields.length === 0 },
       { definition: settingsButton, label: 'Settings', style: ButtonStyle.Secondary },
+      { definition: tryButton, label: 'Try it', style: ButtonStyle.Secondary, disabled: form.fields.length === 0 },
     ],
     [
       { definition: exportButton, label: 'Export', style: ButtonStyle.Secondary },

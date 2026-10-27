@@ -133,8 +133,7 @@ describe('forum posts', () => {
     expect((preview.flags ?? 0) & MessageFlags.IsComponentsV2).toBeTruthy();
     const all = texts(preview.components);
     expect(all.join('\n')).toContain('Story contest');
-    expect(all).toEqual(expect.arrayContaining(['Add field', 'Edit field', 'Settings', 'Export', 'Import', 'Delete']));
-    expect(all).not.toContain('Try it');
+    expect(all).toEqual(expect.arrayContaining(['Add field', 'Edit field', 'Settings', 'Try it', 'Export', 'Import', 'Delete']));
     const buttons: { label?: string; disabled?: boolean; custom_id: string }[] = [];
     const collect = (node: unknown): void => {
       if (Array.isArray(node)) return node.forEach(collect);
@@ -145,6 +144,7 @@ describe('forum posts', () => {
     };
     collect(preview.components);
     expect(buttons.find((b) => b.label === 'Edit field')!.disabled).toBe(true);
+    expect(buttons.find((b) => b.label === 'Try it')!.disabled).toBe(true);
     expect(buttons.find((b) => b.label === 'Add field')!.disabled).toBeFalsy();
   });
 

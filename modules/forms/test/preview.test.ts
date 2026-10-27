@@ -76,7 +76,7 @@ describe('previewMessage', () => {
     const json = (message.components![0] as { toJSON(): { components: { content?: string }[] } }).toJSON();
     const labels = JSON.stringify(json).match(/"label":"([^"]*)"/g)!.map((m) => m.length - 10);
     const total = json.components.reduce((sum, c) => sum + (c.content?.length ?? 0), 0) + labels.reduce((a, b) => a + b, 0);
-    expect(labels).toHaveLength(6);
+    expect(labels).toHaveLength(7);
     expect(total).toBeLessThanOrEqual(4000);
     const shown = (json.components[2]!.content!.match(/^\d+\./gm) ?? []).length;
     expect(json.components[2]!.content).toContain(`… and ${200 - shown} more`);

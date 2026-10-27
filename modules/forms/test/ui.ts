@@ -56,6 +56,7 @@ export async function send<T extends FakeInteraction>(fb: FormsBot, fake: T): Pr
 export interface Who {
   userId?: string;
   permissions?: bigint;
+  attachmentSizeLimit?: number;
 }
 
 export const click = (fb: FormsBot, threadId: string, customId: string, who: Who = {}) =>
@@ -91,9 +92,15 @@ export interface Filled {
 export function submitModal(fb: FormsBot, threadId: string, modal: Json, filled: Filled = {}, who: Who = {}) {
   const fields: Record<string, string> = {};
   const checkboxes: Record<string, boolean> = {};
+  const selections: Record<string, string[]> = {};
+  const uploads: Record<string, UploadedFile[]> = {};
   for (const [id, input] of Object.entries(modalInputs(modal))) {
     if (input.type === 4) fields[id] = input.value ?? '';
     else if (input.type === 23) checkboxes[id] = input.default ?? false;
+    // String selects, radio and checkbox groups start with their default options chosen; file uploads empty.
+    else if (input.type === 3 || input.type === 21 || input.type === 22) {
+      selections[id] = (input.options as Json[]).filter((option) => option.default === true).map((option) => option.value);
+    } else if (input.type === 19) uploads[id] = [];
   }
   return send(
     fb,
@@ -105,9 +112,9 @@ export function submitModal(fb: FormsBot, threadId: string, modal: Json, filled:
       ...who,
       fields: { ...fields, ...filled.fields },
       checkboxes: { ...checkboxes, ...filled.checkboxes },
-      selections: filled.selections,
+      selections: { ...selections, ...filled.selections },
       mentionables: filled.mentionables,
-      uploads: filled.uploads,
+      uploads: { ...uploads, ...filled.uploads },
     }),
   );
 }

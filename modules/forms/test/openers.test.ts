@@ -370,13 +370,13 @@ describe('/forms buttons', () => {
 });
 
 describe('open button', () => {
-  it('answers privately that the form cannot be filled in yet', async () => {
+  it('answers privately about a form without fields', async () => {
     await start(false);
     const form = await activeForm();
     await post({ form: form.id, template: await makeTemplate() });
     const id = buttonId(messagesIn(TEXT)[0]!, 'Story contest');
     const clicked = await click(fb!, TEXT, id);
-    expect(payload(clicked).content).toBe("This form can't be filled in yet.");
+    expect(payload(clicked)).toMatchObject({ content: 'This form has no fields yet.', flags: 64 });
   });
 });
 

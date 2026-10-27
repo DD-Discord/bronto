@@ -1,7 +1,8 @@
 import type { AnyThreadChannel, Channel, PartialDMChannel } from 'discord.js';
 import { and, eq, ne } from 'drizzle-orm';
 import type { FormsContext } from './context.js';
-import { forms, forums, openers, type Form } from './db/schema.js';
+import { drafts, forms, forums, openers, type Form } from './db/schema.js';
+import { releaseFiles } from './drafts.js';
 import { channelExists, storedForumId } from './forum.js';
 import { cleanupOpeners } from './openers.js';
 
@@ -13,8 +14,8 @@ function announce(ctx: FormsContext, gone: Gone[]): void {
 
 /**
  * Deletes the form's row under a lock (its drafts and submissions go with it) and logs it, then removes its opener
- * messages and sticky buttons from Discord. False when the form was already gone. With `refuseWithOpeners`, a form that
- * has openers is kept and the channels of its openers are returned instead.
+ * messages, sticky buttons and draft files from Discord. False when the form was already gone. With
+ * `refuseWithOpeners`, a form that has openers is kept and the channels of its openers are returned instead.
  */
 export async function forgetForm(ctx: FormsContext, form: Gone, options: { refuseWithOpeners?: boolean } = {}): Promise<boolean | { blockedBy: string[] }> {
   const removed = await ctx.db.run(async (tx) => {
@@ -25,13 +26,15 @@ export async function forgetForm(ctx: FormsContext, form: Gone, options: { refus
       if (held.length > 0) return { blocked: [...new Set(held.map((opener) => opener.channelId))].sort(), row, gone: [] };
     }
     const gone = await tx.delete(openers).where(eq(openers.formId, form.id)).returning();
+    const files = (await tx.select({ files: drafts.files }).from(drafts).where(eq(drafts.formId, form.id))).flatMap((draft) => draft.files);
     await tx.delete(forms).where(eq(forms.id, form.id));
-    return { row, gone, blocked: undefined };
+    return { row, gone, files, blocked: undefined };
   });
   if (removed === null) return false;
   if (removed.blocked !== undefined) return { blockedBy: removed.blocked };
   announce(ctx, [removed.row]);
   await cleanupOpeners(ctx, removed.gone);
+  await releaseFiles(ctx, removed.files, []);
   return true;
 }
 

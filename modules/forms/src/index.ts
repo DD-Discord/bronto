@@ -7,18 +7,22 @@ import { editorComponents, openAddField, openEditField } from './editor.js';
 import { createFormsCommand } from './commands.js';
 import * as schema from './db/schema.js';
 import { onChannelDelete, onThreadDelete, onThreadUpdate, reconcile } from './lifecycle.js';
+import { DRAFT_SWEEP_MS, sweepDrafts } from './drafts.js';
+import { fillComponents, openTrial } from './fill.js';
 import { onThreadCreate } from './new-post.js';
 import { openButton } from './open.js';
 import { channelsUsingTemplate, dropStickyOpeners, dropTemplateOpeners, openerRows, refreshTemplateMessages, stickyOpenersOf } from './openers.js';
 import { removeOpenerSelect } from './post.js';
 import { dropDrafts, tryAgainButton } from './retry.js';
 import { openSettings, settingsModalDefinition } from './settings.js';
+import { retryPostButton } from './submit.js';
 import { askDelete, exportFormFile, openImport, transferComponents } from './transfer.js';
 
 registerPreviewActions({
   'add-field': openAddField,
   'edit-field': openEditField,
   settings: openSettings,
+  try: openTrial,
   export: exportFormFile,
   import: openImport,
   delete: askDelete,
@@ -26,6 +30,8 @@ registerPreviewActions({
 
 /** The forms module; the default export is the one deployments load. */
 export function createFormsModule(): ModuleDefinition<Record<string, never>, undefined> {
+  // The draft sweep of each server; per module instance, so bots in one process keep their own.
+  const sweeps = new Map<string, NodeJS.Timeout>();
   return defineModule<Record<string, never>, undefined>({
     name: 'forms',
     dependsOn: [templates],
@@ -58,15 +64,24 @@ export function createFormsModule(): ModuleDefinition<Record<string, never>, und
       }),
     ],
     commands: { forms: createFormsCommand() },
-    components: [...previewComponents, ...editorComponents, settingsModalDefinition, ...transferComponents, tryAgainButton, openButton, removeOpenerSelect],
+    components: [...previewComponents, ...editorComponents, settingsModalDefinition, ...transferComponents, tryAgainButton, openButton, removeOpenerSelect, ...fillComponents, retryPostButton],
     hooks: {
       // Queued, not awaited: the guild's events and interactions wait for guildReady, and reconcile asks Discord once
       // per form.
       guildReady: (ctx) => {
         void ctx.queue.run('reconcile', (task) => reconcile(task));
+        clearInterval(sweeps.get(ctx.guildId));
+        // The timer keeps the ctx that started it; queue.run starts a new handler run each time it fires.
+        const timer = setInterval(() => {
+          void ctx.queue.run('sweep-drafts', (task) => sweepDrafts(task));
+        }, DRAFT_SWEEP_MS);
+        timer.unref();
+        sweeps.set(ctx.guildId, timer);
       },
       guildStopped: (ctx) => {
         dropDrafts(ctx.guildId);
+        clearInterval(sweeps.get(ctx.guildId));
+        sweeps.delete(ctx.guildId);
       },
     },
   });

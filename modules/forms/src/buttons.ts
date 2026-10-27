@@ -2,7 +2,7 @@ import { defineButton, type ButtonContext, type ButtonDefinition } from '@bronto
 
 type Action = (ctx: ButtonContext) => Promise<void>;
 
-const PREVIEW_BUTTONS = ['add-field', 'edit-field', 'settings', 'export', 'import', 'delete'] as const;
+const PREVIEW_BUTTONS = ['add-field', 'edit-field', 'settings', 'try', 'export', 'import', 'delete'] as const;
 type PreviewName = (typeof PREVIEW_BUTTONS)[number];
 
 const actions = new Map<PreviewName, Action>();
@@ -29,8 +29,9 @@ function previewButton(name: PreviewName): ButtonDefinition {
 export const addFieldButton = previewButton('add-field');
 export const editFieldButton = previewButton('edit-field');
 export const settingsButton = previewButton('settings');
+export const tryButton = previewButton('try');
 export const exportButton = previewButton('export');
 export const importButton = previewButton('import');
 export const deleteButton = previewButton('delete');
 
-export const previewComponents = [addFieldButton, editFieldButton, settingsButton, exportButton, importButton, deleteButton];
+export const previewComponents = [addFieldButton, editFieldButton, settingsButton, tryButton, exportButton, importButton, deleteButton];
