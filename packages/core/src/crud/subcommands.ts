@@ -7,7 +7,7 @@ import { batchLines } from '../interactions/format.js';
 import type { OptionDefinition, OptionMap } from '../interactions/options.js';
 import { entityAutocomplete, type Entity } from './entity.js';
 
-export type CrudAction = 'create' | 'edit' | 'show' | 'list' | 'delete';
+export type CrudAction = 'create' | 'edit' | 'show' | 'list' | 'delete' | 'set' | 'remove';
 
 export interface CrudKey<TName extends string, TValue> {
   /** Option name, e.g. "channel". */
@@ -18,14 +18,17 @@ export interface CrudKey<TName extends string, TValue> {
   toKey: (value: TValue) => string;
   /** How a key appears in messages; `` `key` `` by default. */
   format?: (key: string) => string;
-  /** Key `show` uses when the option is omitted, e.g. the current channel. Other subcommands always need the option. */
+  /**
+   * Key `show` uses when the option is omitted, e.g. the current channel. In the `set` style, `set` and `remove` use it
+   * too; `create-edit` subcommands always need the option.
+   */
   fallback?: (ctx: CommandContext) => string | null;
   /** Generates keys for `create`, which then has no key option. */
   generate?: () => string;
 }
 
 export interface CrudField<TValue> {
-  /** Declared optional; `create` requires fields without a default. */
+  /** Declared optional; `create` (and `set` on a missing record) requires fields without a default. */
   option: OptionDefinition<TValue, false>;
   /** Column property the value is written to; fields without one only reach `prepare`. */
   column?: string;
@@ -44,7 +47,7 @@ export type CrudValues<TFields, TKeyName extends string, TKeyValue> = { [K in ke
 
 export interface CrudHooks<TTable extends PgTable, TValues> {
   /**
-   * Runs in `create` and `edit` outside any transaction and returns extra column values. It runs before `validate` and
+   * Runs in `create`, `edit` and `set` outside any transaction and returns extra column values. It runs before `validate` and
    * before the write, which can still fail (e.g. on a duplicate key); side effects it makes are not rolled back.
    */
   prepare?: (
@@ -69,6 +72,11 @@ export interface CrudOptions<
   hooks?: CrudHooks<TTable, CrudValues<TFields, TKeyName, TKeyValue>>;
   /** Subcommands to leave out. */
   omit?: CrudAction[];
+  /**
+   * `create-edit` (default) generates create, edit, show, list and delete. `set` generates set (creates or changes),
+   * show, list and remove; `omit`, `override` and `descriptions` use those names.
+   */
+  style?: 'create-edit' | 'set';
   /** Subcommands to replace entirely. */
   override?: Partial<Record<CrudAction, SubcommandDefinition<any>>>;
   descriptions?: Partial<Record<CrudAction, string>>;
@@ -87,7 +95,7 @@ function article(noun: string): string {
   return /^[aeiou]/i.test(noun) ? `an ${noun}` : `a ${noun}`;
 }
 
-/** Generates create, edit, show, list and delete subcommands for one entity. */
+/** Generates create/edit/delete or set/remove subcommands, plus show and list, for one entity. */
 export function crudSubcommands<
   TTable extends PgTable,
   TKeyName extends string,
@@ -99,6 +107,7 @@ export function crudSubcommands<
   const { key, fields } = options;
   const hooks = options.hooks ?? {};
   const ephemeral = options.ephemeral ?? true;
+  const setStyle = options.style === 'set';
   const columns = getTableColumns(entity.table);
   for (const [name, field] of Object.entries(fields)) {
     if (name === key.name) throw new Error(`CRUD field "${name}" has the same name as the key option.`);
@@ -154,12 +163,11 @@ export function crudSubcommands<
     if (problems.length > 1) throw new UserError(problems.map((problem) => `- ${problem}`).join('\n'));
   };
 
-  const create = async (ctx: CommandContext, raw: Record<string, unknown>): Promise<void> => {
+  const createWith = async (ctx: CommandContext, raw: Record<string, unknown>, recordKey: string): Promise<void> => {
     const values: Record<string, unknown> = { ...raw };
     for (const [name, field] of Object.entries(fields)) {
       if (values[name] === null && field.default !== undefined) values[name] = field.default;
     }
-    const recordKey = key.generate === undefined ? keyFrom(ctx, raw, false) : key.generate();
     if ((await entity.find(ctx.db, recordKey)) !== null) throw new UserError(exists(recordKey));
     const extra = (await hooks.prepare?.(ctx, values as Values, null)) ?? {};
     const record = { ...columnValues(values), ...extra, [entity.key]: recordKey };
@@ -178,9 +186,7 @@ export function crudSubcommands<
     await ctx.reply({ content: `**${singular} created.**`, embeds: [await entity.formatFull(row, ctx)] });
   };
 
-  const edit = async (ctx: CommandContext, raw: Record<string, unknown>): Promise<void> => {
-    const recordKey = keyFrom(ctx, raw, false);
-    const existing = await load(ctx, recordKey);
+  const editWith = async (ctx: CommandContext, raw: Record<string, unknown>, recordKey: string, existing: Row): Promise<void> => {
     const nothingToChange = 'Nothing to change; pass at least one option.';
     // Checked before prepare, which may have side effects such as Discord calls.
     if (Object.keys(fields).every((name) => raw[name] === null || raw[name] === undefined)) throw new UserError(nothingToChange);
@@ -204,6 +210,26 @@ export function crudSubcommands<
     await ctx.reply({ content: `**${singular} updated.**`, embeds: [await entity.formatFull(row, ctx)] });
   };
 
+  const create = (ctx: CommandContext, raw: Record<string, unknown>): Promise<void> =>
+    createWith(ctx, raw, key.generate === undefined ? keyFrom(ctx, raw, false) : key.generate());
+
+  const edit = async (ctx: CommandContext, raw: Record<string, unknown>): Promise<void> => {
+    const recordKey = keyFrom(ctx, raw, false);
+    await editWith(ctx, raw, recordKey, await load(ctx, recordKey));
+  };
+
+  const set = async (ctx: CommandContext, raw: Record<string, unknown>): Promise<void> => {
+    const recordKey = keyFrom(ctx, raw, true);
+    const existing = await entity.find(ctx.db, recordKey);
+    if (existing !== null) return editWith(ctx, raw, recordKey, existing);
+    for (const [name, field] of Object.entries(fields)) {
+      if ((raw[name] === null || raw[name] === undefined) && field.default === undefined) {
+        throw new UserError(`\`${name}\` is needed to create ${article(lower)}.`);
+      }
+    }
+    return createWith(ctx, raw, recordKey);
+  };
+
   const show = async (ctx: CommandContext, raw: Record<string, unknown>): Promise<void> => {
     const record = await load(ctx, keyFrom(ctx, raw, true));
     await ctx.reply({ embeds: [await entity.formatFull(record, ctx)] });
@@ -221,7 +247,7 @@ export function crudSubcommands<
   };
 
   const remove = async (ctx: CommandContext, raw: Record<string, unknown>): Promise<void> => {
-    const recordKey = keyFrom(ctx, raw, false);
+    const recordKey = keyFrom(ctx, raw, setStyle);
     const record = await load(ctx, recordKey);
     await hooks.beforeDelete?.(ctx, record);
     const deleted = await ctx.db.run(async (tx) => {
@@ -234,6 +260,18 @@ export function crudSubcommands<
   const describe = (action: CrudAction, fallback: string) => options.descriptions?.[action] ?? fallback;
   const keyed = (required: boolean): OptionMap => ({ [key.name]: keyOption(required) });
   const generated: Record<CrudAction, SubcommandDefinition<any>> = {
+    set: defineSubcommand({
+      description: describe('set', `Creates or changes ${article(lower)}`),
+      ephemeral,
+      options: { ...keyed(key.fallback === undefined), ...fieldOptions(false) },
+      execute: set,
+    }),
+    remove: defineSubcommand({
+      description: describe('remove', `Removes ${article(lower)}`),
+      ephemeral,
+      options: keyed(key.fallback === undefined),
+      execute: remove,
+    }),
     create: defineSubcommand({
       description: describe('create', `Creates ${article(lower)}`),
       ephemeral,
@@ -261,7 +299,8 @@ export function crudSubcommands<
     }),
   };
   const result: Record<string, SubcommandDefinition<any>> = {};
-  for (const action of ['create', 'edit', 'show', 'list', 'delete'] as const) {
+  const actions = setStyle ? (['set', 'show', 'list', 'remove'] as const) : (['create', 'edit', 'show', 'list', 'delete'] as const);
+  for (const action of actions) {
     if (options.omit?.includes(action)) continue;
     result[action] = options.override?.[action] ?? generated[action];
   }
