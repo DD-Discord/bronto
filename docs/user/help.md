@@ -2,7 +2,7 @@
 
 `/help` shows help for the bot and for the modules your server has turned on.
 
-Without options, it opens the start page. Add a `module` to open that module's start page. Add a `topic` as well to open one topic. Both options suggest names as you type.
+Without options, it opens the start page. Add a `module` to open that module's start page. Add a `topic` as well to open one topic. Both options suggest names as you type. Add a `page` to open a later page of the topic, like `2`.
 
 Only you can see the answer. Nobody else in the channel gets a message.
 

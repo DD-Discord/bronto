@@ -37,9 +37,9 @@ export function createHelp(options: HelpOptions): { command: CommandDefinition; 
   ];
 
   /**
-   * The view for a module, topic and page. `strict` (the command) throws for an unknown module or topic; otherwise
+   * The view for a module, topic and page. `strict` (the command) throws for an unknown module, topic or page; otherwise
    * (components) a missing module falls back to core's index, a missing topic to the module's index and a page out of
-   * range to the first page.
+   * range to the first page. `page` is 0-based.
    */
   function resolve(guildId: string, module: string, topic: string | null, page: number, strict: boolean): HelpView {
     const modules = visible(guildId);
@@ -56,8 +56,11 @@ export function createHelp(options: HelpOptions): { command: CommandDefinition; 
       index = 0;
       page = 0;
     }
-    const pages = docs.topics[index]!.pages.length;
-    if (!Number.isInteger(page) || page < 0 || page >= pages) page = 0;
+    const { title, pages: { length: pages } } = docs.topics[index]!;
+    if (!Number.isInteger(page) || page < 0 || page >= pages) {
+      if (strict) throw new UserError(`${title} has ${pages} ${pages === 1 ? 'page' : 'pages'}.`);
+      page = 0;
+    }
     return { module: current.name, docs, topic: index, page, modules };
   }
 
@@ -121,8 +124,11 @@ export function createHelp(options: HelpOptions): { command: CommandDefinition; 
             .map((topic): Choice => ({ name: topicLabel(topic), value: topic.id }));
         },
       }),
+      // Reaches every page when there are no Back/Next buttons.
+      page: opt.integer({ description: 'The page of the topic to show', min: 1 }),
     },
-    execute: (ctx, { module, topic }) => ctx.reply(render(ctx, resolve(ctx.guildId, module ?? CORE, topic, 0, true))),
+    execute: (ctx, { module, topic, page }) =>
+      ctx.reply(render(ctx, resolve(ctx.guildId, module ?? CORE, topic, (page ?? 1) - 1, true))),
   });
 
   return { command, components };

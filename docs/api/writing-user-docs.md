@@ -96,7 +96,8 @@ that cannot fit on a page by itself is an error: shorten it or divide it.
 `/help` shows a module select, a topic select, and Back, `n / m` and Next when a topic has several pages. Section
 buttons to topics and all menus need a signed custom ID, so they only work when the deployment sets
 `interactions.secret`. Without it, `/help` still answers: pages appear without menus or Back/Next, sections that link to
-a topic show only their text, and link buttons stay. Members then navigate with the options of `/help`.
+a topic show only their text, and link buttons stay. Members then navigate with the `module`, `topic` and `page`
+options of `/help`.
 
 ## What the check rejects
 

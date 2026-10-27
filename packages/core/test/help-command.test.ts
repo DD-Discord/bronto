@@ -185,6 +185,19 @@ describe('/help', () => {
     expect((await ask({ module: 'alpha', topic: 'zz' })).content).toBe('There\'s no help topic "zz" in Alpha.');
   });
 
+  it('answers /help module:alpha topic:b page:2 with the second page of b', async () => {
+    const payload = await build().ask({ module: 'alpha', topic: 'b', page: 2 });
+    expect(texts(payload)).toEqual(['# Bee', 'Two']);
+    expect(button(payload, '2 / 2').disabled).toBe(true);
+    expect(button(payload, 'Next ▶').disabled).toBe(true);
+  });
+
+  it('refuses a page past the end of the topic', async () => {
+    const { ask } = build();
+    expect((await ask({ module: 'alpha', topic: 'b', page: 3 })).content).toBe('Bee has 2 pages.');
+    expect((await ask({ module: 'alpha', page: 2 })).content).toBe('Alpha has 1 page.');
+  });
+
   it('autocompletes enabled modules', async () => {
     const { suggest, disabled } = build();
     disabled.add('beta');
@@ -329,6 +342,7 @@ describe('/help', () => {
     const topic = await ask({ module: 'alpha', topic: 'b' });
     expect(texts(topic)).toEqual(['# Bee', 'One']);
     expect(all(topic).some((c) => c.type === ComponentType.Button)).toBe(false);
+    expect(texts(await ask({ module: 'alpha', topic: 'b', page: 2 }))).toEqual(['# Bee', 'Two']);
   });
 
   it('fits the custom ID budget', async () => {
