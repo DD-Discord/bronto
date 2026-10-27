@@ -16,6 +16,7 @@ Make API calls outside your own `ctx.db.run`. Each call runs in the guild of the
 |---|---|
 | `exists(channelId)` | Whether the channel or thread has a sticky in this server. |
 | `refresh(channelId)` | Re-renders the sticky's live post in place from its template and the collected rows (see below), without reposting it. Does nothing when the channel has no sticky or the sticky has no live post yet. |
+| `isSticky({ channelId, webhookId })` | Whether a message (any object with these two fields, e.g. a `Message`) is a sticky's post in this server: the channel has a sticky and the message came from its webhook. Synchronous. |
 
 The type `StickyApi` is exported too.
 
