@@ -71,6 +71,23 @@ export function channelRoutes(state: DiscordState) {
       updateChannel(state, channel, body);
       return ok(channel);
     }),
+    // A thread started on a message takes the message's ID and its parent's kind (public or announcement).
+    route('POST', '/channels/:channelId/messages/:messageId/threads', async (request, { channelId, messageId }) => {
+      const parent = state.channels.get(channelId);
+      if (!parent || !('guild_id' in parent) || !parent.guild_id) return error(10003);
+      const message = state.messages.get(messageId);
+      if (!message || message.channel_id !== channelId) return error(10008);
+      if (state.channels.has(messageId)) return error(160004, 400);
+      const body = (request.body ?? {}) as Fields;
+      state.addChannel(messageId, {
+        guildId: parent.guild_id, parentId: channelId, name: String(body.name),
+        type: parent.type === ChannelType.GuildAnnouncement ? ChannelType.AnnouncementThread : ChannelType.PublicThread,
+        extra: { rate_limit_per_user: body.rate_limit_per_user ?? 0, message_count: 0, total_message_sent: 0, member_count: 1 },
+      });
+      const thread = state.channels.get(messageId)!;
+      updateChannel(state, thread, { auto_archive_duration: body.auto_archive_duration });
+      return ok(thread);
+    }),
     route('POST', '/channels/:channelId/threads', async (request, { channelId }) => {
       const parent = state.channels.get(channelId);
       if (!parent || !('guild_id' in parent) || !parent.guild_id) return error(10003);

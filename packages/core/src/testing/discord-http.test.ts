@@ -32,6 +32,20 @@ it('records reactions on existing messages only', async () => {
   expect(await request(`/channels/${CHANNEL}/messages/100000000000000404/reactions/x/@me`)).toMatchObject({ status: 404, json: { code: 10008 } });
 });
 
+it('starts a thread on a message once, with the message ID and slowmode', async () => {
+  const http = new FakeDiscordHttp();
+  http.addGuild(GUILD); http.addChannel(CHANNEL, { guildId: GUILD, type: ChannelType.GuildText });
+  http.addMessage(CHANNEL, MESSAGE);
+  const request = (path: string, body?: unknown) => http.answer({ method: 'POST', path, query: '', body, authorized: true });
+  const path = `/channels/${CHANNEL}/messages/${MESSAGE}/threads`;
+  expect(await request(path, { name: 'Talk', rate_limit_per_user: 30 })).toMatchObject({
+    status: 200,
+    json: { id: MESSAGE, name: 'Talk', parent_id: CHANNEL, type: ChannelType.PublicThread, rate_limit_per_user: 30 },
+  });
+  expect(await request(path, { name: 'Again' })).toMatchObject({ status: 400, json: { code: 160004 } });
+  expect(await request(`/channels/${CHANNEL}/messages/100000000000000404/threads`, { name: 'x' })).toMatchObject({ status: 404, json: { code: 10008 } });
+});
+
 it('edits webhook messages through their webhook only', async () => {
   const http = new FakeDiscordHttp();
   http.addGuild(GUILD); http.addChannel(CHANNEL, { guildId: GUILD, type: ChannelType.GuildText });

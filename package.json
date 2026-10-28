@@ -15,6 +15,7 @@
     "@bronto/core": "workspace:*",
     "@bronto/autodelete": "workspace:*",
     "@bronto/autoreact": "workspace:*",
+    "@bronto/autothread": "workspace:*",
     "@bronto/example-notes": "workspace:*",
     "@bronto/forms": "workspace:*",
     "@bronto/mediaonly": "workspace:*",
