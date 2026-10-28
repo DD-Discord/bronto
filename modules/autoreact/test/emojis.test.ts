@@ -2,7 +2,7 @@ import { UserError } from '@bronto/core';
 import { describe, expect, it } from 'vitest';
 import { parseEmojis } from '../src/emojis.js';
 
-const usable = (id: string) => id === '100000000000000200';
+const usable = (id: string) => id === '100000000000000200' || id === '100000000000000202';
 
 describe('parseEmojis', () => {
   it('accepts unicode emojis including skin tones and ZWJ sequences', () => {
@@ -13,9 +13,9 @@ describe('parseEmojis', () => {
   });
 
   it('accepts custom emojis the bot can use, animated ones too', () => {
-    expect(parseEmojis('<:party:100000000000000200> <a:dance:100000000000000200>', usable)).toEqual([
+    expect(parseEmojis('<:party:100000000000000200> <a:dance:100000000000000202>', usable)).toEqual([
       '<:party:100000000000000200>',
-      '<a:dance:100000000000000200>',
+      '<a:dance:100000000000000202>',
     ]);
   });
 
@@ -30,6 +30,10 @@ describe('parseEmojis', () => {
 
   it('refuses duplicates, naming them', () => {
     expect(() => parseEmojis('\u{1F44D} \u{1F389} \u{1F44D}', usable)).toThrow(/\u{1F44D}.*twice|twice.*\u{1F44D}/u);
+  });
+
+  it('treats a custom emoji written with and without the animated marker as one', () => {
+    expect(() => parseEmojis('<:party:100000000000000200> <a:party:100000000000000200>', usable)).toThrow(/twice/);
   });
 
   it('refuses plain text and unfinished emoji, naming the token', () => {

@@ -21,8 +21,10 @@ export function parseEmojis(raw: string, usable: (id: string) => boolean): strin
           : `"${token}" is not an emoji. Use unicode emojis or custom emojis, separated by spaces.`,
       );
     }
-    if (seen.has(token)) throw new UserError(`${token} appears twice; list each emoji once.`);
-    seen.add(token);
+    // A custom emoji is the same emoji whether or not it is written as animated.
+    const identity = customId ?? token;
+    if (seen.has(identity)) throw new UserError(`${token} appears twice; list each emoji once.`);
+    seen.add(identity);
   }
   if (tokens.length > MAX_EMOJIS) throw new UserError(`Use at most ${MAX_EMOJIS} emojis; you gave ${tokens.length}.`);
   return tokens;

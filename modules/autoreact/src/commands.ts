@@ -1,10 +1,8 @@
-import { crudSubcommands, defineCommand, opt, UserError, type CommandDefinition, type HandlerContext } from '@bronto/core';
+import { crudSubcommands, defineCommand, opt, UserError, type ChannelRuleIndex, type CommandDefinition } from '@bronto/core';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
-import { eq } from 'drizzle-orm';
-import { rules } from './db/schema.js';
+import type { Rule } from './db/schema.js';
 import { ruleEntity } from './entity.js';
 import { parseEmojis } from './emojis.js';
-import type { RuleIndex } from './rule-index.js';
 
 /** Text and announcement channels and threads; forum and media channels have no posts of their own. */
 const CHANNEL_TYPES = [
@@ -15,13 +13,7 @@ const CHANNEL_TYPES = [
   ChannelType.AnnouncementThread,
 ];
 
-/** Deletes the rule of a deleted channel or thread. */
-export async function removeRuleOf(ctx: HandlerContext, index: RuleIndex, channelId: string): Promise<void> {
-  const [removed] = await ctx.db.run(async (tx) => tx.delete(rules).where(eq(rules.channelId, channelId)).returning());
-  if (removed !== undefined) index.delete(removed.guildId, removed.channelId);
-}
-
-export function createAutoreactCommand(deps: { index: RuleIndex }): CommandDefinition {
+export function createAutoreactCommand(deps: { index: ChannelRuleIndex<Rule> }): CommandDefinition {
   return defineCommand({
     description: 'Adds emoji reactions to every post in a channel',
     permissions: PermissionFlagsBits.ManageChannels,

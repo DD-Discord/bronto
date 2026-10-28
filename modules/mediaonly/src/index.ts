@@ -1,8 +1,8 @@
-import { defineModule, gatewayEvent, on, type ModuleDefinition } from '@bronto/core';
+import { channelRuleHooks, channelRuleListeners, defineModule, on, type ModuleDefinition } from '@bronto/core';
 import sticky from '@bronto/sticky';
-import { Events, GatewayDispatchEvents, GatewayIntentBits, PermissionFlagsBits, type Message } from 'discord.js';
+import { Events, GatewayIntentBits, PermissionFlagsBits, type Message } from 'discord.js';
 import { rejection } from './check.js';
-import { createMediaonlyCommand, removeRuleOf } from './commands.js';
+import { cleanUpRemovedRule, createMediaonlyCommand } from './commands.js';
 import { mediaonlyConfigSchema, type MediaonlyConfig } from './config.js';
 import * as schema from './db/schema.js';
 import { rules } from './db/schema.js';
@@ -38,21 +38,10 @@ export function createMediaonlyModule(): ModuleDefinition<MediaonlyConfig, Media
     ],
     listeners: [
       on(Events.MessageCreate, (ctx, message) => enforcer.onMessage(ctx, message)),
-      on(Events.ChannelDelete, (ctx, channel) => removeRuleOf(ctx, index, channel.id)),
-      // Raw packet: discord.js emits ThreadDelete only for cached threads.
-      on(gatewayEvent(GatewayDispatchEvents.ThreadDelete), (ctx, data) => removeRuleOf(ctx, index, data.id)),
+      ...channelRuleListeners({ table: rules, index, onRemoved: cleanUpRemovedRule }),
     ],
     commands: { mediaonly: createMediaonlyCommand({ index }) },
-    hooks: {
-      guildReady: async (ctx) => {
-        const rows = await ctx.db.run(async (tx) => tx.select().from(rules));
-        index.replaceGuild(ctx.guildId, rows);
-      },
-      guildStopped: (ctx) => {
-        index.dropGuild(ctx.guildId);
-        enforcer.stopGuild(ctx.guildId);
-      },
-    },
+    hooks: channelRuleHooks({ table: rules, index, onStopped: (ctx) => enforcer.stopGuild(ctx.guildId) }),
   });
 }
 

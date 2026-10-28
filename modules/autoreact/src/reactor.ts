@@ -1,8 +1,8 @@
-import type { HandlerContext } from '@bronto/core';
+import type { ChannelRuleIndex, HandlerContext } from '@bronto/core';
 import mediaonly from '@bronto/mediaonly';
 import sticky from '@bronto/sticky';
 import { Routes, type Message } from 'discord.js';
-import type { RuleIndex } from './rule-index.js';
+import type { Rule } from './db/schema.js';
 
 /** The `name:id` or unicode form the reaction route takes. */
 function reactionIdentifier(emoji: string): string {
@@ -12,9 +12,9 @@ function reactionIdentifier(emoji: string): string {
 
 /** Adds a rule's emojis to the posts of its channel. */
 export class Reactor {
-  private readonly index: RuleIndex;
+  private readonly index: ChannelRuleIndex<Rule>;
 
-  constructor(deps: { index: RuleIndex }) {
+  constructor(deps: { index: ChannelRuleIndex<Rule> }) {
     this.index = deps.index;
   }
 

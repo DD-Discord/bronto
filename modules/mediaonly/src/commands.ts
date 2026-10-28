@@ -52,16 +52,13 @@ async function deleteUnusedWebhook(ctx: MediaonlyContext, webhook: { id: string;
   }
 }
 
-/** Deletes the rule of a deleted channel or thread, and its log webhook unless another rule uses it. */
-export async function removeRuleOf(ctx: MediaonlyContext, index: RuleIndex, channelId: string): Promise<void> {
-  const [removed] = await ctx.db.run(async (tx) => tx.delete(rules).where(eq(rules.channelId, channelId)).returning());
-  if (removed === undefined) return;
-  index.delete(removed.guildId, removed.channelId);
+/** Deletes the log webhook of a removed rule unless another rule uses it. */
+export async function cleanUpRemovedRule(ctx: MediaonlyContext, removed: Rule): Promise<void> {
   if (removed.logWebhookId === null || removed.logWebhookToken === null) return;
   try {
     await deleteUnusedWebhook(ctx, { id: removed.logWebhookId, token: removed.logWebhookToken }, removed.channelId);
   } catch (error) {
-    ctx.log.warn({ err: error, channelId }, 'Deleting the log webhook of a removed rule failed');
+    ctx.log.warn({ err: error, channelId: removed.channelId }, 'Deleting the log webhook of a removed rule failed');
   }
 }
 
