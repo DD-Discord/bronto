@@ -1,5 +1,5 @@
 import { crudSubcommands, defineCommand, opt, UserError, type Autocomplete, type ChannelRuleIndex, type CommandDefinition } from '@bronto/core';
-import templates from '@bronto/templates';
+import templates, { TIMESTAMP_PLACEHOLDERS } from '@bronto/templates';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import type { Rule } from './db/schema.js';
 import { ruleEntity } from './entity.js';
@@ -72,6 +72,11 @@ export function createAutothreadCommand(deps: { index: ChannelRuleIndex<Rule> })
             return { templateId: template };
           }
           return values['remove-auto-message'] === true ? { templateId: null } : {};
+        },
+        validate: (record) => {
+          const used = TIMESTAMP_PLACEHOLDERS.filter((key) => record.nameFormat?.includes(`{${key}}`)).map((key) => `\`{${key}}\``);
+          if (used.length === 0) return [];
+          return [`Thread names show ${used.join(' and ')} as raw text. Use \`{date.iso}\` for the date instead.`];
         },
         afterWrite: (_ctx, record) => deps.index.set(record),
         beforeDelete: (_ctx, record) => deps.index.delete(record.guildId, record.channelId),

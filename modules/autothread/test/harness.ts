@@ -166,6 +166,8 @@ export function fakeMessage(channelId: string, options: FakeMessageOptions = {})
     webhookId: options.webhookId ?? null,
     system: options.system ?? false,
     url: `https://discord.com/channels/${GUILD}/${channelId}/${id}`,
+    createdTimestamp: Date.now(),
+    channel: { name: 'general' },
     guild: { name: 'Test server' },
     author: { id: authorId, bot: options.bot ?? false, username: 'mia', displayName: 'Mia' },
     member: { id: authorId, displayName: options.displayName ?? 'Mia Display', permissionsIn: () => ({ has: () => false }) },

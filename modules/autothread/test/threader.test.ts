@@ -93,6 +93,15 @@ describe('opening threads', () => {
     expect(postsIn(message.id)).toEqual([]);
   });
 
+  it('fills the channel name and UTC date into the thread name', async () => {
+    await start();
+    await insertRule(t, { channelId: CHANNEL, nameFormat: '{channel.name} {date.iso}' });
+    await ready(ab!);
+    const message = { ...fakeMessage(CHANNEL), createdTimestamp: Date.UTC(2026, 9, 27, 23, 30) };
+    await say(message);
+    expect(threadsOf(CHANNEL)).toEqual([expect.objectContaining({ name: 'general 2026-10-27' })]);
+  });
+
   it('opens threads in announcement channels', async () => {
     await start();
     await insertRule(t, { channelId: NEWS, nameFormat: 'Talk' });

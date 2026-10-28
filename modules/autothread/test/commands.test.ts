@@ -74,6 +74,14 @@ describe('/autothread set', () => {
     expect(option.max_length).toBe(100);
   });
 
+  it('refuses timestamp placeholders in the name format', async () => {
+    const reply = await say('set', { 'name-format': '{date} and {time} · {user.display}' });
+    expect(contents(reply)).toEqual(['Thread names show `{date}` and `{time}` as raw text. Use `{date.iso}` for the date instead.']);
+    expect(await ruleRows(t)).toEqual([]);
+    await say('set', { 'name-format': '{date.iso} · {channel.name}' });
+    expect((await ruleRows(t))[0]!.nameFormat).toBe('{date.iso} · {channel.name}');
+  });
+
   it('sets another channel', async () => {
     await say('set', { channel: channelOption(OTHER_CHANNEL) });
     expect((await ruleRows(t)).map((row) => row.channelId)).toEqual([OTHER_CHANNEL]);
