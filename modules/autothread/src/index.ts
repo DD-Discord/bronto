@@ -7,12 +7,14 @@ import { asc, eq } from 'drizzle-orm';
 import { createAutothreadCommand } from './commands.js';
 import * as schema from './db/schema.js';
 import { rules, type Rule } from './db/schema.js';
+import { createRename } from './rename.js';
 import { Threader } from './threader.js';
 
 /** An autothread module with its own in-memory state; the default export is the one deployments load. */
 export function createAutothreadModule(): ModuleDefinition<Record<string, never>, undefined> {
   const index = new ChannelRuleIndex<Rule>();
-  const threader = new Threader({ index });
+  const rename = createRename();
+  const threader = new Threader({ index, rename });
   return defineModule<Record<string, never>, undefined>({
     name: 'autothread',
     docs: new URL('../docs/user/', import.meta.url),
@@ -41,8 +43,9 @@ export function createAutothreadModule(): ModuleDefinition<Record<string, never>
         for (const rule of cleared) index.set(rule);
       }),
     ],
+    components: [rename.renameButton, rename.renameModal],
     commands: { autothread: createAutothreadCommand({ index }) },
-    hooks: channelRuleHooks({ table: rules, index }),
+    hooks: channelRuleHooks({ table: rules, index, onStopped: (ctx) => rename.dropGuild(ctx.guildId) }),
   });
 }
 

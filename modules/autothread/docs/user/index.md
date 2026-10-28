@@ -7,3 +7,7 @@ Each channel has its own rule. Moderators manage rules with `/autothread` and ne
 > [!section] [Open](setup.md)
 > **`/autothread set`, `show`, `list`, `remove`**
 > Create or change a rule, look at the rules of your server or remove one.
+
+> [!section] [Open](rename.md)
+> **Rename button**
+> Let the author of a post rename their thread.

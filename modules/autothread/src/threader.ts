@@ -4,6 +4,7 @@ import sticky from '@bronto/sticky';
 import templates, { fillPlaceholders, postPlaceholders } from '@bronto/templates';
 import { Routes, type APIChannel, type Message } from 'discord.js';
 import type { Rule } from './db/schema.js';
+import type { Rename } from './rename.js';
 
 const MAX_NAME_LENGTH = 100;
 const FALLBACK_NAME = 'Comments';
@@ -18,8 +19,11 @@ export function threadName(format: string, values: Readonly<Record<string, strin
 export class Threader {
   private readonly index: ChannelRuleIndex<Rule>;
 
-  constructor(deps: { index: ChannelRuleIndex<Rule> }) {
+  private readonly rename: Rename;
+
+  constructor(deps: { index: ChannelRuleIndex<Rule>; rename: Rename }) {
     this.index = deps.index;
+    this.rename = deps.rename;
   }
 
   async onMessage(ctx: HandlerContext, message: Message): Promise<void> {
@@ -45,30 +49,43 @@ export class Threader {
       ctx.log.warn({ err: error, channelId: message.channelId, messageId: message.id }, 'Starting a thread failed');
       return;
     }
-    if (rule.templateId !== null) await this.postAutoMessage(ctx, rule.templateId, thread.id, message, values);
+    await this.postAutoMessage(ctx, rule, thread.id, message, values);
   }
 
-  /** Posts the template in the thread; only the post's author can be pinged by it. */
+  /**
+   * Posts the template in the thread (only the post's author can be pinged by it), with the rename button when the rule
+   * has one. Without a template, or when it is gone, the button is posted alone.
+   */
   private async postAutoMessage(
     ctx: HandlerContext,
-    templateId: string,
+    rule: Rule,
     threadId: string,
     message: Message,
     values: Record<string, string>,
   ): Promise<void> {
-    const rendered = await ctx.modules.get(templates).render(templateId, values);
-    if (rendered === null) {
-      ctx.log.warn({ channelId: message.channelId, templateId }, 'The auto-message template no longer exists');
-      return;
-    }
+    const { templateId } = rule;
+    if (templateId === null && !rule.rename) return;
     try {
-      await ctx.client.rest.post(Routes.channelMessages(threadId), {
-        body: {
-          content: rendered.content,
-          embeds: rendered.embed === null ? [] : [rendered.embed],
-          allowed_mentions: { users: [message.author.id] },
-        },
-      });
+      let rendered: Awaited<ReturnType<ReturnType<typeof ctx.modules.get<typeof templates>>['render']>> = null;
+      if (templateId !== null) {
+        rendered = await ctx.modules.get(templates).render(templateId, values);
+        if (rendered === null) ctx.log.warn({ channelId: message.channelId, templateId }, 'The auto-message template no longer exists');
+      }
+      const components = rule.rename ? [this.rename.renameRow(ctx, message.author.id)] : [];
+      if (rendered !== null) {
+        await ctx.client.rest.post(Routes.channelMessages(threadId), {
+          body: {
+            content: rendered.content,
+            embeds: rendered.embed === null ? [] : [rendered.embed],
+            components,
+            allowed_mentions: { users: [message.author.id] },
+          },
+        });
+      } else if (rule.rename) {
+        await ctx.client.rest.post(Routes.channelMessages(threadId), {
+          body: { content: 'The author of this post can rename the thread.', components, allowed_mentions: { parse: [] } },
+        });
+      }
     } catch (error) {
       ctx.log.warn({ err: error, threadId, templateId }, 'Posting the auto-message failed');
     }
