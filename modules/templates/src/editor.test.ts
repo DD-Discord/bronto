@@ -108,6 +108,11 @@ describe('sectionModal', () => {
     expect(fromDraft).toContain('"value":"Typed"');
   });
 
+  it('tells how to remove a field in the field modal only', () => {
+    expect(JSON.stringify(sectionModal(ctx, 'field', full, 0).toJSON())).toContain('Clear name and value to remove this field.');
+    expect(JSON.stringify(sectionModal(ctx, 'add-field', full).toJSON())).not.toContain('remove this field');
+  });
+
   it('shows a description too long for a text input as text and leaves it out of the form', () => {
     const long = template({ description: 'd'.repeat(4001) });
     const modal = JSON.stringify(sectionModal(ctx, 'body', long).toJSON());
