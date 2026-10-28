@@ -1,6 +1,8 @@
 import { UserError } from '@bronto/core';
 import { describe, expect, it } from 'vitest';
 import { parseEmojis } from '../src/emojis.js';
+import { GatewayIntentBits } from 'discord.js';
+import { createAutoreactModule } from '../src/index.js';
 
 const usable = (id: string) => id === '100000000000000200' || id === '100000000000000202';
 
@@ -44,5 +46,11 @@ describe('parseEmojis', () => {
 
   it('refuses an empty list', () => {
     expect(() => parseEmojis('  , ', usable)).toThrow(/at least one/);
+  });
+});
+
+describe('emoji cache', () => {
+  it('asks for the intent that keeps custom emojis current after connecting', () => {
+    expect(createAutoreactModule().intents).toContain(GatewayIntentBits.GuildExpressions);
   });
 });

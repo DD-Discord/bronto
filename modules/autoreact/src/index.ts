@@ -15,7 +15,8 @@ export function createAutoreactModule(): ModuleDefinition<Record<string, never>,
     name: 'autoreact',
     docs: new URL('../docs/user/', import.meta.url),
     optionalDependsOn: [sticky, mediaonly],
-    intents: [GatewayIntentBits.GuildMessages],
+    // Guild Expressions keeps client.emojis current, which validates custom emojis.
+    intents: [GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildExpressions],
     db: { schema, migrations: new URL('../drizzle/', import.meta.url) },
     botPermissions: [
       PermissionFlagsBits.ViewChannel,
