@@ -79,12 +79,6 @@ export function createMediaonlyCommand(deps: { index: RuleIndex }): CommandDefin
         fallback: (ctx) => ctx.channelId,
       },
       fields: {
-        enabled: { option: opt.boolean({ description: 'Apply the rule (default: yes)' }), column: 'enabled', default: true },
-        'ignore-bots': {
-          option: opt.boolean({ description: 'Leave posts of bots and webhooks alone (default: yes)' }),
-          column: 'ignoreBots',
-          default: true,
-        },
         'require-spoiler': {
           option: opt.boolean({ description: 'Every attachment and link must be marked spoiler (default: no)' }),
           column: 'requireSpoiler',
@@ -98,6 +92,12 @@ export function createMediaonlyCommand(deps: { index: RuleIndex }): CommandDefin
         'remove-log-channel': {
           option: opt.boolean({ description: 'Stop sending reports' }),
           default: false,
+        },
+        enabled: { option: opt.boolean({ description: 'Apply the rule (default: yes)' }), column: 'enabled', default: true },
+        'ignore-bots': {
+          option: opt.boolean({ description: 'Leave posts of bots and webhooks alone (default: yes)' }),
+          column: 'ignoreBots',
+          default: true,
         },
       },
       descriptions: {

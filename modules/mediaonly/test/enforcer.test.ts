@@ -1,7 +1,7 @@
 import { defineModule, on, type HandlerContext, type LoadedModule } from '@bronto/core';
 import { FakeDiscordHttp } from '@bronto/core/testing';
 import templates from '@bronto/templates';
-import { Events } from 'discord.js';
+import { Collection, Events } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import mediaonly from '../src/index.js';
@@ -126,6 +126,32 @@ describe('enforcing', () => {
     closeDms();
     await say(fakeMessage(CHANNEL));
     expect(reportText()).toContain('DMs are closed');
+  });
+
+  it('reports a DM that failed for another reason', async () => {
+    await start();
+    await loggedRule({ channelId: CHANNEL });
+    await ready(mb!);
+    discord.override('POST', '/users/@me/channels', () => ({ status: 500, json: { message: 'Internal error' } }));
+    await say(fakeMessage(CHANNEL));
+    expect(reportText()).toContain("Couldn't send them a DM.");
+    expect(reportText()).not.toContain('DMs are closed');
+  });
+
+  it('keeps forwarded media and removes forwarded text', async () => {
+    await start();
+    await insertRule(t, { channelId: CHANNEL });
+    await ready(mb!);
+    const forward = (content: string, spoilers: boolean[]) => ({
+      ...fakeMessage(CHANNEL, { content: '' }),
+      messageSnapshots: new Collection([
+        ['1', { content, attachments: new Collection(spoilers.map((spoiler, i) => [String(i), { spoiler }] as const)) }],
+      ]),
+    });
+    const picture = forward('', [false]);
+    const text = forward('Only words', []);
+    await say(picture, text);
+    expect(discord.deletedPosts).toEqual([text.id]);
   });
 
   it('report notes a failed delete', async () => {

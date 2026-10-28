@@ -32,6 +32,8 @@ export interface CheckedMessage {
   author: { id: string; bot: boolean };
   member: { permissionsIn(channelId: string): { has(permission: bigint): boolean } } | null;
   attachments: { values(): Iterable<{ spoiler: boolean }> };
+  /** The content of a forward; the forward itself has no content or attachments. */
+  messageSnapshots?: { values(): Iterable<{ content: string; attachments: { values(): Iterable<{ spoiler: boolean }> } }> };
 }
 
 /**
@@ -57,6 +59,13 @@ export function rejection(
   } else if (member.permissionsIn(message.channelId).has(PermissionFlagsBits.ManageMessages)) {
     return null;
   }
-  const problem = mediaProblem({ content: message.content, attachments: [...message.attachments.values()] }, rule.requireSpoiler);
+  const snapshots = [...(message.messageSnapshots?.values() ?? [])];
+  const problem = mediaProblem(
+    {
+      content: [message.content, ...snapshots.map((snapshot) => snapshot.content)].join('\n'),
+      attachments: [message.attachments, ...snapshots.map((snapshot) => snapshot.attachments)].flatMap((list) => [...list.values()]),
+    },
+    rule.requireSpoiler,
+  );
   return problem === null ? null : { rule, problem };
 }

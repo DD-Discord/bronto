@@ -44,6 +44,7 @@ export class Enforcer {
       await this.notice(ctx, channelId, message.author.id, problem);
       const dm = await this.dm(ctx, message, problem);
       if (dm === 'closed') notes.push('dmClosed');
+      else if (dm === null) notes.push('dmFailed');
     }
     await this.report(ctx, rule, message, problem, notes);
   }

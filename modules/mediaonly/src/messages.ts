@@ -1,7 +1,7 @@
 import { fitReport, textSection, type ReportBlock, type ReportLayout, type WebhookMessage } from '@bronto/core';
 import type { MediaProblem } from './check.js';
 
-export type ReportNote = 'forbidden' | 'dmClosed';
+export type ReportNote = 'forbidden' | 'dmClosed' | 'dmFailed';
 
 const RED = 0xf23f43;
 const BLURPLE = 0x5865f2;
@@ -57,6 +57,7 @@ export interface ReportInput {
 const NOTE_LINES: Record<ReportNote, (channelId: string) => string> = {
   forbidden: (channelId) => `I couldn't delete this. I need Manage Messages in <#${channelId}>.`,
   dmClosed: () => "Couldn't tell them by DM, their DMs are closed.",
+  dmFailed: () => "Couldn't send them a DM.",
 };
 
 /** A report for moderators about a post that failed the media check. */
