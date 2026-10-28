@@ -1,9 +1,7 @@
-import { formatDuration, type WebhookMessage } from '@bronto/core';
-import { ComponentType, MessageFlags, SeparatorSpacingSize, ButtonStyle, type APIMessageTopLevelComponent } from 'discord.js';
-import { fenced, foldedDiff } from './diff.js';
+import { MAX_REPORT_TEXT, fenced, fitReport, formatDuration, textSection, type ReportBlock, type ReportLayout, type WebhookMessage } from '@bronto/core';
+import { foldedDiff } from './diff.js';
 
-/** Discord's limit on the displayable text of one message: text displays and button labels together. */
-export const MAX_TEXT = 4000;
+export const MAX_TEXT = MAX_REPORT_TEXT;
 
 export type ReportKind = 'replaced' | 'rejected' | 'left';
 export type ReportNote = 'gone' | 'forbidden' | 'dmClosed';
@@ -47,18 +45,6 @@ export interface DmInput {
   nextPostAt: Date;
 }
 
-type Block =
-  | { kind: 'text'; text: string }
-  | { kind: 'separator' }
-  | { kind: 'file'; name: string }
-  | { kind: 'button'; label: string; url: string };
-
-interface Layout {
-  accent: number;
-  blocks: Block[];
-  files: { name: string; data: Buffer }[];
-}
-
 /** Which texts go into attachments instead of the message body. */
 interface Mode {
   diffFile: boolean;
@@ -93,51 +79,12 @@ function noteLines(kind: ReportKind, input: ReportInput): string[] {
 }
 
 /** A section with the diff of two texts, inline or as the file `changes.diff`. */
-function diffSection(title: string, before: string, after: string, mode: Mode, layout: Layout): Block[] {
+function diffSection(title: string, before: string, after: string, mode: Mode, layout: ReportLayout): ReportBlock[] {
   const diff = foldedDiff(before, after);
   if (diff === '') return [{ kind: 'text', text: `**${title}**\nNo text changed.` }];
   if (!mode.diffFile) return [{ kind: 'text', text: `**${title}**\n${fenced(diff, 'diff')}` }];
   layout.files.push({ name: 'changes.diff', data: Buffer.from(diff) });
   return [{ kind: 'text', text: `**${title}**` }, { kind: 'file', name: 'changes.diff' }];
-}
-
-/** A section with a copy of a text, inline or as the file `post.txt`. */
-function textSection(title: string, text: string, mode: Mode, layout: Layout): Block[] {
-  if (!mode.textFile) return [{ kind: 'text', text: `**${title}**\n${fenced(text)}` }];
-  layout.files.push({ name: 'post.txt', data: Buffer.from(text) });
-  return [{ kind: 'text', text: `**${title}**` }, { kind: 'file', name: 'post.txt' }];
-}
-
-function toComponents({ accent, blocks }: Layout): APIMessageTopLevelComponent[] {
-  const children: unknown[] = [];
-  const buttons: unknown[] = [];
-  for (const block of blocks) {
-    if (block.kind === 'text') children.push({ type: ComponentType.TextDisplay, content: block.text });
-    else if (block.kind === 'separator') children.push({ type: ComponentType.Separator, divider: true, spacing: SeparatorSpacingSize.Small });
-    else if (block.kind === 'file') children.push({ type: ComponentType.File, file: { url: `attachment://${block.name}` } });
-    else buttons.push({ type: ComponentType.Button, style: ButtonStyle.Link, label: block.label, url: block.url });
-  }
-  if (buttons.length > 0) children.push({ type: ComponentType.ActionRow, components: buttons });
-  return [{ type: ComponentType.Container, accent_color: accent, components: children }] as unknown as APIMessageTopLevelComponent[];
-}
-
-const textSize = (blocks: Block[]) =>
-  blocks.reduce((sum, block) => sum + (block.kind === 'text' ? block.text.length : block.kind === 'button' ? block.label.length : 0), 0);
-
-/** The first layout that fits the text limit, moving diffs and then texts into attachments. */
-function fit(build: (mode: Mode, layout: Layout) => Block[], accent: number): WebhookMessage {
-  let layout: Layout = { accent, blocks: [], files: [] };
-  for (const mode of MODES) {
-    layout = { accent, blocks: [], files: [] };
-    layout.blocks = build(mode, layout);
-    if (textSize(layout.blocks) <= MAX_TEXT) break;
-  }
-  return {
-    components: toComponents(layout),
-    ...(layout.files.length > 0 && { files: layout.files }),
-    flags: MessageFlags.IsComponentsV2,
-    allowedMentions: { parse: [] },
-  };
 }
 
 /** A report for moderators about a removed post (spec: Mod reports). */
@@ -149,8 +96,8 @@ export function reportMessage(kind: ReportKind, input: ReportInput): WebhookMess
   const removed = input.removedText === null ? null : shown(input.removedText, input.removedAttachments);
   const notes = noteLines(kind, input);
 
-  const build = (mode: Mode, layout: Layout): Block[] => {
-    const blocks: Block[] = [];
+  const build = (mode: Mode, layout: ReportLayout): ReportBlock[] => {
+    const blocks: ReportBlock[] = [];
     const text = (value: string) => blocks.push({ kind: 'text', text: value });
     if (kind === 'replaced') {
       text(`## Replaced an older post\n${member} posted a new post in ${channel}, so their previous one was removed.`);
@@ -167,7 +114,7 @@ export function reportMessage(kind: ReportKind, input: ReportInput): WebhookMess
     } else {
       text(`## Removed the post of a member who left\n${member} left the server, so their post in ${channel} was removed.`);
       blocks.push({ kind: 'separator' });
-      if (removed !== null) blocks.push(...textSection('Removed post', removed, mode, layout));
+      if (removed !== null) blocks.push(...textSection('Removed post', removed, mode.textFile, layout));
       const joined = input.joinedAt === null ? 'Posted' : `Joined ${time(input.joinedAt)} · posted`;
       text(`${joined} ${time(input.postedAt)}`);
     }
@@ -183,15 +130,15 @@ export function reportMessage(kind: ReportKind, input: ReportInput): WebhookMess
   };
 
   const accent = kind === 'replaced' ? AMBER : kind === 'rejected' ? RED : GRAY;
-  return fit(build, accent);
+  return fitReport(MODES, accent, build);
 }
 
 /** A DM to a member with a copy of their removed post (spec: DMs to the member). */
 export function dmMessage(kind: 'replaced' | 'rejected', input: DmInput): WebhookMessage {
   const channel = `<#${input.channelId}>`;
   const copy = shown(input.text, input.attachmentCount);
-  const build = (mode: Mode, layout: Layout): Block[] => {
-    const blocks: Block[] = [];
+  const build = (mode: Mode, layout: ReportLayout): ReportBlock[] => {
+    const blocks: ReportBlock[] = [];
     if (kind === 'rejected') {
       blocks.push({
         kind: 'text',
@@ -209,11 +156,11 @@ export function dmMessage(kind: 'replaced' | 'rejected', input: DmInput): Webhoo
       });
     }
     blocks.push({ kind: 'separator' });
-    blocks.push(...textSection(kind === 'rejected' ? 'A copy of what you wrote' : 'Your previous post', copy, mode, layout));
+    blocks.push(...textSection(kind === 'rejected' ? 'A copy of what you wrote' : 'Your previous post', copy, mode.textFile, layout));
     if (kind === 'rejected' && input.jumpMessageId !== null) {
       blocks.push({ kind: 'button', label: 'Go to your current post', url: jumpUrl(input.guildId, input.channelId, input.jumpMessageId) });
     }
     return blocks;
   };
-  return fit(build, BLURPLE);
+  return fitReport(MODES, BLURPLE, build);
 }

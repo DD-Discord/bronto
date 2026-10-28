@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fenced, foldedDiff } from './diff.js';
+import { foldedDiff } from './diff.js';
 
 const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`);
 
@@ -32,23 +32,5 @@ describe('foldedDiff', () => {
   it('handles an empty side', () => {
     expect(foldedDiff('', 'a')).toBe('+ a');
     expect(foldedDiff('a', '')).toBe('- a');
-  });
-});
-
-describe('fenced', () => {
-  it('wraps text in a block with a language', () => {
-    expect(fenced('x', 'diff')).toBe('```diff\nx\n```');
-    expect(fenced('x')).toBe('```\nx\n```');
-  });
-
-  it('escapes fences so the text stays inside one block', () => {
-    const block = fenced('before ``` after\n```js', 'diff');
-    expect(block.match(/```/g)).toHaveLength(2);
-    expect(block).toContain('`​`​`');
-  });
-
-  it.each([5, 8, 3, 4])('leaves no fence in a run of %d backticks', (count) => {
-    const block = fenced(`a${'`'.repeat(count)}b`, 'diff');
-    expect(block.match(/```/g)).toHaveLength(2);
   });
 });

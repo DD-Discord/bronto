@@ -2,9 +2,10 @@ import { linkExpiry, REFRESH_MARGIN_MS } from '@bronto/core';
 import { and, eq } from 'drizzle-orm';
 import { DiscordAPIError, RESTJSONErrorCodes, type APIEmbed } from 'discord.js';
 import type { TemplatesContext } from './context.js';
-import type { TemplateMessage } from './content.js';
+import { embedLength, LIMITS, MAX_EMBED, type TemplateMessage } from './content.js';
 import { IMAGE_SLOTS, templateImages, templates, type ImageSlot, type TemplateImage } from './db/schema.js';
 import { messageAttachments } from './images.js';
+import { fillPlaceholders } from './placeholders.js';
 
 export { REFRESH_MARGIN_MS };
 
@@ -80,12 +81,56 @@ async function currentLinks(ctx: TemplatesContext, threadId: string, messageId: 
   }
 }
 
+/** The text cut to `limit` characters, ending in an ellipsis when something was cut. */
+function cut(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const end = /[\ud800-\udbff]/.test(text[limit - 2] ?? '') ? limit - 2 : limit - 1;
+  return `${text.slice(0, Math.max(end, 0))}…`;
+}
+
+/** Fills the placeholders in every text field and cuts each field, then the embed as a whole, to Discord's limits. */
+function fillMessage(message: TemplateMessage, values: Readonly<Record<string, string>>): TemplateMessage {
+  const fill = (text: string, limit: number) => cut(fillPlaceholders(text, values), limit);
+  const content = fill(message.content, LIMITS.content);
+  const embed = message.embed;
+  if (embed === null) return { content, embed };
+  if (embed.title !== undefined) embed.title = fill(embed.title, LIMITS.title);
+  if (embed.description !== undefined) embed.description = fill(embed.description, LIMITS.description);
+  if (embed.author !== undefined) embed.author.name = fill(embed.author.name, LIMITS.author);
+  if (embed.footer !== undefined) embed.footer.text = fill(embed.footer.text, LIMITS.footer);
+  for (const field of embed.fields ?? []) {
+    field.name = fill(field.name, LIMITS.fieldName);
+    field.value = fill(field.value, LIMITS.fieldValue);
+  }
+  // The description goes first, then fields from the end. Title, author and footer alone stay within the limit.
+  let excess = embedLength(embed) - MAX_EMBED;
+  if (excess > 0 && embed.description !== undefined) {
+    const room = embed.description.length - excess;
+    if (room > 0) embed.description = cut(embed.description, room);
+    else delete embed.description;
+    excess = embedLength(embed) - MAX_EMBED;
+  }
+  while (excess > 0 && embed.fields !== undefined && embed.fields.length > 0) {
+    const last = embed.fields.at(-1)!;
+    const room = last.value.length - excess;
+    if (room > 0) last.value = cut(last.value, room);
+    else embed.fields.pop();
+    excess = embedLength(embed) - MAX_EMBED;
+  }
+  if (embed.fields?.length === 0) delete embed.fields;
+  return { content, embed };
+}
+
 /**
  * What the template posts now: uploaded images carry fresh links (the preview message is refetched for links that
- * expire within `REFRESH_MARGIN_MS`), and the time of posting is filled when the template shows it. Null if the
- * template doesn't exist.
+ * expire within `REFRESH_MARGIN_MS`), the time of posting is filled when the template shows it, and `values` fill the
+ * placeholders in its text. Null if the template doesn't exist.
  */
-export async function render(ctx: TemplatesContext, id: string): Promise<TemplateMessage | null> {
+export async function render(
+  ctx: TemplatesContext,
+  id: string,
+  values?: Readonly<Record<string, string>>,
+): Promise<TemplateMessage | null> {
   const loaded = await ctx.db.run(async (tx) => {
     const [template] = await tx.select().from(templates).where(eq(templates.id, id));
     if (template === undefined) return null;
@@ -150,5 +195,6 @@ export async function render(ctx: TemplatesContext, id: string): Promise<Templat
     if (embed.footer !== undefined && !embed.footer.text) delete embed.footer;
     if (template.showPostTime) embed.timestamp = new Date().toISOString();
   }
-  return { content: template.content, embed };
+  const message = { content: template.content, embed };
+  return values === undefined ? message : fillMessage(message, values);
 }

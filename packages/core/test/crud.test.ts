@@ -76,6 +76,27 @@ const gadgetCommand = defineCommand({
   }),
 });
 
+const settingCommand = defineCommand({
+  description: 'Settings',
+  subcommands: crudSubcommands(widgets, {
+    style: 'set',
+    key: { name: 'id', option: opt.string({ description: 'Widget ID' }), toKey: (value) => value, fallback: (ctx) => ctx.channelId },
+    fields: {
+      label: { option: opt.string({ description: 'Label' }), column: 'label' },
+      count: { option: opt.integer({ description: 'Count' }), column: 'count', default: 1 },
+    },
+    hooks: {
+      prepare: (_ctx, values, existing) => {
+        calls.push(`prepare:${values.id}:${existing?.label ?? 'new'}:${values.count}`);
+      },
+      afterWrite: (_ctx, record, action) => {
+        calls.push(`${action}:${record.id}`);
+      },
+    },
+    omit: ['show'],
+  }),
+});
+
 let t: TestDatabase;
 let router: InteractionRouter;
 
@@ -85,7 +106,7 @@ beforeAll(async () => {
   await upsertGuild(t.database.admin, 'g1');
   await upsertGuild(t.database.admin, 'g2');
   const { log } = captureLog();
-  const definition = widgetsModule({ commands: { widget: widgetCommand, gadget: gadgetCommand } });
+  const definition = widgetsModule({ commands: { widget: widgetCommand, gadget: gadgetCommand, setting: settingCommand } });
   const runtimes = createModuleRuntimes([{ packageName: '@test/widgets', definition, config: {} }], {
     client: {} as Client,
     database: t.database,
@@ -94,7 +115,7 @@ beforeAll(async () => {
   const enablement = new ModuleEnablement(t.database.admin);
   const dispatcher = new Dispatcher({ runtimes, database: t.database, enablement, queue: new KeyedQueue(() => undefined) });
   router = new InteractionRouter({
-    sources: [{ runtime: runtimes[0]!, commands: { widget: widgetCommand, gadget: gadgetCommand }, components: [] }],
+    sources: [{ runtime: runtimes[0]!, commands: { widget: widgetCommand, gadget: gadgetCommand, setting: settingCommand }, components: [] }],
     dispatcher,
     enablement,
     guildGate: async () => true,
@@ -305,5 +326,64 @@ describe('show, list and delete', () => {
     expect(calls).toEqual(['delete:w1']);
     expect(await rows()).toEqual([]);
     expect(await t.database.admin.select().from(widgetItems).where(eq(widgetItems.id, 'w1'))).toEqual([]);
+  });
+});
+
+describe('set style', () => {
+  it('builds set, list and remove with optional fields and the fallback key', () => {
+    const json = commandToJson('setting', settingCommand);
+    const subs = json.options as Array<{ name: string; options: Array<{ name: string; required: boolean }> }>;
+    expect(subs.map((sub) => [sub.name, sub.options.map((option) => `${option.name}${option.required ? '!' : ''}`)])).toEqual([
+      ['set', ['id', 'label', 'count']],
+      ['list', []],
+      ['remove', ['id']],
+    ]);
+  });
+
+  it('creates a missing record with defaults', async () => {
+    const payloads = await say('setting', 'set', { id: 'w1', label: 'Blue' });
+    expect(payloads[0]!.content).toBe('**Widget created.**');
+    expect(calls).toEqual(['prepare:w1:new:1', 'create:w1']);
+    expect((await rows())[0]).toMatchObject({ id: 'w1', label: 'Blue', count: 1, createdBy: 'u5' });
+  });
+
+  it('changes only given options of an existing record', async () => {
+    await say('setting', 'set', { id: 'w1', label: 'Blue', count: 2 });
+    calls.length = 0;
+    const payloads = await say('setting', 'set', { id: 'w1', count: 5 });
+    expect(payloads[0]!.content).toBe('**Widget updated.**');
+    expect(calls).toEqual(['prepare:w1:Blue:5', 'edit:w1']);
+    expect((await rows())[0]).toMatchObject({ label: 'Blue', count: 5, updatedBy: 'u5' });
+  });
+
+  it('requires fields without a default on create', async () => {
+    expect(contents(await say('setting', 'set', { id: 'w1', count: 3 }))).toEqual(['`label` is needed to create a widget.']);
+    expect(await rows()).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it('uses the fallback key in set and remove', async () => {
+    await say('setting', 'set', { label: 'Blue' }, 'chan1');
+    expect((await rows()).map((row) => row.id)).toEqual(['chan1']);
+    expect(contents(await say('setting', 'remove', {}, 'chan1'))).toEqual(['**Widget deleted:** Blue (1)']);
+    expect(await rows()).toEqual([]);
+  });
+
+  it('refuses a set without changes on an existing record', async () => {
+    await say('setting', 'set', { id: 'w1', label: 'Blue' });
+    calls.length = 0;
+    expect(contents(await say('setting', 'set', { id: 'w1' }))).toEqual(['Nothing to change; pass at least one option.']);
+    expect(calls).toEqual([]);
+  });
+
+  it('removes a record and names a missing one', async () => {
+    await say('setting', 'set', { id: 'w1', label: 'Blue' });
+    expect(contents(await say('setting', 'remove', { id: 'w1' }))).toEqual(['**Widget deleted:** Blue (1)']);
+    expect(contents(await say('setting', 'remove', { id: 'w1' }))).toEqual(['There is no widget for `w1`.']);
+  });
+
+  it('keeps the create-edit style unchanged', () => {
+    const json = commandToJson('widget', widgetCommand);
+    expect((json.options as Array<{ name: string }>).map((sub) => sub.name)).toEqual(['create', 'edit', 'show', 'list', 'delete']);
   });
 });

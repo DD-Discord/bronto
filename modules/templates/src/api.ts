@@ -6,8 +6,11 @@ import { createPost } from './posts.js';
 import { render } from './render.js';
 
 export interface TemplatesApi {
-  /** What to post; null if the template doesn't exist. */
-  render(id: string): Promise<TemplateMessage | null>;
+  /**
+   * What to post; null if the template doesn't exist. `values` fill `{key}` placeholders in its text (see
+   * `postPlaceholders`); unknown keys stay, and each field is cut to Discord's limit.
+   */
+  render(id: string, values?: Readonly<Record<string, string>>): Promise<TemplateMessage | null>;
   /** Name and post link; null if missing. */
   get(id: string): Promise<{ id: string; name: string; url: string } | null>;
   /** For autocomplete: templates whose name contains the query (any case), by name, max 25. */
@@ -30,7 +33,7 @@ export function templatesApi(ctx: TemplatesContext): TemplatesApi {
   };
 
   return {
-    render: async (id) => (UUID.test(id) ? render(ctx, id) : null),
+    render: async (id, values) => (UUID.test(id) ? render(ctx, id, values) : null),
     get: async (id) => {
       const row = await find(id);
       return row === null ? null : { id: row.id, name: row.name, url: `https://discord.com/channels/${ctx.guildId}/${row.threadId}` };

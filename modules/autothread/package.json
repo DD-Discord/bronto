@@ -1,0 +1,32 @@
+{
+  "name": "@bronto/autothread",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate"
+  },
+  "peerDependencies": {
+    "@bronto/core": "workspace:*",
+    "@bronto/mediaonly": "workspace:*",
+    "@bronto/sticky": "workspace:*",
+    "@bronto/templates": "workspace:*",
+    "discord.js": "14.27.0",
+    "drizzle-orm": "0.45.4",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@bronto/core": "workspace:*",
+    "@bronto/mediaonly": "workspace:*",
+    "@bronto/sticky": "workspace:*",
+    "@bronto/templates": "workspace:*",
+    "discord.js": "14.27.0",
+    "drizzle-kit": "0.31.11",
+    "drizzle-orm": "0.45.4",
+    "zod": "4.6.7"
+  }
+}
