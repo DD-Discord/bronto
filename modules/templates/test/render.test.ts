@@ -262,6 +262,25 @@ describe('render', () => {
       expect(embed.description!.endsWith('…')).toBe(true);
     });
 
+    it('cuts fields from the end when the description is not enough', async () => {
+      const { id } = await seed({});
+      await t.database.admin.update(templates).set({
+        embed: {
+          title: 'Rules',
+          fields: Array.from({ length: 7 }, (_, index) => ({ name: `Field ${index}`, value: '{user.display}' })),
+          footer: { text: '{user.display}' },
+        },
+      });
+      const embed = (await inHandler((ctx) => render(ctx, id, { 'user.display': 'x'.repeat(1000) })))!.embed!;
+      expect(embedLength(embed)).toBeLessThanOrEqual(6000);
+      // The first fields stay whole; the last one kept is cut, and every kept value is non-empty.
+      expect(embed.fields!.slice(0, 4).map((field) => field.value)).toEqual(Array(4).fill('x'.repeat(1000)));
+      expect(embed.fields!.every((field) => field.value.length > 0)).toBe(true);
+      expect(embed.fields!.at(-1)!.value.endsWith('…')).toBe(true);
+      expect(embed.title).toBe('Rules');
+      expect(embed.footer!.text).toBe('x'.repeat(1000));
+    });
+
     it('is unchanged without values', async () => {
       const { id } = await seed({});
       await t.database.admin.update(templates).set({ content: 'Hi {user.name}', embed: { title: '{server.name}' } });

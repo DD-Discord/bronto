@@ -102,12 +102,22 @@ function fillMessage(message: TemplateMessage, values: Readonly<Record<string, s
     field.name = fill(field.name, LIMITS.fieldName);
     field.value = fill(field.value, LIMITS.fieldValue);
   }
-  const excess = embedLength(embed) - MAX_EMBED;
-  if (excess > 0) {
-    const room = (embed.description?.length ?? 0) - excess;
-    if (room > 0) embed.description = cut(embed.description!, room);
+  // The description goes first, then fields from the end. Title, author and footer alone stay within the limit.
+  let excess = embedLength(embed) - MAX_EMBED;
+  if (excess > 0 && embed.description !== undefined) {
+    const room = embed.description.length - excess;
+    if (room > 0) embed.description = cut(embed.description, room);
     else delete embed.description;
+    excess = embedLength(embed) - MAX_EMBED;
   }
+  while (excess > 0 && embed.fields !== undefined && embed.fields.length > 0) {
+    const last = embed.fields.at(-1)!;
+    const room = last.value.length - excess;
+    if (room > 0) last.value = cut(last.value, room);
+    else embed.fields.pop();
+    excess = embedLength(embed) - MAX_EMBED;
+  }
+  if (embed.fields?.length === 0) delete embed.fields;
   return { content, embed };
 }
 
