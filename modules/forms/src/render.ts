@@ -212,7 +212,8 @@ export function renderSubmission(input: RenderInput): RenderedPart[] {
               accessory: { type: ComponentType.Thumbnail, media: { url: input.avatarUrl } },
             },
             { type: ComponentType.TextDisplay, content: smallLine },
-            { type: ComponentType.Separator },
+            // Only between the details and answers; part 1 holds no answers when they are apart or empty.
+            ...(part.kids.length > 0 ? [{ type: ComponentType.Separator }] : []),
           ]
         : [{ type: ComponentType.TextDisplay, content: followUpHeader(index + 1, total) }];
     const children = [

@@ -6,4 +6,4 @@ Buttons go on a message made from a template of `@bronto/templates`, or on a cha
 
 - Using and building forms: run `/help` in Discord and pick Forms.
 - Loading the module and its permissions: [docs/admin/setup.md](docs/admin/setup.md)
-- API: forms exports nothing for other modules, so there is no API page. It depends on `@bronto/templates` and uses `@bronto/sticky` when that is loaded.
+- API: forms exports nothing for other modules, so there is no API page. It depends on `@bronto/templates` and uses `@bronto/sticky` when that is loaded. With `@bronto/autothread` and `@bronto/autoreact` loaded, submissions follow the submissions channel's thread and reaction rules.

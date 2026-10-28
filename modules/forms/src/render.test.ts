@@ -240,6 +240,7 @@ describe('renderSubmission', () => {
     const parts = renderSubmission(base({ ...input, answersApart: true }));
     expect(parts).toHaveLength(2);
     expect(texts(parts[0]!).join('\n')).not.toContain('Once upon a time');
+    expect(walk(parts[0]!).map((c) => c.type)).toEqual([ComponentType.Section, ComponentType.TextDisplay]);
     expect(texts(parts[1]!)).toEqual(['-# Story contest · from <@111111111111111111> · part 2 of 2', '**Field aaaaaaaa**\nOnce upon a time']);
     expect(renderSubmission(base(input))).toHaveLength(1);
   });
@@ -248,5 +249,6 @@ describe('renderSubmission', () => {
     const parts = renderSubmission(base({ fields: [field('aaaaaaaa')], answers: {}, answersApart: true }));
     expect(parts).toHaveLength(1);
     expect(texts(parts[0]!).join('\n')).not.toContain('part 1');
+    expect(walk(parts[0]!).map((c) => c.type)).toEqual([ComponentType.Section, ComponentType.TextDisplay]);
   });
 });

@@ -1,6 +1,6 @@
 import { createScopedDb, moduleRoleName } from '@bronto/core';
 import { fakeModal, type RecordedRequest } from '@bronto/core/testing';
-import { Events, MessageFlags } from 'discord.js';
+import { ChannelType, Events, MessageFlags } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { rules as reactRules } from '../../autoreact/src/db/schema.js';
@@ -625,5 +625,38 @@ describe('threads and reactions', () => {
     expect(row!.partMessageIds).toEqual([first!.id, ...messagesIn(f, SUBMIT).map((message) => message.id)]);
     expect(row!.partMessageIds).toHaveLength(row!.render.parts.length);
     expect(f.discord.channels.has(first!.id)).toBe(false);
+  });
+
+  it('a one-part submission whose thread failed says only the thread is missing, and Discard confirms it', async () => {
+    f = await startFilling(t, [], { postRules: true });
+    await threadRule();
+    const form = await formWith(f, [text(1)]);
+    onNextPost(SUBMIT, (id) => failOnce('POST', `/channels/${SUBMIT}/messages/${id}/threads`));
+    const failed = await submitPage(f, await openModal(f, await openerId(f, form)), { fields: { q0000001: 'Hello' } });
+    expect(contentOf(failed)).toContain("Your submission to **Story contest** is posted, but I couldn't open its thread:");
+    expect(contentOf(failed)).not.toContain('the rest');
+    expect(contentOf(await open(f, await openerId(f, form)))).toContain("is posted, but its thread isn't open yet");
+
+    const discarded = await clickIn(f, replyOf(failed), 'Discard');
+    expect(contentOf(discarded)).toBe('Submitted to **Story contest**.\n**Question 1:** Hello');
+    expect((await submissionRows(f))[0]).toMatchObject({ status: 'posted' });
+    expect(await draftRows(f)).toEqual([]);
+  });
+
+  it('a retry ignores a thread opened by hand on part 1 after part 2 went to the channel', async () => {
+    f = await startFilling(t, [], { postRules: true });
+    const form = await formWith(f, longFields());
+    failNth(SUBMIT, 3);
+    const failed = await submitPage(f, await openModal(f, await openerId(f, form)), { fields: longAnswers });
+    expect(contentOf(failed)).toContain("couldn't post");
+    const [first] = messagesIn(f, SUBMIT);
+    f.discord.addChannel(first!.id, { guildId: GUILD, type: ChannelType.PublicThread, parentId: SUBMIT });
+
+    const retried = await clickIn(f, replyOf(failed), 'Try again');
+    expect(contentOf(retried)).toContain('Submitted to **Story contest**.');
+    const [row] = await submissionRows(f);
+    expect(row!.partMessageIds).toEqual(messagesIn(f, SUBMIT).map((message) => message.id));
+    expect(row!.partMessageIds).toHaveLength(row!.render.parts.length);
+    expect(messagesIn(f, first!.id)).toEqual([]);
   });
 });

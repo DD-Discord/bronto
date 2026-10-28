@@ -343,7 +343,12 @@ describe('threadPost', () => {
     const [first] = postsIn(message.id);
     expect(first).toMatchObject({ content: `Hi <@${MEMBER}>`, allowed_mentions: { users: [MEMBER] } });
     expect(JSON.stringify(first)).toContain(MEMBER);
-    expect(JSON.stringify((first as unknown as { components: unknown }).components)).toContain('rename');
+    const [row] = (first as unknown as { components: { components: { label: string; custom_id: string }[] }[] }).components;
+    const [button] = row!.components;
+    expect(button!.label).toBe('Rename thread');
+    // The button belongs to the author passed in, not to the bot that posted.
+    expect(button!.custom_id).toContain(MEMBER);
+    expect(button!.custom_id).not.toContain(USER);
   });
 
   it('returns null without a rule and with a disabled rule', async () => {

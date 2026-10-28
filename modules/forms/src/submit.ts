@@ -8,6 +8,7 @@ import {
   DiscordAPIError,
   MessageFlags,
   RESTJSONErrorCodes,
+  type Channel,
   type GuildMember,
   type Message,
   type MessageMentionOptions,
@@ -89,8 +90,12 @@ function retryRow(ctx: FormsContext, submissionId: string): ActionRowBuilder<But
 export async function postingRefusal(ctx: FormsContext, form: Form, userId: string): Promise<ReplyMessage | null> {
   const posting = await postingSubmission(ctx, form.id, userId);
   if (posting === null) return null;
+  const content =
+    posting.partMessageIds.length >= posting.render.parts.length
+      ? `Your submission to **${form.name}** is posted, but its thread isn't open yet. Press Try again to open it, or Discard.`
+      : `Your submission to **${form.name}** isn't fully posted yet. Press Try again to post the rest, or Discard.`;
   return {
-    content: `Your submission to **${form.name}** isn't fully posted yet. Press Try again to post the rest, or Discard.`,
+    content,
     components: [retryRow(ctx, posting.id)],
   };
 }
@@ -249,9 +254,12 @@ function summary(head: string, submission: Submission, tail: string): string {
 
 const confirmation = (form: Form, submission: Submission) => summary(`Submitted to **${form.name}**.`, submission, droppedNote(submission.render.dropped));
 
-function failure(ctx: FormsContext, form: Form, submissionId: string, reason: string): ReplyMessage {
+/** The reply to a failed posting; `allPosted` when only the thread on part 1 is missing. */
+function failure(ctx: FormsContext, form: Form, submissionId: string, reason: string, allPosted = false): ReplyMessage {
   return {
-    content: `I couldn't post your submission to **${form.name}**: ${reason} Your answers are saved; press Try again to post the rest, or Discard.`,
+    content: allPosted
+      ? `Your submission to **${form.name}** is posted, but I couldn't open its thread: ${reason} Press Try again to open it, or Discard to leave it without one.`
+      : `I couldn't post your submission to **${form.name}**: ${reason} Your answers are saved; press Try again to post the rest, or Discard.`,
     components: [retryRow(ctx, submissionId)],
   };
 }
@@ -307,30 +315,41 @@ async function applyRules(ctx: FormsContext, part1: Message, userId: string, app
   return threadId === null ? null : sendableChannel(ctx, threadId);
 }
 
+/** The message, fetched fresh; null when it isn't in the channel (deleted, or never posted there). */
+async function messageIn(channel: SendableChannels, messageId: string): Promise<Message | null> {
+  try {
+    return await channel.messages.fetch({ message: messageId, force: true });
+  } catch (error) {
+    if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownMessage) return null;
+    throw error;
+  }
+}
+
 /**
- * Where a retry posts the parts after part 1: the thread on part 1 (a thread started on a message has its ID),
- * reopened if archived. Without one, a thread the channel's rule opens now, but only while part 1 is the only part
- * posted, so that a rule added between retries doesn't split a submission. Otherwise the channel.
+ * Where a retry posts the parts after part 1, so that a submission is never split between a thread and the channel:
+ * - the thread on part 1 (a thread started on a message has its ID), reopened if archived, when part 2 is in it or
+ *   isn't posted yet;
+ * - while part 1 is the only part posted, a thread the channel's rule opens now;
+ * - otherwise the channel, also when part 1 was deleted.
  */
 async function retryTarget(ctx: FormsContext, channel: SendableChannels, submission: Submission): Promise<SendableChannels> {
-  const part1Id = submission.partMessageIds[0]!;
+  const [part1Id, part2Id] = submission.partMessageIds as [string, string | undefined];
+  let thread: Channel | null = null;
   try {
-    const thread = await ctx.client.channels.fetch(part1Id, { force: true });
-    if (thread === null || !thread.isThread() || !thread.isSendable()) return channel;
-    if (thread.archived === true) await thread.setArchived(false);
-    return thread;
+    thread = await ctx.client.channels.fetch(part1Id, { force: true });
   } catch (error) {
     if (!(error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel)) throw error;
   }
-  if (submission.partMessageIds.length > 1 || ctx.modules.optional(autothread) === null) return channel;
-  let part1: Message;
-  try {
-    part1 = await channel.messages.fetch({ message: part1Id, force: true });
-  } catch (error) {
-    // Part 1 was deleted, so no thread can be started on it.
-    if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownMessage) return channel;
-    throw error;
+  if (thread !== null) {
+    if (!thread.isThread() || !thread.isSendable()) return channel;
+    // A thread opened on part 1 after part 2 went to the channel doesn't get the rest.
+    if (part2Id !== undefined && (await messageIn(thread, part2Id)) === null) return channel;
+    if (thread.archived === true) await thread.setArchived(false);
+    return thread;
   }
+  if (part2Id !== undefined || ctx.modules.optional(autothread) === null) return channel;
+  const part1 = await messageIn(channel, part1Id);
+  if (part1 === null) return channel;
   return (await applyRules(ctx, part1, submission.userId, { react: false, thread: true })) ?? channel;
 }
 
@@ -345,8 +364,9 @@ export async function postSubmission(ctx: FormsContext, submissionId: string, li
   const { submission, form } = await loadSubmission(ctx, submissionId);
   if (submission.status === 'posted') return confirmation(form, submission);
   const { parts } = submission.render;
+  const start = submission.partMessageIds.length;
+  let postedParts = start;
   try {
-    const start = submission.partMessageIds.length;
     const pending = new Set(parts.slice(start).flatMap((part) => part.fileKeys));
     const data = await downloadFiles(ctx, submission.files.filter((file) => pending.has(file.key)), limit);
     // Fresh, so that an archived post is noticed.
@@ -377,11 +397,12 @@ export async function postSubmission(ctx: FormsContext, submissionId: string, li
           })
           .where(eq(submissions.id, submissionId));
       });
+      postedParts++;
       if (index === 0) rest = (await applyRules(ctx, message, submission.userId, { react: true, thread: !inThread })) ?? channel;
     }
   } catch (error) {
     ctx.log.warn({ err: error, submissionId }, 'Posting a submission failed');
-    return failure(ctx, form, submissionId, reasonOf(error));
+    return failure(ctx, form, submissionId, reasonOf(error), postedParts >= parts.length);
   }
   await finish(ctx, submission);
   ctx.log.info({ formId: form.id, submissionId, parts: parts.length }, 'Submission posted');
@@ -397,6 +418,12 @@ async function discardSubmission(ctx: FormsContext, submissionId: string): Promi
   if (submission.status === 'posted') return confirmation(form, submission);
   const posted = submission.partMessageIds.length;
   const total = submission.render.parts.length;
+  if (posted >= total) {
+    // Only the thread on part 1 was missing.
+    await finish(ctx, submission);
+    ctx.log.info({ formId: form.id, submissionId }, 'Submission discarded without its thread');
+    return confirmation(form, submission);
+  }
   if (posted === 0) {
     await ctx.db.run(async (tx) => {
       await tx.delete(submissions).where(and(eq(submissions.id, submissionId), eq(submissions.status, 'posting')));

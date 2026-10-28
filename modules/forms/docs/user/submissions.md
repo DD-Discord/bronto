@@ -4,7 +4,7 @@ Each submission is posted when the member submits the last page: in the submissi
 
 ## What is posted
 
-The first message has the form's name, the member (mentioned, with name and ID), the time and the form's pings. Below come the answers, each under its field's label. Choices are listed as bullets, and uploaded files are attached: images in a gallery, other files as downloads.
+The first message has the form's name, the member (mentioned, with their name and avatar), the time, and in small print the form's pings and the member's ID. Below come the answers, each under its field's label; with **Answers in their own message** in **Settings**, the first message holds only these details and the answers start in the second. Choices are listed as bullets, and uploaded files are attached: images in a gallery, other files as downloads.
 
 A long submission continues in further messages, each marked with the form, the member and a part number such as `part 2 of 3`. Uploaded files that do not fit one message move to the next.
 
