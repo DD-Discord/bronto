@@ -21,6 +21,17 @@ it('keeps fixture authorization and resource errors realistic', async () => {
   expect(await request('GET', `/channels/${CHANNEL}`)).toMatchObject({ status: 403, json: { code: 50001 } });
 });
 
+it('records reactions on existing messages only', async () => {
+  const http = new FakeDiscordHttp();
+  http.addGuild(GUILD); http.addChannel(CHANNEL, { guildId: GUILD, type: ChannelType.GuildText });
+  http.addMessage(CHANNEL, MESSAGE);
+  const request = (path: string) => http.answer({ method: 'PUT', path, query: '', body: undefined, authorized: true });
+  expect(await request(`/channels/${CHANNEL}/messages/${MESSAGE}/reactions/${encodeURIComponent('\u{1F44D}')}/@me`)).toMatchObject({ status: 204 });
+  expect(await request(`/channels/${CHANNEL}/messages/${MESSAGE}/reactions/${encodeURIComponent('party:100000000000000200')}/@me`)).toMatchObject({ status: 204 });
+  expect(http.reactions).toEqual([{ messageId: MESSAGE, emoji: '\u{1F44D}' }, { messageId: MESSAGE, emoji: 'party:100000000000000200' }]);
+  expect(await request(`/channels/${CHANNEL}/messages/100000000000000404/reactions/x/@me`)).toMatchObject({ status: 404, json: { code: 10008 } });
+});
+
 it('edits webhook messages through their webhook only', async () => {
   const http = new FakeDiscordHttp();
   http.addGuild(GUILD); http.addChannel(CHANNEL, { guildId: GUILD, type: ChannelType.GuildText });

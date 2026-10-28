@@ -23,6 +23,8 @@ export class DiscordState {
   readonly edited: string[] = [];
   readonly botDeleted: string[] = [];
   readonly deletedPosts: string[] = [];
+  /** Reactions the bot added, in order; `emoji` is the unicode character or `name:id`. */
+  readonly reactions: { messageId: string; emoji: string }[] = [];
   readonly deletedWebhooks: string[] = [];
   readonly deletedChannels: string[] = [];
   /** Bytes behind attachment objects, keyed by attachment id; the fake CDN serves them. */

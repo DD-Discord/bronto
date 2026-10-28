@@ -23,6 +23,7 @@ picks the modules it loads in its `config.yaml`.
 - [`@bronto/sticky`](modules/sticky/README.md): keeps a message at the bottom of a channel or thread.
 - [`@bronto/forms`](modules/forms/README.md): forms that members fill in from a button, answered in pop-ups and posted to a channel.
 - [`@bronto/autodelete`](modules/autodelete/README.md): keeps one post per member in a channel, enforces a posting cooldown and removes the posts of members who leave.
+- [`@bronto/autoreact`](modules/autoreact/README.md): adds fixed emoji reactions to every post in a channel or thread.
 - [`@bronto/mediaonly`](modules/mediaonly/README.md): removes posts without an attachment or link from a channel, tells the poster and reports it.
 - [`examples/notes`](examples/notes): a small example module showing commands, CRUD, buttons and modals.
 

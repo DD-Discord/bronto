@@ -22,6 +22,13 @@ export function messageRoutes(state: DiscordState) {
       state.deletedPosts.push(messageId);
       return gone();
     }),
+    route('PUT', '/channels/:channelId/messages/:messageId/reactions/:emoji/@me', (_request, { channelId, messageId, emoji }) => {
+      if (!state.channels.has(channelId)) return error(10003);
+      const message = state.messages.get(messageId);
+      if (!message || message.channel_id !== channelId) return error(10008);
+      state.reactions.push({ messageId, emoji });
+      return gone();
+    }),
     route('PATCH', '/channels/:channelId/messages/:messageId', async (request, { channelId, messageId }) => {
       const channel = state.channels.get(channelId);
       if (!channel) return error(10003);

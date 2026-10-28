@@ -50,6 +50,7 @@ modules:
 The setup notes of the modules in this repository, including their settings, intents and permissions:
 
 - [`@bronto/autodelete`](../../modules/autodelete/docs/admin/setup.md)
+- [`@bronto/autoreact`](../../modules/autoreact/docs/admin/setup.md)
 - [`@bronto/forms`](../../modules/forms/docs/admin/setup.md)
 - [`@bronto/mediaonly`](../../modules/mediaonly/docs/admin/setup.md)
 - [`@bronto/sticky`](../../modules/sticky/docs/admin/setup.md)
