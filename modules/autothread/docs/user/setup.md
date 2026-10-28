@@ -4,7 +4,7 @@
 
 - `channel`: a text or announcement channel. Forum posts are threads already, and threads can't have threads.
 - `name-format` (default `[Comments] {user.display}`): the name of each thread. Placeholders such as `{user.display}` are filled in from the post; the Placeholders page of Templates in `/help` lists them. Names are cut to 100 characters, and a blank name becomes `Comments`.
-- `slowmode` (default off): slowmode of the new threads, for example `30s`. At most 6 hours.
+- `slowmode` (default off): slowmode of the new threads, for example `30s`; `0s` turns it off. At most 6 hours.
 - `auto-message`: a template posted as the first message of each thread. Placeholders in the template are filled in, and only the post's author is pinged, for example through `{user.mention}`. Pick it from the list as you type.
 - `remove-auto-message`: stop posting a first message. If the template was deleted anyway, threads are still opened.
 - `rename` (default no): lets the post's author rename the thread.

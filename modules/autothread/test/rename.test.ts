@@ -66,9 +66,14 @@ async function modalId(threadId: string): Promise<string> {
 describe('RenameLimiter', () => {
   it('allows two renames per ten minutes per thread', () => {
     const limiter = new RenameLimiter();
-    expect([limiter.allow('a', 0), limiter.allow('a', 1), limiter.allow('a', 2), limiter.allow('b', 2)]).toEqual([true, true, false, true]);
+    const use = (id: string, at: number) => {
+      const allowed = limiter.allow(id, at);
+      if (allowed) limiter.record(id, at);
+      return allowed;
+    };
+    expect([use('a', 0), use('a', 1), use('a', 2), use('b', 2)]).toEqual([true, true, false, true]);
     expect(limiter.retryAt('a')).toBe(600_000);
-    expect(limiter.allow('a', 600_000)).toBe(true);
+    expect(use('a', 600_000)).toBe(true);
   });
 });
 
@@ -107,7 +112,7 @@ describe('the rename button', () => {
     ab.client.emit(Events.MessageCreate, message);
     await ab.bot.idle();
     expect(discord.channels.has(message.id)).toBe(true);
-    expect(ab.lines.filter((line) => line.msg === 'Posting the auto-message failed')).toHaveLength(1);
+    expect(ab.lines.filter((line) => line.msg === 'Rendering the auto-message failed')).toHaveLength(1);
   });
 
   it('opens the modal for the author, prefilled with the name', async () => {
@@ -140,6 +145,29 @@ describe('the rename button', () => {
     const third = await submit(thread, id, 'Three');
     expect((discord.channels.get(thread) as Json).name).toBe('Two');
     expect(JSON.stringify(third.responses)).toMatch(/Discord allows two renames per 10 minutes\. Try again <t:\d+:R>\./);
+  });
+
+  it('does not use up an attempt when the rename fails', async () => {
+    const thread = await openThread();
+    const id = await modalId(thread);
+    discord.override('PATCH', `/channels/${thread}`, () => ({ status: 403, json: { code: 50013, message: 'Missing Permissions' } }));
+    await submit(thread, id, 'One');
+    await submit(thread, id, 'Two');
+    discord.clearOverride('PATCH', `/channels/${thread}`);
+    await submit(thread, id, 'Three');
+    await submit(thread, id, 'Four');
+    expect((discord.channels.get(thread) as Json).name).toBe('Four');
+  });
+
+  it('opens the modal from the cached channel name without fetching the thread', async () => {
+    const thread = await openThread();
+    const fake = fakeButton({ customId: buttonOf(postsIn(thread)[0]!).custom_id, guildId: GUILD, channelId: thread, userId: MEMBER });
+    (fake as unknown as { channel: unknown }).channel = { name: 'Cached name' };
+    const before = ab!.requests.length;
+    ab!.client.emit(Events.InteractionCreate, fake as never);
+    await ab!.bot.idle();
+    expect(json(fake.responses[0]!.payload).components[0].component.value).toBe('Cached name');
+    expect(ab!.requests.slice(before).filter((request) => request.method === 'GET' && request.path === `/channels/${thread}`)).toEqual([]);
   });
 
   it('works after a restart', async () => {

@@ -33,7 +33,7 @@ export class Threader {
     if (author.id === ctx.client.user?.id) return;
     if (rule.ignoreBots && (author.bot || webhookId !== null)) return;
     if (ctx.modules.optional(sticky)?.isSticky(message) === true) return;
-    // The post is deleted, or about to be; mediaonly's answer doesn't depend on whether its listener ran yet.
+    // The post is deleted, or about to be; `rejects` is a pure check that doesn't depend on listener order.
     if (ctx.modules.optional(mediaonly)?.rejects(message) === true) return;
 
     const values = postPlaceholders(message);
@@ -64,14 +64,21 @@ export class Threader {
     values: Record<string, string>,
   ): Promise<void> {
     const { templateId } = rule;
-    if (templateId === null && !rule.rename) return;
-    try {
-      let rendered: Awaited<ReturnType<ReturnType<typeof ctx.modules.get<typeof templates>>['render']>> = null;
-      if (templateId !== null) {
+    // Only a person can press the button; a bot's or webhook's ID would lock everyone out.
+    const renameButton = rule.rename && !message.author.bot && message.webhookId === null;
+    if (templateId === null && !renameButton) return;
+    let rendered: Awaited<ReturnType<ReturnType<typeof ctx.modules.get<typeof templates>>['render']>> = null;
+    if (templateId !== null) {
+      try {
         rendered = await ctx.modules.get(templates).render(templateId, values);
-        if (rendered === null) ctx.log.warn({ channelId: message.channelId, templateId }, 'The auto-message template no longer exists');
+      } catch (error) {
+        ctx.log.warn({ err: error, threadId, templateId }, 'Rendering the auto-message failed');
+        return;
       }
-      const components = rule.rename ? [this.rename.renameRow(ctx, message.author.id)] : [];
+      if (rendered === null) ctx.log.warn({ channelId: message.channelId, templateId }, 'The auto-message template no longer exists');
+    }
+    try {
+      const components = renameButton ? [this.rename.renameRow(ctx, message.author.id)] : [];
       if (rendered !== null) {
         await ctx.client.rest.post(Routes.channelMessages(threadId), {
           body: {
@@ -81,7 +88,7 @@ export class Threader {
             allowed_mentions: { users: [message.author.id] },
           },
         });
-      } else if (rule.rename) {
+      } else if (renameButton) {
         await ctx.client.rest.post(Routes.channelMessages(threadId), {
           body: { content: 'The author of this post can rename the thread.', components, allowed_mentions: { parse: [] } },
         });

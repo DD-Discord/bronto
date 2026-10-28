@@ -189,6 +189,18 @@ describe('which posts get a thread', () => {
     expect(threadsOf(NEWS).map((thread) => thread.id)).toEqual([allowed.id]);
   });
 
+  it('posts no rename button on the thread of a bot or webhook post', async () => {
+    await start();
+    await insertRule(t, { channelId: CHANNEL, ignoreBots: false, rename: true });
+    await ready(ab!);
+    const bot = fakeMessage(CHANNEL, { bot: true });
+    const webhook = fakeMessage(CHANNEL, { bot: true, webhookId: '100000000000000777' });
+    await say(bot, webhook);
+    expect(threadsOf(CHANNEL).map((thread) => thread.id).sort()).toEqual([bot.id, webhook.id].sort());
+    const inThreads = [...discord.messages.values()].filter((m) => m.channel_id === bot.id || m.channel_id === webhook.id);
+    expect(inThreads.filter((m) => (m as unknown as { components?: unknown[] }).components?.length)).toEqual([]);
+  });
+
   it('never threads its own posts, also with ignore-bots off', async () => {
     await start();
     await insertRule(t, { channelId: CHANNEL, ignoreBots: false });
@@ -211,8 +223,7 @@ describe('which posts get a thread', () => {
     expect(threadsOf(CHANNEL).map((thread) => thread.id)).toEqual([otherWebhook.id]);
   });
 
-  // The loader starts a module after the optional dependencies it names, so mediaonly's listener always runs first
-  // and has already deleted the post (or failed to) when autothread looks at it.
+  // Listeners run concurrently; `rejects()` is a pure check, so the outcome is the same whichever listener runs first.
   describe('with mediaonly', () => {
     beforeEach(async () => {
       await start({ mediaonly: true });

@@ -149,8 +149,7 @@ describe('reacting', () => {
     expect(reacted(otherWebhook)).toEqual([THUMBS]);
   });
 
-  // The loader starts a module after the optional dependencies it names, so mediaonly's listener always runs first
-  // and has already deleted the post (or failed to) when autoreact looks at it.
+  // Listeners run concurrently; `rejects()` is a pure check, so the outcome is the same whichever listener runs first.
   describe('with mediaonly', () => {
     beforeEach(async () => {
       await start({ mediaonly: true });

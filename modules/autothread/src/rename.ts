@@ -21,15 +21,16 @@ const WINDOW_MS = 600_000;
 export class RenameLimiter {
   private readonly renames = new Map<string, number[]>();
 
-  /** Records a rename and returns true, or returns false when the thread used up its renames. */
+  /** Whether the thread has a rename left; records nothing. */
   allow(threadId: string, now: number): boolean {
     const recent = (this.renames.get(threadId) ?? []).filter((at) => at > now - WINDOW_MS);
-    if (recent.length >= RENAMES) {
-      this.renames.set(threadId, recent);
-      return false;
-    }
-    this.renames.set(threadId, [...recent, now]);
-    return true;
+    this.renames.set(threadId, recent);
+    return recent.length < RENAMES;
+  }
+
+  /** Records a rename that went through. */
+  record(threadId: string, now: number): void {
+    this.renames.set(threadId, [...(this.renames.get(threadId) ?? []), now]);
   }
 
   /** When the thread can be renamed again, in milliseconds. */
@@ -62,6 +63,7 @@ export function createRename() {
         throw new UserError(`Discord allows two renames per 10 minutes. Try again <t:${Math.ceil(limiter.retryAt(threadId) / 1000)}:R>.`);
       }
       await ctx.client.rest.patch(Routes.channel(threadId), { body: { name } });
+      limiter.record(threadId, Date.now());
       await ctx.reply('Thread renamed.');
     },
   });
@@ -72,8 +74,12 @@ export function createRename() {
     execute: async (ctx, args) => {
       if (ctx.actorId !== args[0]) throw new UserError('Only the author can rename this thread.');
       const threadId = ctx.channelId!;
-      const thread = (await ctx.client.rest.get(Routes.channel(threadId))) as APIChannel;
-      const current = 'name' in thread && typeof thread.name === 'string' ? thread.name : '';
+      const cached = ctx.interaction.channel as { name?: unknown } | null | undefined;
+      let current = typeof cached?.name === 'string' ? cached.name : undefined;
+      if (current === undefined) {
+        const thread = (await ctx.client.rest.get(Routes.channel(threadId))) as APIChannel;
+        current = 'name' in thread && typeof thread.name === 'string' ? thread.name : '';
+      }
       await ctx.showModal(
         new ModalBuilder()
           .setCustomId(ctx.customId(renameModal, [args[0]!]))
