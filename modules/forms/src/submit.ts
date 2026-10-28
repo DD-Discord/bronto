@@ -292,12 +292,13 @@ async function sendableChannel(ctx: FormsContext, id: string): Promise<SendableC
 }
 
 /**
- * Applies the channel's autoreact rule (with `react`) and autothread rule to part 1 as if the submitter had posted
- * it. The opened thread, or null without one; also null when the submitter's account can't be fetched.
+ * Applies the channel's autoreact rule (with `react`) and autothread rule (with `thread`) to part 1 as if the
+ * submitter had posted it. The opened thread, or null without one; also null when the submitter's account can't be
+ * fetched.
  */
-async function applyRules(ctx: FormsContext, part1: Message, userId: string, react: boolean): Promise<SendableChannels | null> {
-  const reactions = react ? ctx.modules.optional(autoreact) : null;
-  const threads = ctx.modules.optional(autothread);
+async function applyRules(ctx: FormsContext, part1: Message, userId: string, apply: { react: boolean; thread: boolean }): Promise<SendableChannels | null> {
+  const reactions = apply.react ? ctx.modules.optional(autoreact) : null;
+  const threads = apply.thread ? ctx.modules.optional(autothread) : null;
   if (reactions === null && threads === null) return null;
   const { author } = await submitterOf(ctx, userId);
   if (author === null) return null;
@@ -322,16 +323,23 @@ async function retryTarget(ctx: FormsContext, channel: SendableChannels, submiss
     if (!(error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel)) throw error;
   }
   if (submission.partMessageIds.length > 1 || ctx.modules.optional(autothread) === null) return channel;
-  const part1 = await channel.messages.fetch(part1Id);
-  return (await applyRules(ctx, part1, submission.userId, false)) ?? channel;
+  let part1: Message;
+  try {
+    part1 = await channel.messages.fetch({ message: part1Id, force: true });
+  } catch (error) {
+    // Part 1 was deleted, so no thread can be started on it.
+    if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownMessage) return channel;
+    throw error;
+  }
+  return (await applyRules(ctx, part1, submission.userId, { react: false, thread: true })) ?? channel;
 }
 
 /**
  * Posts the stored parts of a submission not posted yet, one message each, recording each message as soon as it is
  * sent so that a retry continues after it. Part 1 goes to the submissions channel and gets the channel's autoreact
- * and autothread rules as if the submitter had posted it; the later parts go into its thread when there is one. When
- * all are posted, the draft and its files are deleted. Files are downloaded from the drafts post with fresh links;
- * `limit` caps each download.
+ * rule as if the submitter had posted it, and, outside threads, its autothread rule; the later parts go into the
+ * thread when there is one. When all are posted, the draft and its files are deleted. Files are downloaded from the
+ * drafts post with fresh links; `limit` caps each download.
  */
 export async function postSubmission(ctx: FormsContext, submissionId: string, limit: number): Promise<Reply> {
   const { submission, form } = await loadSubmission(ctx, submissionId);
@@ -345,7 +353,9 @@ export async function postSubmission(ctx: FormsContext, submissionId: string, li
     const channel = await ctx.client.channels.fetch(submission.channelId, { force: true });
     if (channel === null || !channel.isSendable()) return failure(ctx, form, submissionId, "the submissions channel can't be posted in.");
     if (channel.isThread() && channel.archived === true) await channel.setArchived(false);
-    let rest = start === 0 ? channel : await retryTarget(ctx, channel, submission);
+    // A thread can't hold another thread: in a thread channel, every part stays in it.
+    const inThread = channel.isThread();
+    let rest = start === 0 || inThread ? channel : await retryTarget(ctx, channel, submission);
     for (const [index, part] of parts.entries()) {
       if (index < start) continue;
       const message = await (index === 0 ? channel : rest).send({
@@ -367,7 +377,7 @@ export async function postSubmission(ctx: FormsContext, submissionId: string, li
           })
           .where(eq(submissions.id, submissionId));
       });
-      if (index === 0) rest = (await applyRules(ctx, message, submission.userId, true)) ?? channel;
+      if (index === 0) rest = (await applyRules(ctx, message, submission.userId, { react: true, thread: !inThread })) ?? channel;
     }
   } catch (error) {
     ctx.log.warn({ err: error, submissionId }, 'Posting a submission failed');

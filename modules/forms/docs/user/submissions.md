@@ -10,7 +10,7 @@ A long submission continues in further messages, each marked with the form, the 
 
 ## Threads and reactions
 
-Submissions follow the submissions channel's autothread and autoreact rules, as if the member had posted the first message themselves: it gets the rule's reactions and its thread. The later parts of a long submission go into that thread, after the thread's auto-message. Submissions posted in the form's own post get neither.
+Submissions follow the submissions channel's autothread and autoreact rules, as if the member had posted the first message themselves: it gets the rule's reactions and its thread. The later parts of a long submission go into that thread, after the thread's auto-message. A thread can't hold another thread, so submissions posted in a thread, such as the form's own post, stay in that thread; an autoreact rule on it still adds its reactions.
 
 ## Pings
 

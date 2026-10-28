@@ -435,10 +435,10 @@ async function threadRule(values: Partial<typeof threadRules.$inferInsert> = {})
   await reload('autothread');
 }
 
-/** An autoreact rule for SUBMIT adding a thumbs-up, loaded right away. */
-async function reactRule(): Promise<void> {
+/** An autoreact rule adding a thumbs-up, for SUBMIT unless `channelId` says otherwise, loaded right away. */
+async function reactRule(channelId = SUBMIT): Promise<void> {
   await moduleDb('autoreact').run(async (tx) => {
-    await tx.insert(reactRules).values({ channelId: SUBMIT, emojis: ['\u{1F44D}'] });
+    await tx.insert(reactRules).values({ channelId, emojis: ['\u{1F44D}'] });
   });
   await reload('autoreact');
 }
@@ -500,6 +500,39 @@ describe('threads and reactions', () => {
     expect(posted.map((message) => message.id)).toEqual(row!.partMessageIds);
     expect(threadRequests()).toEqual([]);
     expect(f.discord.reactions).toEqual([]);
+  });
+
+  it("adds reactions in the form's own post but opens no thread there", async () => {
+    f = await startFilling(t, [], { postRules: true });
+    const form = await formWith(f, longFields(), { channelId: null });
+    await threadRule({ channelId: form.threadId });
+    await reactRule(form.threadId);
+    await submitPage(f, await openModal(f, await openerId(f, form)), { fields: longAnswers });
+    const [row] = await submissionRows(f);
+    expect(row!.status).toBe('posted');
+    expect(row!.partMessageIds.length).toBeGreaterThan(1);
+    expect(messagesIn(f, form.threadId).filter((message) => row!.partMessageIds.includes(message.id))).toHaveLength(row!.partMessageIds.length);
+    expect(reactedOn()).toEqual([row!.partMessageIds[0]]);
+    expect(threadRequests()).toEqual([]);
+  });
+
+  it('a retry in a thread submissions channel stays there without looking for a thread', async () => {
+    f = await startFilling(t, [], { postRules: true });
+    const form = await formWith(f, longFields(), { channelId: null });
+    await threadRule({ channelId: form.threadId });
+    failNth(form.threadId, 2);
+    const failed = await submitPage(f, await openModal(f, await openerId(f, form)), { fields: longAnswers });
+    expect(contentOf(failed)).toContain("couldn't post");
+    const [before] = await submissionRows(f);
+    const part1Id = before!.partMessageIds[0]!;
+
+    const retried = await clickIn(f, replyOf(failed), 'Try again');
+    expect(contentOf(retried)).toContain('Submitted to **Story contest**.');
+    const [row] = await submissionRows(f);
+    expect(row!.partMessageIds).toHaveLength(row!.render.parts.length);
+    expect(messagesIn(f, form.threadId).filter((message) => row!.partMessageIds.includes(message.id))).toHaveLength(row!.partMessageIds.length);
+    expect(f.fb.requests.filter((request) => request.method === 'GET' && request.path === `/channels/${part1Id}`)).toEqual([]);
+    expect(threadRequests()).toEqual([]);
   });
 
   it('uses the account when the submitter left', async () => {
@@ -574,5 +607,23 @@ describe('threads and reactions', () => {
     expect(row!.partMessageIds).toEqual(messagesIn(f, SUBMIT).map((message) => message.id));
     expect(row!.partMessageIds).toHaveLength(row!.render.parts.length);
     expect(threadRequests()).toEqual([]);
+  });
+
+  it('a retry after part 1 was deleted posts the rest in the channel', async () => {
+    f = await startFilling(t, [], { postRules: true });
+    await threadRule();
+    const form = await formWith(f, longFields());
+    onNextPost(SUBMIT, (id) => failOnce('POST', `/channels/${SUBMIT}/messages/${id}/threads`));
+    const failed = await submitPage(f, await openModal(f, await openerId(f, form)), { fields: longAnswers });
+    expect(contentOf(failed)).toContain("couldn't post");
+    const [first] = messagesIn(f, SUBMIT);
+    f.discord.messages.delete(first!.id);
+
+    const retried = await clickIn(f, replyOf(failed), 'Try again');
+    expect(contentOf(retried)).toContain('Submitted to **Story contest**.');
+    const [row] = await submissionRows(f);
+    expect(row!.partMessageIds).toEqual([first!.id, ...messagesIn(f, SUBMIT).map((message) => message.id)]);
+    expect(row!.partMessageIds).toHaveLength(row!.render.parts.length);
+    expect(f.discord.channels.has(first!.id)).toBe(false);
   });
 });
