@@ -1,3 +1,5 @@
+import autoreact from '@bronto/autoreact';
+import autothread from '@bronto/autothread';
 import { answer, defineModule, gate, gatewayEvent, on, type ModuleDefinition } from '@bronto/core';
 import sticky, { stickyAsks, stickyEvents } from '@bronto/sticky';
 import templates, { templatesEvents, templatesGates } from '@bronto/templates';
@@ -36,7 +38,7 @@ export function createFormsModule(): ModuleDefinition<Record<string, never>, und
     name: 'forms',
     docs: new URL('../docs/user/', import.meta.url),
     dependsOn: [templates],
-    optionalDependsOn: [sticky],
+    optionalDependsOn: [sticky, autothread, autoreact],
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
     db: { schema, migrations: new URL('../drizzle/', import.meta.url) },
     botPermissions: [

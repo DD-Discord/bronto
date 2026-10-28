@@ -2,7 +2,7 @@ import type { ChannelRuleIndex, HandlerContext } from '@bronto/core';
 import mediaonly from '@bronto/mediaonly';
 import sticky from '@bronto/sticky';
 import templates, { fillPlaceholders, postPlaceholders } from '@bronto/templates';
-import { Routes, type APIChannel, type Message } from 'discord.js';
+import { Routes, type APIChannel, type GuildMember, type Message, type User } from 'discord.js';
 import type { Rule } from './db/schema.js';
 import type { Rename } from './rename.js';
 
@@ -36,24 +36,35 @@ export class Threader {
     // The post is deleted, or about to be; `rejects` is a pure check that doesn't depend on listener order.
     if (ctx.modules.optional(mediaonly)?.rejects(message) === true) return;
 
-    const values = postPlaceholders(message);
-    let thread: APIChannel;
     try {
-      thread = (await ctx.client.rest.post(Routes.threads(message.channelId, message.id), {
-        body: {
-          name: threadName(rule.nameFormat, values),
-          ...(rule.slowmodeSeconds > 0 ? { rate_limit_per_user: rule.slowmodeSeconds } : {}),
-        },
-      })) as APIChannel;
+      await this.open(ctx, rule, message, message.member ?? author);
     } catch (error) {
       ctx.log.warn({ err: error, channelId: message.channelId, messageId: message.id }, 'Starting a thread failed');
-      return;
     }
-    await this.postAutoMessage(ctx, rule, thread.id, message, values);
+  }
+
+  /** Opens the thread of the message's channel rule as if `author` had posted it; null without an enabled rule. Throws if Discord refuses the thread. */
+  async threadPost(ctx: HandlerContext, message: Message, author: GuildMember | User): Promise<string | null> {
+    const rule = this.index.get(ctx.guildId, message.channelId);
+    if (rule === undefined || !rule.enabled) return null;
+    return this.open(ctx, rule, message, author);
+  }
+
+  /** Starts the thread and posts the auto-message (best effort); the thread request's failure is thrown. */
+  private async open(ctx: HandlerContext, rule: Rule, message: Message, author: GuildMember | User): Promise<string> {
+    const values = postPlaceholders(message, author);
+    const thread = (await ctx.client.rest.post(Routes.threads(message.channelId, message.id), {
+      body: {
+        name: threadName(rule.nameFormat, values),
+        ...(rule.slowmodeSeconds > 0 ? { rate_limit_per_user: rule.slowmodeSeconds } : {}),
+      },
+    })) as APIChannel;
+    await this.postAutoMessage(ctx, rule, thread.id, message, author, values);
+    return thread.id;
   }
 
   /**
-   * Posts the template in the thread (only the post's author can be pinged by it), with the rename button when the rule
+   * Posts the template in the thread (only the author can be pinged by it), with the rename button when the rule
    * has one. Without a template, or when it is gone, the button is posted alone.
    */
   private async postAutoMessage(
@@ -61,11 +72,13 @@ export class Threader {
     rule: Rule,
     threadId: string,
     message: Message,
+    author: GuildMember | User,
     values: Record<string, string>,
   ): Promise<void> {
     const { templateId } = rule;
     // Only a person can press the button; a bot's or webhook's ID would lock everyone out.
-    const renameButton = rule.rename && !message.author.bot && message.webhookId === null;
+    const person = 'user' in author ? author.user : author;
+    const renameButton = rule.rename && !person.bot && message.webhookId === null;
     if (templateId === null && !renameButton) return;
     let rendered: Awaited<ReturnType<ReturnType<typeof ctx.modules.get<typeof templates>>['render']>> = null;
     if (templateId !== null) {
@@ -78,14 +91,14 @@ export class Threader {
       if (rendered === null) ctx.log.warn({ channelId: message.channelId, templateId }, 'The auto-message template no longer exists');
     }
     try {
-      const components = renameButton ? [this.rename.renameRow(ctx, message.author.id)] : [];
+      const components = renameButton ? [this.rename.renameRow(ctx, person.id)] : [];
       if (rendered !== null) {
         await ctx.client.rest.post(Routes.channelMessages(threadId), {
           body: {
             content: rendered.content,
             embeds: rendered.embed === null ? [] : [rendered.embed],
             components,
-            allowed_mentions: { users: [message.author.id] },
+            allowed_mentions: { users: [person.id] },
           },
         });
       } else if (renameButton) {

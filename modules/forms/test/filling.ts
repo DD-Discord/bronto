@@ -5,7 +5,7 @@ import type { TestDatabase } from '../../../packages/core/test/test-db.js';
 import { drafts, forms, openers, submissions, type Form } from '../src/db/schema.js';
 import type { Field } from '../src/model.js';
 import { openButton } from '../src/open.js';
-import { formsDb, GUILD, inHandler, prepareFormsBot, ready, USER, type FormsBot } from './harness.js';
+import { formsDb, GUILD, inHandler, prepareFormsBot, ready, USER, type FormsBot, type FormsBotOptions } from './harness.js';
 import { buttonId, click, makeForm, payload, shownModal, storeForum, submitModal, toJson, type Filled, type Json, type Who } from './ui.js';
 
 // Made-up IDs; tests never use real server data.
@@ -24,10 +24,10 @@ export interface Filling {
   fb: FormsBot;
 }
 
-export async function startFilling(t: TestDatabase, roles: string[] = []): Promise<Filling> {
+export async function startFilling(t: TestDatabase, roles: string[] = [], options: FormsBotOptions = {}): Promise<Filling> {
   const discord = new FakeDiscordHttp();
   for (const id of [TEXT, SUBMIT]) discord.addChannel(id, { guildId: GUILD, type: ChannelType.GuildText });
-  const fb = await prepareFormsBot(t, discord);
+  const fb = await prepareFormsBot(t, discord, options);
   discord.addRole(GUILD, { id: ROLE });
   discord.addMember(GUILD, USER, { roles });
   await storeForum(t);

@@ -63,7 +63,9 @@ describe('settings modal', () => {
     const inputs = modalInputs(modal);
     expect(Object.keys(inputs)).toEqual(['name', 'channel', 'pings', 'roles', 'options']);
     expect(inputs.name!.value).toBe('Story contest');
-    expect(inputs.options!.options.map((o: any) => [o.value, o.default ?? false])).toEqual([['active', false], ['once', true]]);
+    expect(inputs.options!.options.map((o: any) => [o.value, o.default ?? false])).toEqual([['active', false], ['once', true], ['apart', false]]);
+    expect(inputs.options!.options.find((o: any) => o.value === 'apart').label).toBe('Answers in their own message');
+    expect(inputs.options!.max_values).toBe(3);
   });
 
   it('saves the settings and updates the preview', async () => {
@@ -87,6 +89,13 @@ describe('settings modal', () => {
     expect(textOf(toJson(discord.messages.get(form.threadId)))).toContain('Poetry slam');
     expect(discord.channels.get(form.threadId)).toMatchObject({ name: 'Poetry slam' });
     expect(refreshOpeners).toHaveBeenCalledWith(expect.anything(), form.id);
+  });
+
+  it('saves answers in their own message and Try again keeps the check', async () => {
+    const modal = await openSettings();
+    await submitModal(fb, form.threadId, modal, { selections: { channel: [], roles: [], options: ['once', 'apart'] }, mentionables: { pings: {} } });
+    expect(await storedForm(t, form.id)).toMatchObject({ answersApart: true });
+    expect(modalInputs(await openSettings()).options!.options.map((o: any) => [o.value, o.default ?? false])).toEqual([['active', false], ['once', true], ['apart', true]]);
   });
 
   it('goes back to the form post when the channel is cleared', async () => {

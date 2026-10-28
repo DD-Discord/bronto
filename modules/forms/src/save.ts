@@ -6,7 +6,7 @@ import { pruneDraftFiles } from './drafts.js';
 import { refreshOpeners } from './openers.js';
 import { updatePreview } from './preview.js';
 
-type Change = Partial<Pick<Form, 'name' | 'active' | 'channelId' | 'pingUserIds' | 'pingRoleIds' | 'allowedRoleIds' | 'oncePerMember' | 'fields' | 'removedFieldIds'>>;
+type Change = Partial<Pick<Form, 'name' | 'active' | 'channelId' | 'pingUserIds' | 'pingRoleIds' | 'allowedRoleIds' | 'oncePerMember' | 'answersApart' | 'fields' | 'removedFieldIds'>>;
 
 /** Renames the post with the form and edits its preview; false when either failed. */
 async function showChange(ctx: FormsContext, before: Form, form: Form): Promise<boolean> {

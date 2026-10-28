@@ -22,7 +22,7 @@ import { deleteDraft, DRAFT_TTL_MS, isExpired, loadDraft, releaseFiles, storeFil
 import { pages, PAGE_SIZE, type Field } from './model.js';
 import { formById, formForThread, requireEditor } from './permissions.js';
 import { renderSubmission } from './render.js';
-import { hasSubmitted, postingRefusal, queued, refusal, submit, tooLarge } from './submit.js';
+import { hasSubmitted, postingRefusal, queued, refusal, submit, submitterOf, tooLarge } from './submit.js';
 
 // Discord's limit for modal titles.
 const MAX_TITLE = 45;
@@ -287,7 +287,7 @@ function unanswered(form: Form, draft: Draft): number {
   });
 }
 
-/** Part 1 of the submission as it would be posted; file fields list their files by name. */
+/** The submission's first part as it would be posted, answers included even when the form posts them apart; file fields list their files by name. */
 async function trialReply(ctx: FormsContext, form: Form, draft: Draft, limit: number): Promise<Reply> {
   const fields = form.fields.map((field) => (field.type === 'file' ? ({ ...field, type: 'long' } as unknown as Field) : field));
   const answers: Record<string, Answer> = { ...draft.answers };
@@ -296,11 +296,12 @@ async function trialReply(ctx: FormsContext, form: Form, draft: Draft, limit: nu
     const names = draft.files.filter((file) => file.fieldId === field.id).map((file) => `• ${file.name}`);
     answers[field.id] = { text: names.join('\n') };
   }
-  const username = await ctx.client.users.fetch(draft.userId).then((user) => user.username, () => draft.userId);
+  const { username, avatarUrl } = await submitterOf(ctx, draft.userId);
   const parts = renderSubmission({
     formName: form.name,
     userId: draft.userId,
     username,
+    avatarUrl,
     submittedAt: new Date(),
     pingUserIds: form.pingUserIds,
     pingRoleIds: form.pingRoleIds,
@@ -308,6 +309,7 @@ async function trialReply(ctx: FormsContext, form: Form, draft: Draft, limit: nu
     answers,
     files: [],
     uploadLimit: limit,
+    answersApart: false,
   });
   await deleteDraft(ctx, form.id, draft.userId, true);
   return { components: parts[0]!.components, flags: MessageFlags.IsComponentsV2 };

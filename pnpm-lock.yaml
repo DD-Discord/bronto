@@ -318,6 +318,12 @@ importers:
 
   modules/forms:
     devDependencies:
+      '@bronto/autoreact':
+        specifier: workspace:*
+        version: link:../autoreact
+      '@bronto/autothread':
+        specifier: workspace:*
+        version: link:../autothread
       '@bronto/core':
         specifier: workspace:*
         version: link:../../packages/core

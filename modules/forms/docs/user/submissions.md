@@ -4,9 +4,13 @@ Each submission is posted when the member submits the last page: in the submissi
 
 ## What is posted
 
-The first message has the form's name, the member (mentioned, with name and ID), the time and the form's pings. Below come the answers, each under its field's label. Choices are listed as bullets, and uploaded files are attached: images in a gallery, other files as downloads.
+The first message has the form's name, the member (mentioned, with their name and avatar), the time, and in small print the form's pings and the member's ID. Below come the answers, each under its field's label; with **Answers in their own message** in **Settings**, the first message holds only these details and the answers start in the second. Choices are listed as bullets, and uploaded files are attached: images in a gallery, other files as downloads.
 
-A long submission continues in further messages, each marked with the form, the member and a part number such as `(2/3)`. Uploaded files that do not fit one message move to the next.
+A long submission continues in further messages, each marked with the form, the member and a part number such as `part 2 of 3`. Uploaded files that do not fit one message move to the next.
+
+## Threads and reactions
+
+Submissions follow the submissions channel's autothread and autoreact rules, as if the member had posted the first message themselves: it gets the rule's reactions and its thread. The later parts of a long submission go into that thread, after the thread's auto-message. A thread can't hold another thread, so submissions posted in a thread, such as the form's own post, stay in that thread; an autoreact rule on it still adds its reactions.
 
 ## Pings
 
@@ -18,7 +22,7 @@ Uploaded files are kept in the forms forum while a draft is unfinished and are a
 
 ## When posting fails
 
-If Discord refuses part of a submission, the member sees **Try again** and **Discard**. Try again posts the parts that are still missing. Discard gives up: when nothing was posted, the member's answers stay saved and they can open the form again; when some parts were posted, the submission counts as submitted without the rest.
+If Discord refuses part of a submission, the member sees **Try again** and **Discard**. Try again posts the parts that are still missing, in the submission's thread when it has one. Discard gives up: when nothing was posted, the member's answers stay saved and they can open the form again; when some parts were posted, the submission counts as submitted without the rest.
 
 ## Final
 

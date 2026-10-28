@@ -58,6 +58,8 @@ export const forms = guildTable(formsSchema, 'forms', {
   pingRoleIds: text('ping_role_ids').array().notNull().default([]),
   allowedRoleIds: text('allowed_role_ids').array().notNull().default([]),
   oncePerMember: boolean('once_per_member').notNull().default(true),
+  /** Posts the answers in their own message, after the details. */
+  answersApart: boolean('answers_apart').notNull().default(false),
   fields: jsonb('fields').$type<Field[]>().notNull().default([]),
   /** IDs of fields deleted from the form; their answers stay in old submissions. */
   removedFieldIds: text('removed_field_ids').array().notNull().default([]),
@@ -127,6 +129,8 @@ export const submissions = guildTable(
     channelId: text('channel_id').notNull(),
     status: text('status').$type<'posting' | 'posted'>().notNull(),
     partMessageIds: text('part_message_ids').array().notNull().default([]),
+    /** The channel or thread that the parts after the first go to; null until part 2 is posted. */
+    restChannelId: text('rest_channel_id'),
     render: jsonb('render').$type<SubmissionRender>().notNull(),
     /** Copied from the form at submit time: the unique index lets such a member submit once. */
     once: boolean('once').notNull(),

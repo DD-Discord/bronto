@@ -1,4 +1,4 @@
-import type { Message } from 'discord.js';
+import type { GuildMember, Message, User } from 'discord.js';
 import { describe, expect, it } from 'vitest';
 import { fillPlaceholders, postPlaceholders, TIMESTAMP_PLACEHOLDERS } from './placeholders.js';
 
@@ -60,5 +60,24 @@ describe('postPlaceholders', () => {
 
   it('falls back to the global name without a nickname', () => {
     expect(postPlaceholders(message({ nickname: null }))['user.display']).toBe('Ann Global');
+  });
+
+  it('describes the given member instead of the message author', () => {
+    const member = { id: '100000000000000009', displayName: 'Mo Nick', user: { username: 'mo', displayName: 'Mo Global' } } as unknown as GuildMember;
+    expect(postPlaceholders(message({ nickname: 'Annie' }), member)).toMatchObject({
+      'user.mention': '<@100000000000000009>',
+      'user.name': 'mo',
+      'user.display': 'Mo Nick',
+      'message.link': 'https://discord.com/channels/1/2/3',
+    });
+  });
+
+  it('describes the given user by their display name', () => {
+    const user = { id: '100000000000000008', username: 'zed', displayName: 'Zed Global' } as unknown as User;
+    expect(postPlaceholders(message({ nickname: 'Annie' }), user)).toMatchObject({
+      'user.mention': '<@100000000000000008>',
+      'user.name': 'zed',
+      'user.display': 'Zed Global',
+    });
   });
 });

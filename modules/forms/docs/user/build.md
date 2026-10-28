@@ -32,6 +32,7 @@ The **Settings** button opens one pop-up:
 - **Allowed roles**: only these roles can fill in the form. Empty means everyone.
 - **Active**: members can fill in the form only while this is checked.
 - **One submission per member**.
+- **Answers in their own message**: the first message holds only the details (who sent it and when). The answers follow in a second message. It keeps an automatic thread message, if the server adds one to submissions, out of the answers.
 
 ## Trying it
 

@@ -1,7 +1,7 @@
 import type { ChannelRuleIndex, HandlerContext } from '@bronto/core';
 import mediaonly from '@bronto/mediaonly';
 import sticky from '@bronto/sticky';
-import { Routes, type Message } from 'discord.js';
+import { Routes, type GuildMember, type Message, type User } from 'discord.js';
 import type { Rule } from './db/schema.js';
 
 /** The `name:id` or unicode form the reaction route takes. */
@@ -29,6 +29,18 @@ export class Reactor {
     // The post is deleted, or about to be; mediaonly's answer doesn't depend on whether its listener ran yet.
     if (ctx.modules.optional(mediaonly)?.rejects(message) === true) return;
 
+    await this.react(ctx, rule, message);
+  }
+
+  /** Adds the rule's emojis to a message regardless of who posted it, as a post by `author`; never throws. */
+  async reactPost(ctx: HandlerContext, message: Message, author: GuildMember | User): Promise<void> {
+    const rule = this.index.get(ctx.guildId, message.channelId);
+    if (rule === undefined || !rule.enabled || rule.ignoredUserIds.includes(author.id)) return;
+    await this.react(ctx, rule, message);
+  }
+
+  /** Adds the rule's emojis in order; a failed one is logged and skipped. */
+  private async react(ctx: HandlerContext, rule: Rule, message: Message): Promise<void> {
     for (const emoji of rule.emojis) {
       try {
         await ctx.client.rest.put(Routes.channelMessageOwnReaction(message.channelId, message.id, reactionIdentifier(emoji)));

@@ -32,6 +32,7 @@ const settingsOf = (form: Form): FormSettings => ({
   pingRoleIds: form.pingRoleIds,
   allowedRoleIds: form.allowedRoleIds,
   oncePerMember: form.oncePerMember,
+  answersApart: form.answersApart,
 });
 
 /** Answers the preview's Export button with the form as a `.json` file. */

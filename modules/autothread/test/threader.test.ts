@@ -1,8 +1,10 @@
+import { defineModule, type HandlerContext } from '@bronto/core';
 import { FakeDiscordHttp } from '@bronto/core/testing';
 import { templatesEvents, templatesGates } from '@bronto/templates';
 import { Events } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
+import autothreadModule from '../src/index.js';
 import { threadName } from '../src/threader.js';
 import {
   asTemplates,
@@ -60,7 +62,7 @@ afterEach(async () => {
   await t.drop();
 });
 
-async function start(options: { sticky?: boolean; mediaonly?: boolean } = {}): Promise<AutothreadBot> {
+async function start(options: Parameters<typeof prepareAutothreadBot>[2] = {}): Promise<AutothreadBot> {
   ab = await prepareAutothreadBot(t, discord, options);
   return ab;
 }
@@ -300,5 +302,85 @@ describe('templates', () => {
     await say(message);
     expect(postsIn(message.id)).toEqual([]);
     expect(ab!.lines.filter((line) => line.msg === 'The auto-message template no longer exists')).toEqual([]);
+  });
+});
+
+describe('threadPost', () => {
+  const thread = (message: ReturnType<typeof fakeMessage>, author: unknown) => {
+    const outcome: { id?: string | null; error?: unknown } = {};
+    const probe = defineModule({ name: 'probe', optionalDependsOn: [autothreadModule] });
+    return {
+      probe,
+      outcome,
+      run: async () => {
+        const runtime = ab!.bot.runtimes.find((entry) => entry.name === 'probe')!;
+        await ab!.bot.dispatcher.runHandler(runtime, GUILD, null, 'test', async (ctx: HandlerContext) => {
+          try {
+            outcome.id = await ctx.modules.optional(autothreadModule)!.threadPost(message as never, author as never);
+          } catch (error) {
+            outcome.error = error;
+          }
+        });
+        await ab!.bot.idle();
+      },
+    };
+  };
+  const startWithProbe = async (probe: ReturnType<typeof thread>['probe']) =>
+    start({ extra: [{ packageName: '@test/probe', definition: probe, config: {} }] });
+  const member = { id: MEMBER, displayName: 'Member Display', user: { id: MEMBER, bot: false, username: 'mem', displayName: 'Mem' } };
+
+  it("opens the rule's thread for a bot message on behalf of the author", async () => {
+    const message = fakeMessage(CHANNEL, { authorId: USER, bot: true });
+    const probing = thread(message, member);
+    await startWithProbe(probing.probe);
+    const template = await createTemplate(ab!, 'Welcome', 'Hi {user.mention}');
+    await insertRule(t, { channelId: CHANNEL, ignoreBots: true, templateId: template, rename: true });
+    await ready(ab!);
+    discord.addPost(message.channelId, message.id);
+    await probing.run();
+    expect(probing.outcome).toEqual({ id: message.id });
+    expect(threadsOf(CHANNEL)).toEqual([expect.objectContaining({ id: message.id, name: '[Comments] Member Display' })]);
+    const [first] = postsIn(message.id);
+    expect(first).toMatchObject({ content: `Hi <@${MEMBER}>`, allowed_mentions: { users: [MEMBER] } });
+    expect(JSON.stringify(first)).toContain(MEMBER);
+    const [row] = (first as unknown as { components: { components: { label: string; custom_id: string }[] }[] }).components;
+    const [button] = row!.components;
+    expect(button!.label).toBe('Rename thread');
+    // The button belongs to the author passed in, not to the bot that posted.
+    expect(button!.custom_id).toContain(MEMBER);
+    expect(button!.custom_id).not.toContain(USER);
+  });
+
+  it('returns null without a rule and with a disabled rule', async () => {
+    const plain = fakeMessage(CHANNEL);
+    const disabled = fakeMessage(NEWS);
+    const first = thread(plain, member);
+    const second = thread(disabled, member);
+    await startWithProbe(first.probe);
+    await insertRule(t, { channelId: NEWS, enabled: false });
+    await ready(ab!);
+    await first.run();
+    await second.run();
+    expect(first.outcome).toEqual({ id: null });
+    expect(second.outcome).toEqual({ id: null });
+    expect([...threadsOf(CHANNEL), ...threadsOf(NEWS)]).toEqual([]);
+  });
+
+  it('throws when Discord refuses the thread', async () => {
+    const message = fakeMessage(CHANNEL);
+    const probing = thread(message, member);
+    await startWithProbe(probing.probe);
+    const template = await createTemplate(ab!, 'Welcome', 'Hi');
+    await insertRule(t, { channelId: CHANNEL, templateId: template });
+    await ready(ab!);
+    discord.addPost(message.channelId, message.id);
+    discord.override('POST', `/channels/${CHANNEL}/messages/${message.id}/threads`, () => ({
+      status: 403,
+      json: { code: 50013, message: 'Missing Permissions' },
+    }));
+    await probing.run();
+    expect(probing.outcome.error).toBeDefined();
+    expect(threadsOf(CHANNEL)).toEqual([]);
+    expect(postsIn(message.id)).toEqual([]);
   });
 });

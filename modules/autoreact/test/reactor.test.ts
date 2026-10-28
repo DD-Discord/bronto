@@ -4,6 +4,7 @@ import templates from '@bronto/templates';
 import { Events } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
+import autoreactModule from '../src/index.js';
 import {
   CHANNEL,
   channelOption,
@@ -42,7 +43,7 @@ afterEach(async () => {
   await t.drop();
 });
 
-async function start(options: { sticky?: boolean; mediaonly?: boolean } = {}): Promise<AutoreactBot> {
+async function start(options: Parameters<typeof prepareAutoreactBot>[2] = {}): Promise<AutoreactBot> {
   ab = await prepareAutoreactBot(t, discord, options);
   return ab;
 }
@@ -212,5 +213,86 @@ describe('reacting', () => {
     expect(await ruleRows(t)).toEqual([]);
     await say(fakeMessage(CHANNEL), fakeMessage(THREAD));
     expect(discord.reactions).toEqual([]);
+  });
+});
+
+describe('reactPost', () => {
+  const react = (message: ReturnType<typeof fakeMessage>, author: unknown) => {
+    const outcome: { error?: unknown; done?: boolean } = {};
+    const probe = defineModule({ name: 'probe', optionalDependsOn: [autoreactModule] });
+    return {
+      probe,
+      outcome,
+      run: async () => {
+        const runtime = ab!.bot.runtimes.find((entry) => entry.name === 'probe')!;
+        await ab!.bot.dispatcher.runHandler(runtime, GUILD, null, 'test', async (ctx: HandlerContext) => {
+          try {
+            await ctx.modules.optional(autoreactModule)!.reactPost(message as never, author as never);
+            outcome.done = true;
+          } catch (error) {
+            outcome.error = error;
+          }
+        });
+        await ab!.bot.idle();
+      },
+    };
+  };
+  const startWithProbe = (probe: ReturnType<typeof react>['probe']) =>
+    start({ extra: [{ packageName: '@test/probe', definition: probe, config: {} }] });
+
+  it("adds the rule's emojis to a bot message", async () => {
+    const message = fakeMessage(CHANNEL, { authorId: USER, bot: true });
+    const probing = react(message, message.member);
+    await startWithProbe(probing.probe);
+    await insertRule(t, { channelId: CHANNEL, emojis: [THUMBS, '\u{1F44E}'], ignoreBots: true });
+    await ready(ab!);
+    discord.addPost(message.channelId, message.id);
+    await probing.run();
+    expect(probing.outcome).toEqual({ done: true });
+    expect(reacted(message)).toEqual([THUMBS, '\u{1F44E}']);
+  });
+
+  it('skips an ignored author', async () => {
+    const message = fakeMessage(CHANNEL, { authorId: IGNORED });
+    const probing = react(message, message.member);
+    await startWithProbe(probing.probe);
+    await insertRule(t, { channelId: CHANNEL, ignoredUserIds: [IGNORED] });
+    await ready(ab!);
+    discord.addPost(message.channelId, message.id);
+    await probing.run();
+    expect(reacted(message)).toEqual([]);
+  });
+
+  it('does nothing without a rule or with it disabled', async () => {
+    const plain = fakeMessage(CHANNEL);
+    const disabled = fakeMessage(OTHER_CHANNEL);
+    const first = react(plain, plain.member);
+    const second = react(disabled, disabled.member);
+    await startWithProbe(first.probe);
+    await insertRule(t, { channelId: OTHER_CHANNEL, enabled: false });
+    await ready(ab!);
+    discord.addPost(plain.channelId, plain.id);
+    discord.addPost(disabled.channelId, disabled.id);
+    await first.run();
+    await second.run();
+    expect(first.outcome).toEqual({ done: true });
+    expect(second.outcome).toEqual({ done: true });
+    expect(discord.reactions).toEqual([]);
+  });
+
+  it('swallows a failed reaction and adds the rest', async () => {
+    const message = fakeMessage(CHANNEL);
+    const probing = react(message, message.member);
+    await startWithProbe(probing.probe);
+    await insertRule(t, { channelId: CHANNEL, emojis: [THUMBS, PARTY] });
+    await ready(ab!);
+    discord.addPost(message.channelId, message.id);
+    discord.override('PUT', `/channels/${CHANNEL}/messages/${message.id}/reactions/${encodeURIComponent(THUMBS)}/@me`, () => ({
+      status: 500,
+      json: { message: 'Internal Server Error' },
+    }));
+    await probing.run();
+    expect(probing.outcome).toEqual({ done: true });
+    expect(reacted(message)).toEqual([PARTY]);
   });
 });

@@ -4,3 +4,4 @@ Opens a thread for every post in a channel, named after the author, with an opti
 
 - Using `/autothread`: run `/help` in Discord and pick Autothread.
 - Loading the module, permissions and behavior next to other modules: [docs/admin/setup.md](docs/admin/setup.md)
+- Other modules can open a channel rule's thread on a message they posted for someone through the `threadPost(message, author)` API.

@@ -1,5 +1,20 @@
+import autoreact from '@bronto/autoreact';
+import autothread from '@bronto/autothread';
 import { defineButton, UserError, type Reply, type ReplyMessage } from '@bronto/core';
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, DiscordAPIError, MessageFlags, RESTJSONErrorCodes, type MessageMentionOptions } from 'discord.js';
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  DiscordAPIError,
+  MessageFlags,
+  RESTJSONErrorCodes,
+  type Channel,
+  type GuildMember,
+  type Message,
+  type MessageMentionOptions,
+  type SendableChannels,
+  type User,
+} from 'discord.js';
 import { and, eq, gte } from 'drizzle-orm';
 import type { FormsContext } from './context.js';
 import { drafts, forms, submissions, type Answer, type Form, type Submission, type SubmissionFile, type SubmissionRender } from './db/schema.js';
@@ -75,8 +90,12 @@ function retryRow(ctx: FormsContext, submissionId: string): ActionRowBuilder<But
 export async function postingRefusal(ctx: FormsContext, form: Form, userId: string): Promise<ReplyMessage | null> {
   const posting = await postingSubmission(ctx, form.id, userId);
   if (posting === null) return null;
+  const content =
+    posting.partMessageIds.length >= posting.render.parts.length
+      ? `Your submission to **${form.name}** is posted, but its thread isn't open yet. Press Try again to open it, or Discard.`
+      : `Your submission to **${form.name}** isn't fully posted yet. Press Try again to post the rest, or Discard.`;
   return {
-    content: `Your submission to **${form.name}** isn't fully posted yet. Press Try again to post the rest, or Discard.`,
+    content,
     components: [retryRow(ctx, posting.id)],
   };
 }
@@ -99,11 +118,22 @@ export async function refusal(ctx: FormsContext, form: Form, userId: string): Pr
   return null;
 }
 
-async function usernameOf(ctx: FormsContext, userId: string): Promise<string> {
+const DEFAULT_AVATAR = 'https://cdn.discordapp.com/embed/avatars/0.png';
+
+/** The submitter as a guild member, else as a user; `author` is null when neither can be fetched. */
+export async function submitterOf(ctx: FormsContext, userId: string): Promise<{ author: GuildMember | User | null; username: string; avatarUrl: string }> {
   try {
-    return (await ctx.client.users.fetch(userId)).username;
+    const guild = await ctx.client.guilds.fetch(ctx.guildId);
+    const member = await guild.members.fetch(userId);
+    return { author: member, username: member.user.username, avatarUrl: member.displayAvatarURL() };
   } catch {
-    return userId;
+    // Not a member any more; fall back to the account.
+  }
+  try {
+    const user = await ctx.client.users.fetch(userId);
+    return { author: user, username: user.username, avatarUrl: user.displayAvatarURL() };
+  } catch {
+    return { author: null, username: userId, avatarUrl: DEFAULT_AVATAR };
   }
 }
 
@@ -147,10 +177,12 @@ export async function submit(ctx: FormsContext, formId: string, userId: string, 
     return refuse(`${tooLarge(big.name, limit)} Press Try again to upload a smaller file.`, true);
   }
   const submittedAt = new Date();
+  const { username, avatarUrl } = await submitterOf(ctx, userId);
   const parts = renderSubmission({
     formName: form.name,
     userId,
-    username: await usernameOf(ctx, userId),
+    username,
+    avatarUrl,
     submittedAt,
     pingUserIds: form.pingUserIds,
     pingRoleIds: form.pingRoleIds,
@@ -158,6 +190,7 @@ export async function submit(ctx: FormsContext, formId: string, userId: string, 
     answers: draft.answers,
     files: kept,
     uploadLimit: limit,
+    answersApart: form.answersApart,
   });
   const [row] = await ctx.db.run(async (tx) =>
     tx
@@ -221,9 +254,12 @@ function summary(head: string, submission: Submission, tail: string): string {
 
 const confirmation = (form: Form, submission: Submission) => summary(`Submitted to **${form.name}**.`, submission, droppedNote(submission.render.dropped));
 
-function failure(ctx: FormsContext, form: Form, submissionId: string, reason: string): ReplyMessage {
+/** The reply to a failed posting; `allPosted` when only the thread on part 1 is missing. */
+function failure(ctx: FormsContext, form: Form, submissionId: string, reason: string, allPosted = false): ReplyMessage {
   return {
-    content: `I couldn't post your submission to **${form.name}**: ${reason} Your answers are saved; press Try again to post the rest, or Discard.`,
+    content: allPosted
+      ? `Your submission to **${form.name}** is posted, but I couldn't open its thread: ${reason} Press Try again to open it, or Discard to leave it without one.`
+      : `I couldn't post your submission to **${form.name}**: ${reason} Your answers are saved; press Try again to post the rest, or Discard.`,
     components: [retryRow(ctx, submissionId)],
   };
 }
@@ -258,26 +294,101 @@ async function finish(ctx: FormsContext, submission: Submission): Promise<void> 
   await releaseFiles(ctx, gone.flatMap((draft) => draft.files), []);
 }
 
+async function sendableChannel(ctx: FormsContext, id: string): Promise<SendableChannels | null> {
+  const channel = await ctx.client.channels.fetch(id);
+  return channel !== null && channel.isSendable() ? channel : null;
+}
+
+/**
+ * Applies the channel's autoreact rule (with `react`) and autothread rule (with `thread`) to part 1 as if the
+ * submitter had posted it. The opened thread, or null without one; also null when the submitter's account can't be
+ * fetched.
+ */
+async function applyRules(ctx: FormsContext, part1: Message, userId: string, apply: { react: boolean; thread: boolean }): Promise<SendableChannels | null> {
+  const reactions = apply.react ? ctx.modules.optional(autoreact) : null;
+  const threads = apply.thread ? ctx.modules.optional(autothread) : null;
+  if (reactions === null && threads === null) return null;
+  const { author } = await submitterOf(ctx, userId);
+  if (author === null) return null;
+  await reactions?.reactPost(part1, author);
+  const threadId = (await threads?.threadPost(part1, author)) ?? null;
+  return threadId === null ? null : sendableChannel(ctx, threadId);
+}
+
+/** The channel, fetched fresh; null when it no longer exists. */
+async function fetchChannel(ctx: FormsContext, id: string): Promise<Channel | null> {
+  try {
+    return await ctx.client.channels.fetch(id, { force: true });
+  } catch (error) {
+    if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return null;
+    throw error;
+  }
+}
+
+/** The message, fetched fresh; null when it isn't in the channel (deleted, or never posted there). */
+async function messageIn(channel: SendableChannels, messageId: string): Promise<Message | null> {
+  try {
+    return await channel.messages.fetch({ message: messageId, force: true });
+  } catch (error) {
+    if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownMessage) return null;
+    throw error;
+  }
+}
+
+/**
+ * Where a retry posts the parts after part 1, so that a submission is never split between a thread and the channel:
+ * - once part 2 is posted, the channel or thread it went to (`restChannelId`), reopened if archived; the channel when
+ *   that no longer exists;
+ * - while part 1 is the only part posted: the thread on part 1 (a thread started on a message has its ID), reopened
+ *   if archived; else a thread the channel's rule opens now when part 1 still exists; else the channel.
+ */
+async function retryTarget(ctx: FormsContext, channel: SendableChannels, submission: Submission): Promise<SendableChannels> {
+  if (submission.restChannelId !== null) {
+    const rest = await fetchChannel(ctx, submission.restChannelId);
+    if (rest === null || !rest.isSendable()) return channel;
+    if (rest.isThread() && rest.archived === true) await rest.setArchived(false);
+    return rest;
+  }
+  const part1Id = submission.partMessageIds[0]!;
+  const thread = await fetchChannel(ctx, part1Id);
+  if (thread !== null) {
+    if (!thread.isThread() || !thread.isSendable()) return channel;
+    if (thread.archived === true) await thread.setArchived(false);
+    return thread;
+  }
+  if (ctx.modules.optional(autothread) === null) return channel;
+  const part1 = await messageIn(channel, part1Id);
+  if (part1 === null) return channel;
+  return (await applyRules(ctx, part1, submission.userId, { react: false, thread: true })) ?? channel;
+}
+
 /**
  * Posts the stored parts of a submission not posted yet, one message each, recording each message as soon as it is
- * sent so that a retry continues after it. When all are posted, the draft and its files are deleted. Files are
- * downloaded from the drafts post with fresh links; `limit` caps each download.
+ * sent so that a retry continues after it. Part 1 goes to the submissions channel and gets the channel's autoreact
+ * rule as if the submitter had posted it, and, outside threads, its autothread rule; the later parts go into the
+ * thread when there is one. When all are posted, the draft and its files are deleted. Files are downloaded from the
+ * drafts post with fresh links; `limit` caps each download.
  */
 export async function postSubmission(ctx: FormsContext, submissionId: string, limit: number): Promise<Reply> {
   const { submission, form } = await loadSubmission(ctx, submissionId);
   if (submission.status === 'posted') return confirmation(form, submission);
   const { parts } = submission.render;
+  const start = submission.partMessageIds.length;
+  let postedParts = start;
   try {
-    const start = submission.partMessageIds.length;
     const pending = new Set(parts.slice(start).flatMap((part) => part.fileKeys));
     const data = await downloadFiles(ctx, submission.files.filter((file) => pending.has(file.key)), limit);
     // Fresh, so that an archived post is noticed.
     const channel = await ctx.client.channels.fetch(submission.channelId, { force: true });
     if (channel === null || !channel.isSendable()) return failure(ctx, form, submissionId, "the submissions channel can't be posted in.");
     if (channel.isThread() && channel.archived === true) await channel.setArchived(false);
+    // A thread can't hold another thread: in a thread channel, every part stays in it.
+    const inThread = channel.isThread();
+    let rest = start === 0 || inThread ? channel : await retryTarget(ctx, channel, submission);
     for (const [index, part] of parts.entries()) {
       if (index < start) continue;
-      const message = await channel.send({
+      const target = index === 0 ? channel : rest;
+      const message = await target.send({
         components: part.components,
         flags: MessageFlags.IsComponentsV2,
         files: part.files.map((file) => ({ attachment: data.get(file.key)!, name: file.name })),
@@ -292,14 +403,17 @@ export async function postSubmission(ctx: FormsContext, submissionId: string, li
           .update(submissions)
           .set({
             partMessageIds: [...current.partMessageIds, message.id],
+            ...(index === 1 ? { restChannelId: target.id } : {}),
             files: current.files.map((file) => (posted.has(file.key) ? { ...file, messageId: message.id, attachmentId: posted.get(file.key)! } : file)),
           })
           .where(eq(submissions.id, submissionId));
       });
+      postedParts++;
+      if (index === 0) rest = (await applyRules(ctx, message, submission.userId, { react: true, thread: !inThread })) ?? channel;
     }
   } catch (error) {
     ctx.log.warn({ err: error, submissionId }, 'Posting a submission failed');
-    return failure(ctx, form, submissionId, reasonOf(error));
+    return failure(ctx, form, submissionId, reasonOf(error), postedParts >= parts.length);
   }
   await finish(ctx, submission);
   ctx.log.info({ formId: form.id, submissionId, parts: parts.length }, 'Submission posted');
@@ -315,6 +429,12 @@ async function discardSubmission(ctx: FormsContext, submissionId: string): Promi
   if (submission.status === 'posted') return confirmation(form, submission);
   const posted = submission.partMessageIds.length;
   const total = submission.render.parts.length;
+  if (posted >= total) {
+    // Only the thread on part 1 was missing.
+    await finish(ctx, submission);
+    ctx.log.info({ formId: form.id, submissionId }, 'Submission discarded without its thread');
+    return confirmation(form, submission);
+  }
   if (posted === 0) {
     await ctx.db.run(async (tx) => {
       await tx.delete(submissions).where(and(eq(submissions.id, submissionId), eq(submissions.status, 'posting')));

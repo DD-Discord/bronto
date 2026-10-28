@@ -63,7 +63,7 @@ interface Source {
 }
 
 type Input =
-  | { kind: 'text'; id: string; label: string; max: number; paragraph?: boolean; required?: boolean; placeholder?: string; get: (s: Source) => string | undefined }
+  | { kind: 'text'; id: string; label: string; max: number; paragraph?: boolean; required?: boolean; placeholder?: string; description?: string; get: (s: Source) => string | undefined }
   | { kind: 'check'; id: string; label: string; get: (s: Source) => boolean }
   | { kind: 'upload'; id: string; label: string; slot: ImageSlot };
 
@@ -122,7 +122,7 @@ export const SECTIONS: Record<Section, { title: string; inputs: Input[] }> = {
   field: {
     title: 'Field',
     inputs: [
-      { kind: 'text', id: 'name', label: 'Name', max: 256, get: (s) => s.field?.name },
+      { kind: 'text', id: 'name', label: 'Name', max: 256, description: 'Clear name and value to remove this field.', get: (s) => s.field?.name },
       { kind: 'text', id: 'value', label: 'Value', max: 1024, paragraph: true, get: (s) => s.field?.value },
       { kind: 'check', id: 'inline', label: 'Inline', get: (s) => s.field?.inline === true },
       { kind: 'text', id: 'position', label: 'Position', max: 2, get: (s) => (s.index === undefined ? undefined : String(s.index + 1)) },
@@ -184,6 +184,7 @@ export function sectionModal(ctx: TemplatesContext, section: Section, template: 
         );
         continue;
       }
+      if (input.description !== undefined) label.setDescription(input.description);
       if (input.id.endsWith('url') && value.startsWith(UPLOAD_PREFIX)) label.setDescription('Uploaded image. Keep this to keep it, clear it to remove it.');
       modal.addLabelComponents(label.setTextInputComponent(textInput(input, value)));
     } else if (input.kind === 'check') {

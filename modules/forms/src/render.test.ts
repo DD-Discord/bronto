@@ -12,6 +12,7 @@ const base = (over: Partial<RenderInput>): RenderInput => ({
   formName: 'Story contest',
   userId: '111111111111111111',
   username: 'writer',
+  avatarUrl: 'https://cdn.example/a.png',
   submittedAt: new Date('2026-01-02T03:04:05Z'),
   pingUserIds: [],
   pingRoleIds: [],
@@ -19,6 +20,7 @@ const base = (over: Partial<RenderInput>): RenderInput => ({
   answers: {},
   files: [],
   uploadLimit: 10_000_000,
+  answersApart: false,
   ...over,
 });
 
@@ -26,10 +28,12 @@ const walk = (part: RenderedPart) => {
   const container = part.components[0] as any;
   return container.components as any[];
 };
-const texts = (part: RenderedPart) => walk(part).filter((c) => c.type === ComponentType.TextDisplay).map((c) => c.content as string);
+/** The container's components with each Section's children and accessory following it. */
+const flat = (part: RenderedPart) => walk(part).flatMap((c) => (c.type === ComponentType.Section ? [c, ...c.components, c.accessory] : [c]));
+const texts = (part: RenderedPart) => flat(part).filter((c) => c.type === ComponentType.TextDisplay).map((c) => c.content as string);
 const chars = (part: RenderedPart) => texts(part).join('').length;
 const count = (part: RenderedPart) =>
-  1 + walk(part).reduce((n, c) => n + 1 + (c.type === ComponentType.MediaGallery ? c.items.length : 0), 0);
+  1 + flat(part).reduce((n, c) => n + 1 + (c.type === ComponentType.MediaGallery ? c.items.length : 0), 0);
 
 const fileInput = (n: number, size = 10, ext = 'txt') => ({
   fields: [field('fff00001', 'file')],
@@ -52,11 +56,32 @@ describe('renderSubmission', () => {
   it('renders a one-field submission as one part with a header', () => {
     const parts = renderSubmission(base({ fields: [field('aaaaaaaa')], answers: { aaaaaaaa: { text: 'Once upon a time' } } }));
     expect(parts).toHaveLength(1);
-    const [header, answer] = texts(parts[0]!);
+    const [header, , answer] = texts(parts[0]!);
     expect(header).toContain('## Story contest');
     expect(header).toContain('<@111111111111111111>');
     expect(header).toContain('<t:');
     expect(answer).toBe('**Field aaaaaaaa**\nOnce upon a time');
+  });
+
+  it('starts part 1 with the details section, avatar and small line', () => {
+    const [part] = renderSubmission(base({ fields: [field('aaaaaaaa')], answers: { aaaaaaaa: { text: 'Hi' } } }));
+    const kids = walk(part!);
+    expect(kids.map((c) => c.type)).toEqual([ComponentType.Section, ComponentType.TextDisplay, ComponentType.Separator, ComponentType.TextDisplay]);
+    expect(kids[0].components).toHaveLength(1);
+    expect(kids[0].components[0].content).toBe('## Story contest\n**From** <@111111111111111111> (writer)\n**Sent** <t:1767323045:F>');
+    expect(kids[0].accessory).toMatchObject({ type: ComponentType.Thumbnail, media: { url: 'https://cdn.example/a.png' } });
+    expect(kids[1].content).toBe('-# User ID 111111111111111111');
+  });
+
+  it('names the pinged roles and users in the small line', () => {
+    const [part] = renderSubmission(base({ pingRoleIds: ['222222222222222222'], pingUserIds: ['333333333333333333'] }));
+    expect(texts(part!)[1]).toBe('-# For <@&222222222222222222> <@333333333333333333> · User ID 111111111111111111');
+  });
+
+  it('labels later parts with the form, submitter and part number', () => {
+    const parts = renderSubmission(base({ fields: [field('aaaaaaaa')], answers: { aaaaaaaa: { text: 'x '.repeat(3000) } } }));
+    expect(parts.length).toBeGreaterThan(1);
+    expect(texts(parts[1]!)[0]).toBe(`-# Story contest · from <@111111111111111111> · part 2 of ${parts.length}`);
   });
 
   it('formats choices as bullets and leaves out unanswered fields', () => {
@@ -66,7 +91,7 @@ describe('renderSubmission', () => {
         answers: { aaaaaaaa: { choices: ['a', 'b'] }, bbbbbbbb: { text: '  ' } },
       }),
     );
-    expect(texts(parts[0]!).slice(1)).toEqual(['**Field aaaaaaaa**\n• a\n• b']);
+    expect(texts(parts[0]!).slice(2)).toEqual(['**Field aaaaaaaa**\n• a\n• b']);
   });
 
   it('splits long answers without losing text or exceeding limits', () => {
@@ -87,18 +112,18 @@ describe('renderSubmission', () => {
     for (const part of parts) expect(chars(part)).toBeLessThanOrEqual(MAX_TEXT);
     expect(collect(parts, 'Field aaaaaaaa')).toBe(text);
     expect(collect(parts, 'Field bbbbbbbb')).toBe(other);
-    const pieces = texts(parts[0]!).slice(1);
+    const pieces = texts(parts[0]!).slice(2);
     for (const piece of pieces) expect(piece.endsWith(' ') || piece === text || /\bw\d+x$/.test(piece) || piece.endsWith('z ')).toBe(true);
   });
 
   it('prefers paragraph breaks, then sentence ends', () => {
     const para = `${'a'.repeat(1500)}\n\n${'b'.repeat(2000)}\n\n${'c'.repeat(1500)}`;
     const parts = renderSubmission(base({ fields: [field('aaaaaaaa')], answers: { aaaaaaaa: { text: para } } }));
-    expect(texts(parts[0]!)[1]).toBe(`**Field aaaaaaaa**\n${'a'.repeat(1500)}\n\n${'b'.repeat(2000)}\n\n`);
+    expect(texts(parts[0]!)[2]).toBe(`**Field aaaaaaaa**\n${'a'.repeat(1500)}\n\n${'b'.repeat(2000)}\n\n`);
     const sentences = 'Sentence here. '.repeat(400);
     const split = renderSubmission(base({ fields: [field('aaaaaaaa')], answers: { aaaaaaaa: { text: sentences } } }));
     expect(split).toHaveLength(2);
-    expect(texts(split[0]!)[1]!.endsWith('here. ')).toBe(true);
+    expect(texts(split[0]!)[2]!.endsWith('here. ')).toBe(true);
     expect(collect(split, 'Field aaaaaaaa')).toBe(sentences);
   });
 
@@ -108,7 +133,7 @@ describe('renderSubmission', () => {
     );
     expect(parts).toHaveLength(2);
     expect(texts(parts[1]!)[1]).toBe(`**Field bbbbbbbb**\n${'y'.repeat(2000)}`);
-    expect(texts(parts[1]!)[0]).toMatch(/^-# Story contest — <@111111111111111111> \(2\/2\)$/);
+    expect(texts(parts[1]!)[0]).toBe('-# Story contest · from <@111111111111111111> · part 2 of 2');
   });
 
   it('hard cuts text without whitespace', () => {
@@ -168,7 +193,7 @@ describe('renderSubmission', () => {
     );
     expect(parts.length).toBeGreaterThan(1);
     expect(parts[0]!.allowedMentions).toEqual({ parse: [], users: ['222222222222222222'], roles: ['333333333333333333'] });
-    expect(texts(parts[0]!)[0]).toContain('-# <@&333333333333333333> <@222222222222222222>');
+    expect(texts(parts[0]!)[1]).toBe('-# For <@&333333333333333333> <@222222222222222222> · User ID 111111111111111111');
     for (const part of parts.slice(1)) expect(part.allowedMentions).toEqual({ parse: [] });
   });
 
@@ -208,5 +233,22 @@ describe('renderSubmission', () => {
     const [long] = renderSubmission(base({ fields: [field('fff00001', 'file')], files: [{ key: 'k', fieldId: 'fff00001', name: `${'n'.repeat(300)}.png`, size: 1 }] }));
     expect(long!.files[0]!.name.length).toBeLessThanOrEqual(100);
     expect(long!.files[0]!.name.endsWith('.png')).toBe(true);
+  });
+
+  it('puts only the details in part 1 when answers are apart', () => {
+    const input = { fields: [field('aaaaaaaa')], answers: { aaaaaaaa: { text: 'Once upon a time' } } };
+    const parts = renderSubmission(base({ ...input, answersApart: true }));
+    expect(parts).toHaveLength(2);
+    expect(texts(parts[0]!).join('\n')).not.toContain('Once upon a time');
+    expect(walk(parts[0]!).map((c) => c.type)).toEqual([ComponentType.Section, ComponentType.TextDisplay]);
+    expect(texts(parts[1]!)).toEqual(['-# Story contest · from <@111111111111111111> · part 2 of 2', '**Field aaaaaaaa**\nOnce upon a time']);
+    expect(renderSubmission(base(input))).toHaveLength(1);
+  });
+
+  it('posts one part when answers are apart but nothing was answered', () => {
+    const parts = renderSubmission(base({ fields: [field('aaaaaaaa')], answers: {}, answersApart: true }));
+    expect(parts).toHaveLength(1);
+    expect(texts(parts[0]!).join('\n')).not.toContain('part 1');
+    expect(walk(parts[0]!).map((c) => c.type)).toEqual([ComponentType.Section, ComponentType.TextDisplay]);
   });
 });

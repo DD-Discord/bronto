@@ -1,7 +1,9 @@
 # Forms setup
 
 - Load `@bronto/templates` as well; forms depend on it. Load `@bronto/sticky` too if form buttons should go on
-  stickies; without it, buttons go on template messages only.
+  stickies; without it, buttons go on template messages only. Load `@bronto/autothread` and `@bronto/autoreact` to
+  have submissions follow the submissions channel's rules: the first message gets the reactions and a thread, and a
+  long submission continues in that thread.
 - Templates needs the **Message Content** intent (see its setup); forms itself needs no privileged intent.
 - Forum channels need a **Community** server. Turn on Community in Server Settings first; `/forms init` refuses on
   other servers.
@@ -23,6 +25,8 @@
   modules:
     "@bronto/templates": {}
     "@bronto/sticky": {}      # optional: form buttons on stickies
+    "@bronto/autothread": {}  # optional: threads on submissions
+    "@bronto/autoreact": {}   # optional: reactions on submissions
     "@bronto/forms": {}
   ```
 

@@ -13,6 +13,8 @@ export interface RenderInput {
   formName: string;
   userId: string;
   username: string;
+  /** The submitter's avatar, shown beside the details. */
+  avatarUrl: string;
   submittedAt: Date;
   pingUserIds: string[];
   pingRoleIds: string[];
@@ -21,6 +23,8 @@ export interface RenderInput {
   files: { key: string; fieldId: string; name: string; size: number }[];
   /** Bytes of attachments per message. */
   uploadLimit: number;
+  /** Starts the answers in part 2, so part 1 holds only the details. */
+  answersApart: boolean;
 }
 
 export interface RenderedPart {
@@ -89,22 +93,23 @@ function answerText(answer: Answer | undefined): string | null {
 /** Turns one submission into Components V2 message parts that each stay within Discord's limits. */
 export function renderSubmission(input: RenderInput): RenderedPart[] {
   const { formName, userId } = input;
-  const followUpHeader = (n: number, total: number) => `-# ${formName} — <@${userId}> (${n}/${total})`;
+  const followUpHeader = (n: number, total: number) => `-# ${formName} · from <@${userId}> · part ${n} of ${total}`;
   const reserved = followUpHeader(99, 99).length;
 
   const firstHeader = [
     `## ${formName}`,
-    `<@${userId}> · ${input.username} · ${userId}`,
-    `<t:${Math.floor(input.submittedAt.getTime() / 1000)}:F>`,
-    ...(input.pingUserIds.length + input.pingRoleIds.length > 0
-      ? [`-# ${[...input.pingRoleIds.map((id) => `<@&${id}>`), ...input.pingUserIds.map((id) => `<@${id}>`)].join(' ')}`]
-      : []),
+    `**From** <@${userId}> (${input.username})`,
+    `**Sent** <t:${Math.floor(input.submittedAt.getTime() / 1000)}:F>`,
   ].join('\n');
+  const mentions = [...input.pingRoleIds.map((id) => `<@&${id}>`), ...input.pingUserIds.map((id) => `<@${id}>`)];
+  const smallLine = `-# ${mentions.length > 0 ? `For ${mentions.join(' ')} · ` : ''}User ID ${userId}`;
+  // Part 1: container, section, its text and thumbnail, the small line and the separator.
+  const firstComponents = 6;
 
   const parts: Part[] = [];
   let cur!: Part;
   const newPart = () => {
-    cur = { kids: [], chars: parts.length === 0 ? firstHeader.length : reserved, components: 2, files: [], bytes: 0 };
+    cur = { kids: [], chars: parts.length === 0 ? firstHeader.length + smallLine.length : reserved, components: parts.length === 0 ? firstComponents : 2, files: [], bytes: 0 };
     parts.push(cur);
   };
   newPart();
@@ -170,10 +175,18 @@ export function renderSubmission(input: RenderInput): RenderedPart[] {
     }
   };
 
+  // Opens the answers' part just before the first one, so nothing answered leaves no empty part.
+  let apart = input.answersApart;
+  const startAnswers = () => {
+    if (apart) newPart();
+    apart = false;
+  };
+
   for (const field of input.fields) {
     if (field.type === 'file') {
       const files = input.files.filter((f) => f.fieldId === field.id);
       if (files.length === 0) continue;
+      startAnswers();
       const title = label(field.label);
       const first = files[0]!;
       const need = IMAGE.test(first.name) ? 2 : 1;
@@ -182,15 +195,29 @@ export function renderSubmission(input: RenderInput): RenderedPart[] {
       addFiles(field.label, files);
     } else {
       const body = answerText(input.answers[field.id]);
-      if (body !== null) addBody(field.label, body);
+      if (body === null) continue;
+      startAnswers();
+      addBody(field.label, body);
     }
   }
 
   const total = parts.length;
   return parts.map((part, index) => {
-    const header = index === 0 ? firstHeader : followUpHeader(index + 1, total);
+    const lead =
+      index === 0
+        ? [
+            {
+              type: ComponentType.Section,
+              components: [{ type: ComponentType.TextDisplay, content: firstHeader }],
+              accessory: { type: ComponentType.Thumbnail, media: { url: input.avatarUrl } },
+            },
+            { type: ComponentType.TextDisplay, content: smallLine },
+            // Only between the details and answers; part 1 holds no answers when they are apart or empty.
+            ...(part.kids.length > 0 ? [{ type: ComponentType.Separator }] : []),
+          ]
+        : [{ type: ComponentType.TextDisplay, content: followUpHeader(index + 1, total) }];
     const children = [
-      { type: ComponentType.TextDisplay, content: header },
+      ...lead,
       ...part.kids.map((kid) =>
         kid.kind === 'text'
           ? { type: ComponentType.TextDisplay, content: kid.content }

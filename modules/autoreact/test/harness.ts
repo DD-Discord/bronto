@@ -53,7 +53,7 @@ export function autoreactDb(t: TestDatabase, guildId = GUILD): ScopedDb {
 }
 
 /** Sticky (with templates, which it needs) and mediaonly load only when asked for. */
-function modulesFor(options: { sticky?: boolean; mediaonly?: boolean }): LoadedModule[] {
+function modulesFor(options: { sticky?: boolean; mediaonly?: boolean; extra?: LoadedModule[] }): LoadedModule[] {
   const modules: LoadedModule[] = [];
   if (options.sticky === true) {
     modules.push(
@@ -64,14 +64,14 @@ function modulesFor(options: { sticky?: boolean; mediaonly?: boolean }): LoadedM
   if (options.mediaonly === true) {
     modules.push({ packageName: '@bronto/mediaonly', definition: createMediaonlyModule(), config: mediaonlyConfigSchema.parse({}) });
   }
-  return [...modules, autoreactModule()];
+  return [...modules, autoreactModule(), ...(options.extra ?? [])];
 }
 
 /** A bot with the autoreact module: database migrated and GUILD (with one custom emoji) registered, not yet ready. */
 export async function prepareAutoreactBot(
   t: TestDatabase,
   discord: FakeDiscordHttp,
-  options: { sticky?: boolean; mediaonly?: boolean } = {},
+  options: { sticky?: boolean; mediaonly?: boolean; extra?: LoadedModule[] } = {},
 ): Promise<AutoreactBot> {
   discord.addGuild(GUILD, { community: true });
   discord.guilds.get(GUILD)!.emojis = [{ id: CUSTOM_EMOJI, name: 'party', animated: false, roles: [], available: true }] as never;
@@ -157,6 +157,7 @@ export function fakeMessage(channelId: string, options: FakeMessageOptions = {})
       return [attachmentId, { id: attachmentId, name: `photo${index}.png`, spoiler: false }] as const;
     }),
   );
+  const author = { id: authorId, bot: options.bot ?? false };
   return {
     id,
     channelId,
@@ -165,7 +166,7 @@ export function fakeMessage(channelId: string, options: FakeMessageOptions = {})
     attachments,
     webhookId: options.webhookId ?? null,
     system: options.system ?? false,
-    author: { id: authorId, bot: options.bot ?? false },
-    member: { id: authorId, permissionsIn: () => ({ has: () => false }) },
+    author,
+    member: { id: authorId, user: author, permissionsIn: () => ({ has: () => false }) },
   };
 }
