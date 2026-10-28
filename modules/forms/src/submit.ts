@@ -1,5 +1,19 @@
+import autoreact from '@bronto/autoreact';
+import autothread from '@bronto/autothread';
 import { defineButton, UserError, type Reply, type ReplyMessage } from '@bronto/core';
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, DiscordAPIError, MessageFlags, RESTJSONErrorCodes, type GuildMember, type MessageMentionOptions, type User } from 'discord.js';
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  DiscordAPIError,
+  MessageFlags,
+  RESTJSONErrorCodes,
+  type GuildMember,
+  type Message,
+  type MessageMentionOptions,
+  type SendableChannels,
+  type User,
+} from 'discord.js';
 import { and, eq, gte } from 'drizzle-orm';
 import type { FormsContext } from './context.js';
 import { drafts, forms, submissions, type Answer, type Form, type Submission, type SubmissionFile, type SubmissionRender } from './db/schema.js';
@@ -272,10 +286,52 @@ async function finish(ctx: FormsContext, submission: Submission): Promise<void> 
   await releaseFiles(ctx, gone.flatMap((draft) => draft.files), []);
 }
 
+async function sendableChannel(ctx: FormsContext, id: string): Promise<SendableChannels | null> {
+  const channel = await ctx.client.channels.fetch(id);
+  return channel !== null && channel.isSendable() ? channel : null;
+}
+
+/**
+ * Applies the channel's autoreact rule (with `react`) and autothread rule to part 1 as if the submitter had posted
+ * it. The opened thread, or null without one; also null when the submitter's account can't be fetched.
+ */
+async function applyRules(ctx: FormsContext, part1: Message, userId: string, react: boolean): Promise<SendableChannels | null> {
+  const reactions = react ? ctx.modules.optional(autoreact) : null;
+  const threads = ctx.modules.optional(autothread);
+  if (reactions === null && threads === null) return null;
+  const { author } = await submitterOf(ctx, userId);
+  if (author === null) return null;
+  await reactions?.reactPost(part1, author);
+  const threadId = (await threads?.threadPost(part1, author)) ?? null;
+  return threadId === null ? null : sendableChannel(ctx, threadId);
+}
+
+/**
+ * Where a retry posts the parts after part 1: the thread on part 1 (a thread started on a message has its ID),
+ * reopened if archived. Without one, a thread the channel's rule opens now, but only while part 1 is the only part
+ * posted, so that a rule added between retries doesn't split a submission. Otherwise the channel.
+ */
+async function retryTarget(ctx: FormsContext, channel: SendableChannels, submission: Submission): Promise<SendableChannels> {
+  const part1Id = submission.partMessageIds[0]!;
+  try {
+    const thread = await ctx.client.channels.fetch(part1Id, { force: true });
+    if (thread === null || !thread.isThread() || !thread.isSendable()) return channel;
+    if (thread.archived === true) await thread.setArchived(false);
+    return thread;
+  } catch (error) {
+    if (!(error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel)) throw error;
+  }
+  if (submission.partMessageIds.length > 1 || ctx.modules.optional(autothread) === null) return channel;
+  const part1 = await channel.messages.fetch(part1Id);
+  return (await applyRules(ctx, part1, submission.userId, false)) ?? channel;
+}
+
 /**
  * Posts the stored parts of a submission not posted yet, one message each, recording each message as soon as it is
- * sent so that a retry continues after it. When all are posted, the draft and its files are deleted. Files are
- * downloaded from the drafts post with fresh links; `limit` caps each download.
+ * sent so that a retry continues after it. Part 1 goes to the submissions channel and gets the channel's autoreact
+ * and autothread rules as if the submitter had posted it; the later parts go into its thread when there is one. When
+ * all are posted, the draft and its files are deleted. Files are downloaded from the drafts post with fresh links;
+ * `limit` caps each download.
  */
 export async function postSubmission(ctx: FormsContext, submissionId: string, limit: number): Promise<Reply> {
   const { submission, form } = await loadSubmission(ctx, submissionId);
@@ -289,9 +345,10 @@ export async function postSubmission(ctx: FormsContext, submissionId: string, li
     const channel = await ctx.client.channels.fetch(submission.channelId, { force: true });
     if (channel === null || !channel.isSendable()) return failure(ctx, form, submissionId, "the submissions channel can't be posted in.");
     if (channel.isThread() && channel.archived === true) await channel.setArchived(false);
+    let rest = start === 0 ? channel : await retryTarget(ctx, channel, submission);
     for (const [index, part] of parts.entries()) {
       if (index < start) continue;
-      const message = await channel.send({
+      const message = await (index === 0 ? channel : rest).send({
         components: part.components,
         flags: MessageFlags.IsComponentsV2,
         files: part.files.map((file) => ({ attachment: data.get(file.key)!, name: file.name })),
@@ -310,6 +367,7 @@ export async function postSubmission(ctx: FormsContext, submissionId: string, li
           })
           .where(eq(submissions.id, submissionId));
       });
+      if (index === 0) rest = (await applyRules(ctx, message, submission.userId, true)) ?? channel;
     }
   } catch (error) {
     ctx.log.warn({ err: error, submissionId }, 'Posting a submission failed');

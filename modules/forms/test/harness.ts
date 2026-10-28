@@ -16,6 +16,8 @@ import {
   type RecordedRequest,
   TEST_INTERACTION_SECRET,
 } from '@bronto/core/testing';
+import { createAutoreactModule } from '@bronto/autoreact';
+import { createAutothreadModule } from '@bronto/autothread';
 import { createStickyModule, stickyConfigSchema } from '@bronto/sticky';
 import { createTemplatesModule } from '@bronto/templates';
 import { ChannelType } from 'discord.js';
@@ -46,24 +48,35 @@ export function formsDb(t: TestDatabase, guildId = GUILD): ScopedDb {
   return createScopedDb(t.database.app, guildId, moduleRoleName(t.database.appRole, 'forms'));
 }
 
-/** Forms depends on templates and optionally on sticky, which loads only with `sticky: true`. */
-function modulesFor(sticky: boolean): LoadedModule[] {
+export interface FormsBotOptions {
+  extra?: LoadedModule[];
+  sticky?: boolean;
+  /** Loads autothread and autoreact. */
+  postRules?: boolean;
+  community?: boolean;
+}
+
+/** Forms depends on templates and optionally on sticky, autothread and autoreact, which load only when asked for. */
+function modulesFor({ sticky = false, postRules = false }: FormsBotOptions): LoadedModule[] {
   const templates: LoadedModule = { packageName: '@bronto/templates', definition: createTemplatesModule(), config: {} };
   const stickyModule: LoadedModule[] = sticky
     ? [{ packageName: '@bronto/sticky', definition: createStickyModule(), config: stickyConfigSchema.parse({}) }]
     : [];
-  return [templates, ...stickyModule, formsModule()];
+  const ruleModules: LoadedModule[] = postRules
+    ? [
+        { packageName: '@bronto/autothread', definition: createAutothreadModule(), config: {} },
+        { packageName: '@bronto/autoreact', definition: createAutoreactModule(), config: {} },
+      ]
+    : [];
+  return [templates, ...stickyModule, ...ruleModules, formsModule()];
 }
 
 /**
- * A bot with the forms and templates modules (and sticky with `sticky: true`): database migrated and GUILD (a
- * community server unless `community` is false, with a forum) registered, not yet ready.
+ * A bot with the forms and templates modules (sticky with `sticky: true`, autothread and autoreact with `postRules:
+ * true`): database migrated and GUILD (a community server unless `community` is false, with a forum) registered, not
+ * yet ready.
  */
-export async function prepareFormsBot(
-  t: TestDatabase,
-  discord: FakeDiscordHttp,
-  options: { extra?: LoadedModule[]; sticky?: boolean; community?: boolean } = {},
-): Promise<FormsBot> {
+export async function prepareFormsBot(t: TestDatabase, discord: FakeDiscordHttp, options: FormsBotOptions = {}): Promise<FormsBot> {
   discord.addGuild(GUILD, { community: options.community ?? true });
   if (!discord.channels.has(FORUM)) discord.addChannel(FORUM, { guildId: GUILD, type: ChannelType.GuildForum });
   const native = await createNativeTestClient(discord);
@@ -76,7 +89,7 @@ export async function prepareFormsBot(
       modules: {},
       interactions: { secret: TEST_INTERACTION_SECRET },
     },
-    modules: [...modulesFor(options.sticky ?? false), ...(options.extra ?? [])],
+    modules: [...modulesFor(options), ...(options.extra ?? [])],
     database: t.database,
     client,
     log,
