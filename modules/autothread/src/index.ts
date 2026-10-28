@@ -2,7 +2,7 @@ import { channelRuleHooks, channelRuleListeners, ChannelRuleIndex, defineModule,
 import mediaonly from '@bronto/mediaonly';
 import sticky from '@bronto/sticky';
 import templates, { templatesEvents, templatesGates } from '@bronto/templates';
-import { Events, GatewayIntentBits, PermissionFlagsBits } from 'discord.js';
+import { Events, GatewayIntentBits, PermissionFlagsBits, type GuildMember, type Message, type User } from 'discord.js';
 import { asc, eq } from 'drizzle-orm';
 import { createAutothreadCommand } from './commands.js';
 import * as schema from './db/schema.js';
@@ -10,16 +10,22 @@ import { rules, type Rule } from './db/schema.js';
 import { createRename } from './rename.js';
 import { Threader } from './threader.js';
 
+export interface AutothreadApi {
+  /** Opens the channel rule's thread on `message` as if `author` had posted it; the thread ID, or null when the channel has no enabled rule. Throws when Discord refuses the thread. */
+  threadPost(message: Message, author: GuildMember | User): Promise<string | null>;
+}
+
 /** An autothread module with its own in-memory state; the default export is the one deployments load. */
-export function createAutothreadModule(): ModuleDefinition<Record<string, never>, undefined> {
+export function createAutothreadModule(): ModuleDefinition<Record<string, never>, AutothreadApi> {
   const index = new ChannelRuleIndex<Rule>();
   const rename = createRename();
   const threader = new Threader({ index, rename });
-  return defineModule<Record<string, never>, undefined>({
+  return defineModule<Record<string, never>, AutothreadApi>({
     name: 'autothread',
     docs: new URL('../docs/user/', import.meta.url),
     dependsOn: [templates],
     optionalDependsOn: [sticky, mediaonly],
+    api: (ctx) => ({ threadPost: (message, author) => threader.threadPost(ctx, message, author) }),
     intents: [GatewayIntentBits.GuildMessages],
     db: { schema, migrations: new URL('../drizzle/', import.meta.url) },
     botPermissions: [

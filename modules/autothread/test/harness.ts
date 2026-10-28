@@ -56,7 +56,7 @@ export function autothreadDb(t: TestDatabase, guildId = GUILD): ScopedDb {
 }
 
 /** Templates always load; sticky and mediaonly only when asked for. */
-function modulesFor(options: { sticky?: boolean; mediaonly?: boolean }): LoadedModule[] {
+function modulesFor(options: { sticky?: boolean; mediaonly?: boolean; extra?: LoadedModule[] }): LoadedModule[] {
   const modules: LoadedModule[] = [{ packageName: '@bronto/templates', definition: createTemplatesModule(), config: {} }];
   if (options.sticky === true) {
     modules.push({ packageName: '@bronto/sticky', definition: createStickyModule(), config: stickyConfigSchema.parse({}) });
@@ -64,14 +64,14 @@ function modulesFor(options: { sticky?: boolean; mediaonly?: boolean }): LoadedM
   if (options.mediaonly === true) {
     modules.push({ packageName: '@bronto/mediaonly', definition: createMediaonlyModule(), config: mediaonlyConfigSchema.parse({}) });
   }
-  return [...modules, autothreadModule()];
+  return [...modules, autothreadModule(), ...(options.extra ?? [])];
 }
 
 /** A bot with the autothread module: database migrated and GUILD registered, not yet ready. */
 export async function prepareAutothreadBot(
   t: TestDatabase,
   discord: FakeDiscordHttp,
-  options: { sticky?: boolean; mediaonly?: boolean } = {},
+  options: { sticky?: boolean; mediaonly?: boolean; extra?: LoadedModule[] } = {},
 ): Promise<AutothreadBot> {
   discord.addGuild(GUILD, { community: true });
   for (const id of [CHANNEL, OTHER_CHANNEL]) {
