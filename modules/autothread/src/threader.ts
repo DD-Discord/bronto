@@ -37,8 +37,7 @@ export class Threader {
     if (ctx.modules.optional(mediaonly)?.rejects(message) === true) return;
 
     try {
-      // A bot stays a User so that `open` sees it as one; people go by their server nickname.
-      await this.open(ctx, rule, message, author.bot ? author : (message.member ?? author));
+      await this.open(ctx, rule, message, message.member ?? author);
     } catch (error) {
       ctx.log.warn({ err: error, channelId: message.channelId, messageId: message.id }, 'Starting a thread failed');
     }

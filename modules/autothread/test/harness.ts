@@ -157,6 +157,7 @@ export function fakeMessage(channelId: string, options: FakeMessageOptions = {})
       return [attachmentId, { id: attachmentId, name: `photo${index}.png`, spoiler: false }] as const;
     }),
   );
+  const user = { id: authorId, bot: options.bot ?? false, username: 'mia', displayName: 'Mia' };
   return {
     id,
     channelId,
@@ -169,8 +170,8 @@ export function fakeMessage(channelId: string, options: FakeMessageOptions = {})
     createdTimestamp: Date.now(),
     channel: { name: 'general' },
     guild: { name: 'Test server' },
-    author: { id: authorId, bot: options.bot ?? false, username: 'mia', displayName: 'Mia' },
-    member: { id: authorId, displayName: options.displayName ?? 'Mia Display', permissionsIn: () => ({ has: () => false }) },
+    author: user,
+    member: { id: authorId, user, displayName: options.displayName ?? 'Mia Display', permissionsIn: () => ({ has: () => false }) },
   };
 }
 
