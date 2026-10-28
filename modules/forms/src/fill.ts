@@ -287,7 +287,7 @@ function unanswered(form: Form, draft: Draft): number {
   });
 }
 
-/** Part 1 of the submission as it would be posted; file fields list their files by name. */
+/** The submission's first part as it would be posted, answers included even when the form posts them apart; file fields list their files by name. */
 async function trialReply(ctx: FormsContext, form: Form, draft: Draft, limit: number): Promise<Reply> {
   const fields = form.fields.map((field) => (field.type === 'file' ? ({ ...field, type: 'long' } as unknown as Field) : field));
   const answers: Record<string, Answer> = { ...draft.answers };
@@ -309,7 +309,7 @@ async function trialReply(ctx: FormsContext, form: Form, draft: Draft, limit: nu
     answers,
     files: [],
     uploadLimit: limit,
-    answersApart: form.answersApart,
+    answersApart: false,
   });
   await deleteDraft(ctx, form.id, draft.userId, true);
   return { components: parts[0]!.components, flags: MessageFlags.IsComponentsV2 };

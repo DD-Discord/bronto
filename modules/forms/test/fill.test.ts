@@ -367,4 +367,12 @@ describe('Try it', () => {
     expect(await draftRows(f)).toEqual([]);
     expect(draftFileMessages()).toEqual([]);
   });
+
+  it('shows the answers even when the form posts them apart', async () => {
+    f = await startFilling(t);
+    const form = await formWith(f, [text(1)], { active: false, answersApart: true });
+    const modal = shownModal(await clickPreview(f.fb, f.discord, form.threadId, 'Try it'));
+    const done = await submitModal(f.fb, form.threadId, modal, { fields: { q0000001: 'Trial answer' } });
+    expect(textOf(replyOf(done))).toContain('Trial answer');
+  });
 });
