@@ -156,7 +156,7 @@ describe('submitting', () => {
     const [done] = await submissionRows(f);
     expect(done!.status).toBe('posted');
     expect(done!.partMessageIds).toEqual(posted.map((message) => message.id));
-    expect(textOf(posted[1]!)).toContain(`(2/${posted.length})`);
+    expect(textOf(posted[1]!)).toContain(`part 2 of ${posted.length}`);
     expect(textOf(posted[0]!)).toContain('## Story contest');
     expect(posted.filter((message) => textOf(message).includes('## Story contest'))).toHaveLength(1);
     expect(await draftRows(f)).toEqual([]);

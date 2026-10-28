@@ -1,5 +1,5 @@
 import { defineButton, UserError, type Reply, type ReplyMessage } from '@bronto/core';
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, DiscordAPIError, MessageFlags, RESTJSONErrorCodes, type MessageMentionOptions } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, DiscordAPIError, MessageFlags, RESTJSONErrorCodes, type GuildMember, type MessageMentionOptions, type User } from 'discord.js';
 import { and, eq, gte } from 'drizzle-orm';
 import type { FormsContext } from './context.js';
 import { drafts, forms, submissions, type Answer, type Form, type Submission, type SubmissionFile, type SubmissionRender } from './db/schema.js';
@@ -99,11 +99,22 @@ export async function refusal(ctx: FormsContext, form: Form, userId: string): Pr
   return null;
 }
 
-async function usernameOf(ctx: FormsContext, userId: string): Promise<string> {
+const DEFAULT_AVATAR = 'https://cdn.discordapp.com/embed/avatars/0.png';
+
+/** The submitter as a guild member, else as a user; `author` is null when neither can be fetched. */
+export async function submitterOf(ctx: FormsContext, userId: string): Promise<{ author: GuildMember | User | null; username: string; avatarUrl: string }> {
   try {
-    return (await ctx.client.users.fetch(userId)).username;
+    const guild = await ctx.client.guilds.fetch(ctx.guildId);
+    const member = await guild.members.fetch(userId);
+    return { author: member, username: member.user.username, avatarUrl: member.displayAvatarURL() };
   } catch {
-    return userId;
+    // Not a member any more; fall back to the account.
+  }
+  try {
+    const user = await ctx.client.users.fetch(userId);
+    return { author: user, username: user.username, avatarUrl: user.displayAvatarURL() };
+  } catch {
+    return { author: null, username: userId, avatarUrl: DEFAULT_AVATAR };
   }
 }
 
@@ -147,10 +158,12 @@ export async function submit(ctx: FormsContext, formId: string, userId: string, 
     return refuse(`${tooLarge(big.name, limit)} Press Try again to upload a smaller file.`, true);
   }
   const submittedAt = new Date();
+  const { username, avatarUrl } = await submitterOf(ctx, userId);
   const parts = renderSubmission({
     formName: form.name,
     userId,
-    username: await usernameOf(ctx, userId),
+    username,
+    avatarUrl,
     submittedAt,
     pingUserIds: form.pingUserIds,
     pingRoleIds: form.pingRoleIds,
@@ -228,10 +241,15 @@ function failure(ctx: FormsContext, form: Form, submissionId: string, reason: st
   };
 }
 
+/** Matched by class name too: with two copies of discord.js loaded, `instanceof` misses errors thrown by the other copy. */
+function isApiError(error: unknown): error is DiscordAPIError {
+  return error instanceof DiscordAPIError || (error instanceof Error && error.constructor.name === 'DiscordAPIError');
+}
+
 function reasonOf(error: unknown): string {
   if (error instanceof MissingFileError) return `${error.file.name} is no longer available.`;
-  if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return "the submissions channel or the form's post no longer exists.";
-  if (error instanceof DiscordAPIError) return `Discord answered "${error.message}".`;
+  if (isApiError(error) && error.code === RESTJSONErrorCodes.UnknownChannel) return "the submissions channel or the form's post no longer exists.";
+  if (isApiError(error)) return `Discord answered "${error.message}".`;
   return 'something went wrong.';
 }
 

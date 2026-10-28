@@ -22,7 +22,7 @@ import { deleteDraft, DRAFT_TTL_MS, isExpired, loadDraft, releaseFiles, storeFil
 import { pages, PAGE_SIZE, type Field } from './model.js';
 import { formById, formForThread, requireEditor } from './permissions.js';
 import { renderSubmission } from './render.js';
-import { hasSubmitted, postingRefusal, queued, refusal, submit, tooLarge } from './submit.js';
+import { hasSubmitted, postingRefusal, queued, refusal, submit, submitterOf, tooLarge } from './submit.js';
 
 // Discord's limit for modal titles.
 const MAX_TITLE = 45;
@@ -296,11 +296,12 @@ async function trialReply(ctx: FormsContext, form: Form, draft: Draft, limit: nu
     const names = draft.files.filter((file) => file.fieldId === field.id).map((file) => `• ${file.name}`);
     answers[field.id] = { text: names.join('\n') };
   }
-  const username = await ctx.client.users.fetch(draft.userId).then((user) => user.username, () => draft.userId);
+  const { username, avatarUrl } = await submitterOf(ctx, draft.userId);
   const parts = renderSubmission({
     formName: form.name,
     userId: draft.userId,
     username,
+    avatarUrl,
     submittedAt: new Date(),
     pingUserIds: form.pingUserIds,
     pingRoleIds: form.pingRoleIds,

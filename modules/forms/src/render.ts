@@ -13,6 +13,8 @@ export interface RenderInput {
   formName: string;
   userId: string;
   username: string;
+  /** The submitter's avatar, shown beside the details. */
+  avatarUrl: string;
   submittedAt: Date;
   pingUserIds: string[];
   pingRoleIds: string[];
@@ -89,22 +91,23 @@ function answerText(answer: Answer | undefined): string | null {
 /** Turns one submission into Components V2 message parts that each stay within Discord's limits. */
 export function renderSubmission(input: RenderInput): RenderedPart[] {
   const { formName, userId } = input;
-  const followUpHeader = (n: number, total: number) => `-# ${formName} — <@${userId}> (${n}/${total})`;
+  const followUpHeader = (n: number, total: number) => `-# ${formName} · from <@${userId}> · part ${n} of ${total}`;
   const reserved = followUpHeader(99, 99).length;
 
   const firstHeader = [
     `## ${formName}`,
-    `<@${userId}> · ${input.username} · ${userId}`,
-    `<t:${Math.floor(input.submittedAt.getTime() / 1000)}:F>`,
-    ...(input.pingUserIds.length + input.pingRoleIds.length > 0
-      ? [`-# ${[...input.pingRoleIds.map((id) => `<@&${id}>`), ...input.pingUserIds.map((id) => `<@${id}>`)].join(' ')}`]
-      : []),
+    `**From** <@${userId}> (${input.username})`,
+    `**Sent** <t:${Math.floor(input.submittedAt.getTime() / 1000)}:F>`,
   ].join('\n');
+  const mentions = [...input.pingRoleIds.map((id) => `<@&${id}>`), ...input.pingUserIds.map((id) => `<@${id}>`)];
+  const smallLine = `-# ${mentions.length > 0 ? `For ${mentions.join(' ')} · ` : ''}User ID ${userId}`;
+  // Part 1: container, section, its text and thumbnail, the small line and the separator.
+  const firstComponents = 6;
 
   const parts: Part[] = [];
   let cur!: Part;
   const newPart = () => {
-    cur = { kids: [], chars: parts.length === 0 ? firstHeader.length : reserved, components: 2, files: [], bytes: 0 };
+    cur = { kids: [], chars: parts.length === 0 ? firstHeader.length + smallLine.length : reserved, components: parts.length === 0 ? firstComponents : 2, files: [], bytes: 0 };
     parts.push(cur);
   };
   newPart();
@@ -188,9 +191,20 @@ export function renderSubmission(input: RenderInput): RenderedPart[] {
 
   const total = parts.length;
   return parts.map((part, index) => {
-    const header = index === 0 ? firstHeader : followUpHeader(index + 1, total);
+    const lead =
+      index === 0
+        ? [
+            {
+              type: ComponentType.Section,
+              components: [{ type: ComponentType.TextDisplay, content: firstHeader }],
+              accessory: { type: ComponentType.Thumbnail, media: { url: input.avatarUrl } },
+            },
+            { type: ComponentType.TextDisplay, content: smallLine },
+            { type: ComponentType.Separator },
+          ]
+        : [{ type: ComponentType.TextDisplay, content: followUpHeader(index + 1, total) }];
     const children = [
-      { type: ComponentType.TextDisplay, content: header },
+      ...lead,
       ...part.kids.map((kid) =>
         kid.kind === 'text'
           ? { type: ComponentType.TextDisplay, content: kid.content }
