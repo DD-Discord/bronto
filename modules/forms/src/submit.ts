@@ -241,15 +241,10 @@ function failure(ctx: FormsContext, form: Form, submissionId: string, reason: st
   };
 }
 
-/** Matched by class name too: with two copies of discord.js loaded, `instanceof` misses errors thrown by the other copy. */
-function isApiError(error: unknown): error is DiscordAPIError {
-  return error instanceof DiscordAPIError || (error instanceof Error && error.constructor.name === 'DiscordAPIError');
-}
-
 function reasonOf(error: unknown): string {
   if (error instanceof MissingFileError) return `${error.file.name} is no longer available.`;
-  if (isApiError(error) && error.code === RESTJSONErrorCodes.UnknownChannel) return "the submissions channel or the form's post no longer exists.";
-  if (isApiError(error)) return `Discord answered "${error.message}".`;
+  if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return "the submissions channel or the form's post no longer exists.";
+  if (error instanceof DiscordAPIError) return `Discord answered "${error.message}".`;
   return 'something went wrong.';
 }
 
