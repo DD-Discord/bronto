@@ -315,6 +315,16 @@ async function applyRules(ctx: FormsContext, part1: Message, userId: string, app
   return threadId === null ? null : sendableChannel(ctx, threadId);
 }
 
+/** The channel, fetched fresh; null when it no longer exists. */
+async function fetchChannel(ctx: FormsContext, id: string): Promise<Channel | null> {
+  try {
+    return await ctx.client.channels.fetch(id, { force: true });
+  } catch (error) {
+    if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return null;
+    throw error;
+  }
+}
+
 /** The message, fetched fresh; null when it isn't in the channel (deleted, or never posted there). */
 async function messageIn(channel: SendableChannels, messageId: string): Promise<Message | null> {
   try {
@@ -327,27 +337,26 @@ async function messageIn(channel: SendableChannels, messageId: string): Promise<
 
 /**
  * Where a retry posts the parts after part 1, so that a submission is never split between a thread and the channel:
- * - the thread on part 1 (a thread started on a message has its ID), reopened if archived, when part 2 is in it or
- *   isn't posted yet;
- * - while part 1 is the only part posted, a thread the channel's rule opens now;
- * - otherwise the channel, also when part 1 was deleted.
+ * - once part 2 is posted, the channel or thread it went to (`restChannelId`), reopened if archived; the channel when
+ *   that no longer exists;
+ * - while part 1 is the only part posted: the thread on part 1 (a thread started on a message has its ID), reopened
+ *   if archived; else a thread the channel's rule opens now when part 1 still exists; else the channel.
  */
 async function retryTarget(ctx: FormsContext, channel: SendableChannels, submission: Submission): Promise<SendableChannels> {
-  const [part1Id, part2Id] = submission.partMessageIds as [string, string | undefined];
-  let thread: Channel | null = null;
-  try {
-    thread = await ctx.client.channels.fetch(part1Id, { force: true });
-  } catch (error) {
-    if (!(error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel)) throw error;
+  if (submission.restChannelId !== null) {
+    const rest = await fetchChannel(ctx, submission.restChannelId);
+    if (rest === null || !rest.isSendable()) return channel;
+    if (rest.isThread() && rest.archived === true) await rest.setArchived(false);
+    return rest;
   }
+  const part1Id = submission.partMessageIds[0]!;
+  const thread = await fetchChannel(ctx, part1Id);
   if (thread !== null) {
     if (!thread.isThread() || !thread.isSendable()) return channel;
-    // A thread opened on part 1 after part 2 went to the channel doesn't get the rest.
-    if (part2Id !== undefined && (await messageIn(thread, part2Id)) === null) return channel;
     if (thread.archived === true) await thread.setArchived(false);
     return thread;
   }
-  if (part2Id !== undefined || ctx.modules.optional(autothread) === null) return channel;
+  if (ctx.modules.optional(autothread) === null) return channel;
   const part1 = await messageIn(channel, part1Id);
   if (part1 === null) return channel;
   return (await applyRules(ctx, part1, submission.userId, { react: false, thread: true })) ?? channel;
@@ -378,7 +387,8 @@ export async function postSubmission(ctx: FormsContext, submissionId: string, li
     let rest = start === 0 || inThread ? channel : await retryTarget(ctx, channel, submission);
     for (const [index, part] of parts.entries()) {
       if (index < start) continue;
-      const message = await (index === 0 ? channel : rest).send({
+      const target = index === 0 ? channel : rest;
+      const message = await target.send({
         components: part.components,
         flags: MessageFlags.IsComponentsV2,
         files: part.files.map((file) => ({ attachment: data.get(file.key)!, name: file.name })),
@@ -393,6 +403,7 @@ export async function postSubmission(ctx: FormsContext, submissionId: string, li
           .update(submissions)
           .set({
             partMessageIds: [...current.partMessageIds, message.id],
+            ...(index === 1 ? { restChannelId: target.id } : {}),
             files: current.files.map((file) => (posted.has(file.key) ? { ...file, messageId: message.id, attachmentId: posted.get(file.key)! } : file)),
           })
           .where(eq(submissions.id, submissionId));

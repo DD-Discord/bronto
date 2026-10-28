@@ -609,6 +609,30 @@ describe('threads and reactions', () => {
     expect(threadRequests()).toEqual([]);
   });
 
+  it('a retry after part 2 was deleted from the thread keeps the rest in the thread', async () => {
+    f = await startFilling(t, [], { postRules: true });
+    await threadRule();
+    const form = await formWith(f, [...longFields(), text(4, { type: 'long' })]);
+    onNextPost(SUBMIT, (id) => failNth(id, 3));
+    const failed = await submitPage(f, await openModal(f, await openerId(f, form)), { fields: { ...longAnswers, q0000004: long('d') } });
+    expect(contentOf(failed)).toContain("couldn't post");
+    const [first] = messagesIn(f, SUBMIT);
+    const [part2, part3] = messagesIn(f, first!.id);
+    expect(messagesIn(f, first!.id)).toHaveLength(2);
+    f.discord.messages.delete(part2!.id);
+
+    const retried = await clickIn(f, replyOf(failed), 'Try again');
+    expect(contentOf(retried)).toContain('Submitted to **Story contest**.');
+    expect(messagesIn(f, SUBMIT)).toHaveLength(1);
+    const inThread = messagesIn(f, first!.id);
+    expect(inThread.map((message) => message.id)).toContain(part3!.id);
+    expect(inThread).toHaveLength(2);
+    const [row] = await submissionRows(f);
+    expect(row!.partMessageIds).toHaveLength(row!.render.parts.length);
+    expect(row!.partMessageIds.slice(0, 3)).toEqual([first!.id, part2!.id, part3!.id]);
+    expect(row!.restChannelId).toBe(first!.id);
+  });
+
   it('a retry after part 1 was deleted posts the rest in the channel', async () => {
     f = await startFilling(t, [], { postRules: true });
     await threadRule();

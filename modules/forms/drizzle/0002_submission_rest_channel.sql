@@ -1,0 +1,1 @@
+ALTER TABLE "forms"."submissions" ADD COLUMN "rest_channel_id" text;

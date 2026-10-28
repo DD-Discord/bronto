@@ -129,6 +129,8 @@ export const submissions = guildTable(
     channelId: text('channel_id').notNull(),
     status: text('status').$type<'posting' | 'posted'>().notNull(),
     partMessageIds: text('part_message_ids').array().notNull().default([]),
+    /** The channel or thread that the parts after the first go to; null until part 2 is posted. */
+    restChannelId: text('rest_channel_id'),
     render: jsonb('render').$type<SubmissionRender>().notNull(),
     /** Copied from the form at submit time: the unique index lets such a member submit once. */
     once: boolean('once').notNull(),
