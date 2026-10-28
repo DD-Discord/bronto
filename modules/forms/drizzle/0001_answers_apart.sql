@@ -1,0 +1,1 @@
+ALTER TABLE "forms"."forms" ADD COLUMN "answers_apart" boolean DEFAULT false NOT NULL;

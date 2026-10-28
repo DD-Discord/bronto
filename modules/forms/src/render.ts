@@ -23,6 +23,8 @@ export interface RenderInput {
   files: { key: string; fieldId: string; name: string; size: number }[];
   /** Bytes of attachments per message. */
   uploadLimit: number;
+  /** Starts the answers in part 2, so part 1 holds only the details. */
+  answersApart: boolean;
 }
 
 export interface RenderedPart {
@@ -173,10 +175,18 @@ export function renderSubmission(input: RenderInput): RenderedPart[] {
     }
   };
 
+  // Opens the answers' part just before the first one, so nothing answered leaves no empty part.
+  let apart = input.answersApart;
+  const startAnswers = () => {
+    if (apart) newPart();
+    apart = false;
+  };
+
   for (const field of input.fields) {
     if (field.type === 'file') {
       const files = input.files.filter((f) => f.fieldId === field.id);
       if (files.length === 0) continue;
+      startAnswers();
       const title = label(field.label);
       const first = files[0]!;
       const need = IMAGE.test(first.name) ? 2 : 1;
@@ -185,7 +195,9 @@ export function renderSubmission(input: RenderInput): RenderedPart[] {
       addFiles(field.label, files);
     } else {
       const body = answerText(input.answers[field.id]);
-      if (body !== null) addBody(field.label, body);
+      if (body === null) continue;
+      startAnswers();
+      addBody(field.label, body);
     }
   }
 

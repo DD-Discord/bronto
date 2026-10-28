@@ -58,6 +58,8 @@ export const forms = guildTable(formsSchema, 'forms', {
   pingRoleIds: text('ping_role_ids').array().notNull().default([]),
   allowedRoleIds: text('allowed_role_ids').array().notNull().default([]),
   oncePerMember: boolean('once_per_member').notNull().default(true),
+  /** Posts the answers in their own message, after the details. */
+  answersApart: boolean('answers_apart').notNull().default(false),
   fields: jsonb('fields').$type<Field[]>().notNull().default([]),
   /** IDs of fields deleted from the form; their answers stay in old submissions. */
   removedFieldIds: text('removed_field_ids').array().notNull().default([]),

@@ -35,6 +35,7 @@ export const settingsInputOf = (form: Form): SettingsInput => ({
   allowedRoleIds: form.allowedRoleIds,
   active: form.active,
   oncePerMember: form.oncePerMember,
+  answersApart: form.answersApart,
 });
 
 /**
@@ -58,11 +59,12 @@ export function settingsModalFor(ctx: FormsContext, form: Form, input: SettingsI
   const options = new CheckboxGroupBuilder()
     .setCustomId('options')
     .setMinValues(0)
-    .setMaxValues(2)
+    .setMaxValues(3)
     .setRequired(false)
     .addOptions(
       { label: 'Active', value: 'active', description: 'Members can fill in the form', default: input.active },
       { label: 'One submission per member', value: 'once', default: input.oncePerMember },
+      { label: 'Answers in their own message', value: 'apart', description: 'Details first, answers below or in the thread', default: input.answersApart },
     );
   return new ModalBuilder()
     .setCustomId(ctx.customId(settingsModalDefinition, inPlace ? [form.id, 'edit'] : [form.id]))
@@ -136,6 +138,7 @@ export const settingsModalDefinition = defineModal({
       allowedRoleIds: [...(fields.getSelectedRoles('roles')?.keys() ?? [])],
       active: chosen.includes('active'),
       oncePerMember: chosen.includes('once'),
+      answersApart: chosen.includes('apart'),
     };
     const draft: Draft = { kind: 'settings', input };
     try {
@@ -151,6 +154,7 @@ export const settingsModalDefinition = defineModal({
         pingRoleIds: input.pingRoleIds,
         allowedRoleIds: input.allowedRoleIds,
         oncePerMember: input.oncePerMember,
+        answersApart: input.answersApart,
       }));
       await answer({ content: savedMessage('Settings saved.', postUpdated), components: [] });
     } catch (error) {

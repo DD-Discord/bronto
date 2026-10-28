@@ -171,6 +171,7 @@ export async function submit(ctx: FormsContext, formId: string, userId: string, 
     answers: draft.answers,
     files: kept,
     uploadLimit: limit,
+    answersApart: form.answersApart,
   });
   const [row] = await ctx.db.run(async (tx) =>
     tx

@@ -112,6 +112,7 @@ const settingsSchema = z.strictObject({
   pingRoleIds: z.array(snowflake).max(MAX_PINGS),
   allowedRoleIds: z.array(snowflake).max(MAX_PINGS),
   oncePerMember: z.boolean(),
+  answersApart: z.boolean().default(false),
 }).refine((s) => s.pingUserIds.length + s.pingRoleIds.length <= MAX_PING_TOTAL, {
   path: ['pingUserIds'],
   message: `at most ${MAX_PING_TOTAL} pings (users and roles combined)`,

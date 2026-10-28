@@ -309,6 +309,7 @@ async function trialReply(ctx: FormsContext, form: Form, draft: Draft, limit: nu
     answers,
     files: [],
     uploadLimit: limit,
+    answersApart: form.answersApart,
   });
   await deleteDraft(ctx, form.id, draft.userId, true);
   return { components: parts[0]!.components, flags: MessageFlags.IsComponentsV2 };

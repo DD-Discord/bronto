@@ -17,6 +17,7 @@ export interface SettingsInput {
   allowedRoleIds: string[];
   active: boolean;
   oncePerMember: boolean;
+  answersApart: boolean;
 }
 
 /** What a member typed into a modal that [Try again] fills back in. */

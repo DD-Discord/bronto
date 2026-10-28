@@ -112,6 +112,14 @@ describe('export and import', () => {
     expect(row.removedFieldIds).toEqual(['aaaaaaa1']);
   });
 
+  it('exports answersApart and imports a file without it as false', async () => {
+    const form = await configured('Story contest', { answersApart: true });
+    expect(JSON.parse(await exported(form)).settings.answersApart).toBe(true);
+    const old = JSON.stringify({ version: 1, settings: { name: 'Story contest', active: true, channelId: TEXT, pingUserIds: [], pingRoleIds: [], allowedRoleIds: [], oncePerMember: false }, fields: [] });
+    await importText(form, old);
+    expect(await storedForm(t, form.id)).toMatchObject({ answersApart: false });
+  });
+
   it('records the fields an import replaces as removed', async () => {
     const form = await configured('Story contest');
     const bare = JSON.stringify({ version: 1, settings: { name: 'Story contest', active: false, channelId: null, pingUserIds: [], pingRoleIds: [], allowedRoleIds: [], oncePerMember: true }, fields: [] });

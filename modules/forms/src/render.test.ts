@@ -20,6 +20,7 @@ const base = (over: Partial<RenderInput>): RenderInput => ({
   answers: {},
   files: [],
   uploadLimit: 10_000_000,
+  answersApart: false,
   ...over,
 });
 
@@ -232,5 +233,20 @@ describe('renderSubmission', () => {
     const [long] = renderSubmission(base({ fields: [field('fff00001', 'file')], files: [{ key: 'k', fieldId: 'fff00001', name: `${'n'.repeat(300)}.png`, size: 1 }] }));
     expect(long!.files[0]!.name.length).toBeLessThanOrEqual(100);
     expect(long!.files[0]!.name.endsWith('.png')).toBe(true);
+  });
+
+  it('puts only the details in part 1 when answers are apart', () => {
+    const input = { fields: [field('aaaaaaaa')], answers: { aaaaaaaa: { text: 'Once upon a time' } } };
+    const parts = renderSubmission(base({ ...input, answersApart: true }));
+    expect(parts).toHaveLength(2);
+    expect(texts(parts[0]!).join('\n')).not.toContain('Once upon a time');
+    expect(texts(parts[1]!)).toEqual(['-# Story contest · from <@111111111111111111> · part 2 of 2', '**Field aaaaaaaa**\nOnce upon a time']);
+    expect(renderSubmission(base(input))).toHaveLength(1);
+  });
+
+  it('posts one part when answers are apart but nothing was answered', () => {
+    const parts = renderSubmission(base({ fields: [field('aaaaaaaa')], answers: {}, answersApart: true }));
+    expect(parts).toHaveLength(1);
+    expect(texts(parts[0]!).join('\n')).not.toContain('part 1');
   });
 });

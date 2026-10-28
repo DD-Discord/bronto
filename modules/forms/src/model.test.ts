@@ -13,6 +13,7 @@ const settings: FormSettings = {
   pingRoleIds: ['323456789012345678'],
   allowedRoleIds: [],
   oncePerMember: true,
+  answersApart: false,
 };
 
 const fields: Field[] = [
@@ -134,5 +135,10 @@ describe('export and import', () => {
   it('rejects a malformed ping id', () => {
     const bad = { ...settings, pingUserIds: ['abc'] };
     expect(() => importForm(JSON.stringify({ version: 1, settings: bad, fields }))).toThrow(/settings\.pingUserIds/);
+  });
+
+  it('imports settings without answersApart as false', () => {
+    const { answersApart: _omitted, ...old } = settings;
+    expect(importForm(JSON.stringify({ version: 1, settings: old, fields })).settings.answersApart).toBe(false);
   });
 });
