@@ -2,7 +2,7 @@ import { channelRuleHooks, channelRuleListeners, defineModule, on, type ModuleDe
 import sticky from '@bronto/sticky';
 import { Events, GatewayIntentBits, PermissionFlagsBits, type Message } from 'discord.js';
 import { rejection } from './check.js';
-import { cleanUpRemovedRule, createMediaonlyCommand } from './commands.js';
+import { createMediaonlyCommand, mediaonlyLogChannel } from './commands.js';
 import { mediaonlyConfigSchema, type MediaonlyConfig } from './config.js';
 import * as schema from './db/schema.js';
 import { rules } from './db/schema.js';
@@ -21,6 +21,7 @@ export interface MediaonlyApi {
 /** A mediaonly module with its own in-memory state; the default export is the one deployments load. */
 export function createMediaonlyModule(): ModuleDefinition<MediaonlyConfig, MediaonlyApi> {
   const index = new RuleIndex();
+  const log = mediaonlyLogChannel();
   const enforcer = new Enforcer({ index });
   return defineModule<MediaonlyConfig, MediaonlyApi>({
     name: 'mediaonly',
@@ -40,9 +41,9 @@ export function createMediaonlyModule(): ModuleDefinition<MediaonlyConfig, Media
     ],
     listeners: [
       on(Events.MessageCreate, (ctx, message) => enforcer.onMessage(ctx, message)),
-      ...channelRuleListeners({ table: rules, index, onRemoved: cleanUpRemovedRule }),
+      ...channelRuleListeners({ table: rules, index, onRemoved: log.onRemoved }),
     ],
-    commands: { mediaonly: createMediaonlyCommand({ index }) },
+    commands: { mediaonly: createMediaonlyCommand({ index, log }) },
     hooks: channelRuleHooks({ table: rules, index, onStopped: (ctx) => enforcer.stopGuild(ctx.guildId) }),
   });
 }
