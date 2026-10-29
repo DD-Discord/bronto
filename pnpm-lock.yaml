@@ -187,6 +187,9 @@ importers:
       '@bronto/mediaonly':
         specifier: workspace:*
         version: link:modules/mediaonly
+      '@bronto/move':
+        specifier: workspace:*
+        version: link:modules/move
       '@bronto/sticky':
         specifier: workspace:*
         version: link:modules/sticky
