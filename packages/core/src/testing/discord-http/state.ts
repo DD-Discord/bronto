@@ -60,13 +60,13 @@ export class DiscordState {
   }
   /**
    * Adds a message. `referenceId` makes it a reply, `snapshots` a forward, `threadId` attaches the thread it started,
-   * and `poll` a one-answer poll.
+   * and `poll` a one-answer poll. Snapshots take the same embed, sticker, component and poll fields.
    */
   addMessage(channelId: string, id: string, options: {
     content?: string; authorId?: string; webhookId?: string | null; embeds?: APIEmbed[]; attachmentCount?: number; files?: NewFile[];
     reactions?: { emoji: { id: string | null; name: string }; count: number }[]; referenceId?: string; poll?: boolean;
     stickers?: { id: string; name: string; format: number }[]; components?: unknown[]; flags?: number;
-    type?: MessageType; snapshots?: { content: string; files?: NewFile[] }[]; threadId?: string; timestamp?: string;
+    type?: MessageType; snapshots?: SnapshotSpec[]; threadId?: string; timestamp?: string;
   } = {}): void {
     const authorId = options.authorId ?? this.botId;
     if (!this.users.has(authorId)) this.addUser(authorId);
@@ -76,13 +76,14 @@ export class DiscordState {
     const guildId = this.guildOf(channelId);
     if (options.reactions) extra.reactions = options.reactions.map(({ emoji, count }) => ({ emoji, count, count_details: { burst: 0, normal: count }, me: false, me_burst: false, burst_colors: [] }));
     if (options.referenceId) extra.message_reference = { type: 0, message_id: options.referenceId, channel_id: channelId, guild_id: guildId };
-    if (options.poll) extra.poll = { question: { text: 'Synthetic poll' }, answers: [{ answer_id: 1, poll_media: { text: 'Yes' } }], expiry: null, allow_multiselect: false, layout_type: 1 };
-    if (options.stickers) extra.sticker_items = options.stickers.map(({ id: stickerId, name, format }) => ({ id: stickerId, name, format_type: format }));
-    if (options.components) extra.components = options.components;
+    Object.assign(extra, contentExtras(options));
     if (options.snapshots) {
       extra.message_reference = { type: 1, message_id: this.newId(), channel_id: channelId, guild_id: guildId };
       extra.message_snapshots = options.snapshots.map((snapshot) => ({
-        message: { type: MessageType.Default, content: snapshot.content, embeds: [], attachments: (snapshot.files ?? []).map((file) => this.addFile(channelId, file)), timestamp, edited_timestamp: null, flags: 0, mentions: [], mention_roles: [] },
+        message: {
+          type: MessageType.Default, content: snapshot.content, embeds: snapshot.embeds ?? [], attachments: (snapshot.files ?? []).map((file) => this.addFile(channelId, file)),
+          timestamp, edited_timestamp: null, flags: snapshot.flags ?? 0, mentions: [], mention_roles: [], ...contentExtras(snapshot),
+        },
       }));
     }
     if (options.threadId) extra.thread = this.channels.get(options.threadId) ?? { id: options.threadId, guild_id: guildId, parent_id: channelId, type: ChannelType.PublicThread, name: 'synthetic-thread', owner_id: this.botId, thread_metadata: { archived: false, locked: false, auto_archive_duration: 60, archive_timestamp: timestamp } };
@@ -164,6 +165,20 @@ export class DiscordState {
     this.addMessage(channelId, messageId, message);
     this.templates.add(messageId);
   }
+}
+
+/** What a forwarded message carries in the fake. */
+export interface SnapshotSpec {
+  content: string; files?: NewFile[]; embeds?: APIEmbed[]; stickers?: { id: string; name: string; format: number }[]; components?: unknown[]; poll?: boolean; flags?: number;
+}
+
+/** The poll, sticker and component fields of a message or snapshot as Discord serves them. */
+function contentExtras(options: { poll?: boolean; stickers?: { id: string; name: string; format: number }[]; components?: unknown[] }): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
+  if (options.poll) extra.poll = { question: { text: 'Synthetic poll' }, answers: [{ answer_id: 1, poll_media: { text: 'Yes' } }], expiry: null, allow_multiselect: false, layout_type: 1 };
+  if (options.stickers) extra.sticker_items = options.stickers.map(({ id: stickerId, name, format }) => ({ id: stickerId, name, format_type: format }));
+  if (options.components) extra.components = options.components;
+  return extra;
 }
 
 export interface WebhookOptions { applicationId?: string | null; name?: string }
