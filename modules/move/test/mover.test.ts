@@ -230,7 +230,7 @@ describe('running a move', () => {
   it('a failed download keeps the message with the too-large notice', async () => {
     await start();
     // The fake CDN doesn't serve sticker images, so the download fails.
-    const [id] = addHistory(discord, SOURCE, [{ content: 'hi', stickers: [{ id: '100000000000000310', name: 'wave', format: 1, guildId: GUILD }] }]);
+    const [id] = addHistory(discord, SOURCE, [{ content: 'hi', stickers: [{ id: '100000000000000310', name: 'wave', format: 1 }] }]);
     const pressed = await move(id!, null);
     expect(sentContents()).toEqual([`hi\n-# Sticker: wave\n-# Attachment too large to move: [original](<${messageLink(SOURCE, id!)}>)`]);
     expect(discord.sent[0]!.files).toEqual([]);

@@ -119,13 +119,20 @@ export function fitFiles(files: RepostFile[], limit: number, used = 0): { fit: R
   return { fit, dropped };
 }
 
+const STICKER_EXTENSIONS: Partial<Record<StickerFormatType, string>> = {
+  [StickerFormatType.PNG]: 'png',
+  [StickerFormatType.APNG]: 'png',
+  [StickerFormatType.GIF]: 'gif',
+};
+
 function stickerImage(message: Message): { lines: string[]; files: RepostFile[] } {
   const lines: string[] = [];
   const files: RepostFile[] = [];
   for (const sticker of message.stickers.values()) {
     lines.push(`-# Sticker: ${sticker.name}`);
-    const extension = { [StickerFormatType.PNG]: 'png', [StickerFormatType.APNG]: 'png', [StickerFormatType.GIF]: 'gif' }[sticker.format as number];
-    if (sticker.guildId !== null && extension !== undefined) files.push({ url: sticker.url, name: `${sticker.name}.${extension}`, spoiler: false, size: 0 });
+    // Message stickers carry no guild, so standard and custom ones are alike; Lottie stickers have no image.
+    const extension = STICKER_EXTENSIONS[sticker.format];
+    if (extension !== undefined) files.push({ url: sticker.url, name: `${sticker.name}.${extension}`, spoiler: false, size: 0 });
   }
   return { lines, files };
 }

@@ -65,7 +65,7 @@ export class DiscordState {
   addMessage(channelId: string, id: string, options: {
     content?: string; authorId?: string; webhookId?: string | null; embeds?: APIEmbed[]; attachmentCount?: number; files?: NewFile[];
     reactions?: { emoji: { id: string | null; name: string }; count: number }[]; referenceId?: string; poll?: boolean;
-    stickers?: { id: string; name: string; format: number; guildId?: string }[]; components?: unknown[]; flags?: number;
+    stickers?: { id: string; name: string; format: number }[]; components?: unknown[]; flags?: number;
     type?: MessageType; snapshots?: { content: string; files?: NewFile[] }[]; threadId?: string; timestamp?: string;
   } = {}): void {
     const authorId = options.authorId ?? this.botId;
@@ -77,7 +77,7 @@ export class DiscordState {
     if (options.reactions) extra.reactions = options.reactions.map(({ emoji, count }) => ({ emoji, count, count_details: { burst: 0, normal: count }, me: false, me_burst: false, burst_colors: [] }));
     if (options.referenceId) extra.message_reference = { type: 0, message_id: options.referenceId, channel_id: channelId, guild_id: guildId };
     if (options.poll) extra.poll = { question: { text: 'Synthetic poll' }, answers: [{ answer_id: 1, poll_media: { text: 'Yes' } }], expiry: null, allow_multiselect: false, layout_type: 1 };
-    if (options.stickers) extra.sticker_items = options.stickers.map(({ id: stickerId, name, format, guildId: sticker_guild }) => ({ id: stickerId, name, format_type: format, ...(sticker_guild ? { guild_id: sticker_guild } : {}) }));
+    if (options.stickers) extra.sticker_items = options.stickers.map(({ id: stickerId, name, format }) => ({ id: stickerId, name, format_type: format }));
     if (options.components) extra.components = options.components;
     if (options.snapshots) {
       extra.message_reference = { type: 1, message_id: this.newId(), channel_id: channelId, guild_id: guildId };

@@ -340,7 +340,7 @@ describe('message listing and bulk delete', () => {
     http.addMessage(CHANNEL, reply, {
       referenceId: original, poll: true, flags: 4, components: [{ type: 1, components: [] }],
       reactions: [{ emoji: { id: null, name: '\u{1F44D}' }, count: 2 }],
-      stickers: [{ id: '100000000000000300', name: 'wave', format: 1, guildId: GUILD }],
+      stickers: [{ id: '100000000000000300', name: 'wave', format: 1 }],
     });
     http.addMessage(CHANNEL, forward, { snapshots: [{ content: 'inner', files: [{ filename: 'a.txt', data: 'abc' }] }] });
     const { client } = await createNativeTestClient(http);
@@ -358,7 +358,8 @@ describe('message listing and bulk delete', () => {
       expect(r!.flags.bitfield).toBe(4);
       expect(r!.components).toHaveLength(1);
       expect(r!.reactions.cache.first()).toMatchObject({ count: 2 });
-      expect(r!.stickers.first()).toMatchObject({ name: 'wave', guildId: GUILD });
+      // Message sticker items carry no guild, as on Discord.
+      expect(r!.stickers.first()).toMatchObject({ name: 'wave', guildId: null });
       expect(f!.reference?.type).toBe(1);
       expect(f!.messageSnapshots.first()?.content).toBe('inner');
       expect(f!.messageSnapshots.first()?.attachments.first()?.name).toBe('a.txt');

@@ -1,5 +1,5 @@
 import { createNativeTestClient, FakeDiscordHttp } from '@bronto/core/testing';
-import type { GuildTextBasedChannel, Message } from 'discord.js';
+import { StickerFormatType, type GuildTextBasedChannel, type Message } from 'discord.js';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { displayName, renderMessage, replyLine, splitContent, webhookName, type ReplyTarget } from '../src/render.js';
 import { addHistory, addMoveFixtures, MEMBER, SOURCE } from './harness.js';
@@ -120,15 +120,25 @@ describe('renderMessage', () => {
     expect(parts[0]!.embeds).toMatchObject([{ title: 'Rich' }]);
   });
 
-  it('writes the sticker line', async () => {
-    const parts = await render({ content: 'hi', stickers: [{ id: '100000000000000500', name: 'Wave', format: 1 }] });
+  it('writes the sticker line, without an image for a Lottie sticker', async () => {
+    const parts = await render({ content: 'hi', stickers: [{ id: '100000000000000500', name: 'Wave', format: StickerFormatType.Lottie }] });
     expect(parts[0]!.content).toBe('hi\n-# Sticker: Wave');
     expect(parts[0]!.files).toEqual([]);
   });
 
-  it('attaches the image of a custom sticker', async () => {
-    const parts = await render({ stickers: [{ id: '100000000000000500', name: 'Wave', format: 1, guildId: '100000000000000001' }] });
-    expect(parts[0]!.files).toMatchObject([{ name: 'Wave.png', spoiler: false }]);
+  it('attaches the image of a PNG, APNG or GIF sticker', async () => {
+    const parts = await render({
+      stickers: [
+        { id: '100000000000000500', name: 'Wave', format: StickerFormatType.PNG },
+        { id: '100000000000000501', name: 'Spin', format: StickerFormatType.APNG },
+        { id: '100000000000000502', name: 'Dance', format: StickerFormatType.GIF },
+      ],
+    });
+    expect(parts[0]!.files).toMatchObject([
+      { url: expect.stringContaining('/stickers/100000000000000500.png'), name: 'Wave.png', spoiler: false },
+      { url: expect.stringContaining('/stickers/100000000000000501.png'), name: 'Spin.png' },
+      { url: expect.stringContaining('/stickers/100000000000000502.gif'), name: 'Dance.gif' },
+    ]);
   });
 
   it('quotes forwards under -# Forwarded', async () => {

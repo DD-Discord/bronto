@@ -15,7 +15,7 @@ A move covers at most 200 messages, system messages included. You and the bot ne
 ## What carries over
 
 - The text, posted under the author's server nickname (or name) and avatar. A repost is marked as sent by the Move webhook.
-- Files, spoilers and stickers. A sticker is posted as an image when Discord offers one, otherwise as a line with its name.
+- Files, spoilers and stickers. A sticker becomes a `Sticker: <name>` line, plus its image when it can be attached.
 - Embeds of bots and webhooks.
 - Reactions: each emoji once, added by the bot. Custom emojis only when the bot can use them.
 - Replies: a line above the repost points to the replied message with a short excerpt of it, or says the message was deleted.
