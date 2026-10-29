@@ -1,13 +1,9 @@
 import type { Message } from 'discord.js';
-import { MessageFlags, MessageType } from 'discord.js';
+import { ButtonStyle, ComponentType, MessageFlags, MessageType } from 'discord.js';
 import { fitFiles, messageFiles } from './render.js';
 
 export type StayReason = 'too-large' | 'poll' | 'thread' | 'forum-start' | 'interactive';
 export type Plan = { kind: 'skip-delete' | 'skip-keep' } | { kind: 'repost'; stays: StayReason[] };
-
-const ACTION_ROW = 1;
-const BUTTON = 2;
-const LINK_STYLE = 5;
 
 /** True when the tree holds anything but action rows and link buttons. */
 function hasInteractive(components: unknown[]): boolean {
@@ -17,8 +13,8 @@ function hasInteractive(components: unknown[]): boolean {
       style?: number;
       components?: unknown[];
     };
-    if (raw.type === ACTION_ROW) return hasInteractive(raw.components ?? []);
-    return !(raw.type === BUTTON && raw.style === LINK_STYLE);
+    if (raw.type === ComponentType.ActionRow) return hasInteractive(raw.components ?? []);
+    return !(raw.type === ComponentType.Button && raw.style === ButtonStyle.Link);
   });
 }
 

@@ -2,7 +2,7 @@ import type { APIEmbed, GuildMember, Message, User } from 'discord.js';
 import { MessageReferenceType, StickerFormatType } from 'discord.js';
 import type { Plan, StayReason } from './classify.js';
 
-const ZERO_WIDTH_SPACE = '​';
+const ZERO_WIDTH_SPACE = '\u200b';
 const FORBIDDEN_NAME_WORDS = /(d)(iscord)|(c)(lyde)/gi;
 const EXCERPT_LENGTH = 40;
 const MAX_EMBEDS = 10;

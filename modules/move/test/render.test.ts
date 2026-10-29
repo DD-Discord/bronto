@@ -5,7 +5,7 @@ import { displayName, renderMessage, replyLine, splitContent, webhookName, type 
 import { addHistory, addMoveFixtures, MEMBER, SOURCE } from './harness.js';
 
 const LINK = 'https://discord.com/channels/1/2/3';
-const ZWSP = '​';
+const ZWSP = '\u200b';
 
 describe('names', () => {
   it('uses nickname, then global name, then username', () => {
