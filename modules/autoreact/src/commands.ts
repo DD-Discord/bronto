@@ -1,17 +1,8 @@
-import { crudSubcommands, defineCommand, opt, UserError, type ChannelRuleIndex, type CommandDefinition } from '@bronto/core';
-import { ChannelType, PermissionFlagsBits } from 'discord.js';
+import { channelKeyOption, POST_CHANNEL_TYPES, crudSubcommands, defineCommand, opt, UserError, type ChannelRuleIndex, type CommandDefinition } from '@bronto/core';
+import { PermissionFlagsBits } from 'discord.js';
 import type { Rule } from './db/schema.js';
 import { ruleEntity } from './entity.js';
 import { parseEmojis } from './emojis.js';
-
-/** Text and announcement channels and threads; forum and media channels have no posts of their own. */
-const CHANNEL_TYPES = [
-  ChannelType.GuildText,
-  ChannelType.GuildAnnouncement,
-  ChannelType.PublicThread,
-  ChannelType.PrivateThread,
-  ChannelType.AnnouncementThread,
-];
 
 export function createAutoreactCommand(deps: { index: ChannelRuleIndex<Rule> }): CommandDefinition {
   return defineCommand({
@@ -19,13 +10,7 @@ export function createAutoreactCommand(deps: { index: ChannelRuleIndex<Rule> }):
     permissions: PermissionFlagsBits.ManageChannels,
     subcommands: crudSubcommands(ruleEntity, {
       style: 'set',
-      key: {
-        name: 'channel',
-        option: opt.channel({ description: 'Channel or thread of the rule (default: this one)', channelTypes: CHANNEL_TYPES }),
-        toKey: (value) => value.id,
-        format: (channelId) => `<#${channelId}>`,
-        fallback: (ctx) => ctx.channelId,
-      },
+      key: channelKeyOption({ description: 'Channel or thread of the rule (default: this one)', channelTypes: POST_CHANNEL_TYPES }),
       fields: {
         // Parsed in `prepare`, which knows the server's emojis.
         emojis: { option: opt.string({ description: 'Up to 5 emojis, unicode or custom, in the order to add them' }) },

@@ -37,3 +37,7 @@ export function plainText(value: string): string {
     .replace(/^#{1,3}\s+/gm, '')
     .trim();
 }
+
+export function yesNo(value: boolean): 'Yes' | 'No' {
+  return value ? 'Yes' : 'No';
+}

@@ -35,7 +35,7 @@ export {
 } from './context.js';
 export { formatDuration, parseDuration } from './duration.js';
 export { isUserError, UserError } from './errors.js';
-export { batchLines, plainText, truncate } from './format.js';
+export { batchLines, plainText, truncate, yesNo } from './format.js';
 export { createHelp, type HelpOptions } from './help-command.js';
 export { createModulesCommand, type ModulesCommandOptions } from './modules-command.js';
 export {

@@ -1,4 +1,7 @@
 import {
+  channelKeyOption,
+  POST_CHANNEL_TYPES,
+  TEXT_CHANNEL_TYPES,
   type ChannelRuleIndex,
   crudSubcommands,
   defineCommand,
@@ -11,16 +14,13 @@ import {
   type CommandDefinition,
   type HandlerContext,
 } from '@bronto/core';
-import { ChannelType, PermissionFlagsBits } from 'discord.js';
+import { PermissionFlagsBits } from 'discord.js';
 import { and, eq, ne } from 'drizzle-orm';
 import type { AutodeleteConfig } from './config.js';
 import { cooldowns, rules, type Rule } from './db/schema.js';
 import { ruleEntity } from './entity.js';
 
 export type AutodeleteContext = CommandContext<AutodeleteConfig>;
-
-const RULE_CHANNEL_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
-const LOG_CHANNEL_TYPES = [...RULE_CHANNEL_TYPES, ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread];
 
 export interface AutodeleteCommandDeps {
   index: ChannelRuleIndex<Rule>;
@@ -71,13 +71,7 @@ export function createAutodeleteCommand(deps: AutodeleteCommandDeps): CommandDef
     permissions: PermissionFlagsBits.ManageMessages,
     subcommands: {
       ...crudSubcommands(ruleEntity, {
-        key: {
-          name: 'channel',
-          option: opt.channel({ description: 'Channel of the rule', channelTypes: RULE_CHANNEL_TYPES }),
-          toKey: (value) => value.id,
-          format: (channelId) => `<#${channelId}>`,
-          fallback: (ctx) => ctx.channelId,
-        },
+        key: channelKeyOption({ description: 'Channel of the rule', channelTypes: TEXT_CHANNEL_TYPES }),
         fields: {
           enabled: { option: opt.boolean({ description: 'Apply the rule (default: yes)' }), column: 'enabled', default: true },
           'keep-latest': {
@@ -106,7 +100,7 @@ export function createAutodeleteCommand(deps: AutodeleteCommandDeps): CommandDef
             default: false,
           },
           'log-channel': {
-            option: opt.channel({ description: 'Channel or thread for reports', channelTypes: LOG_CHANNEL_TYPES }),
+            option: opt.channel({ description: 'Channel or thread for reports', channelTypes: POST_CHANNEL_TYPES }),
             // A null default keeps the option optional in `create`; the value only reaches `prepare`.
             default: null as never,
           },
@@ -180,7 +174,7 @@ export function createAutodeleteCommand(deps: AutodeleteCommandDeps): CommandDef
         ephemeral: true,
         options: {
           user: opt.user({ description: 'The member', required: true }),
-          channel: opt.channel({ description: 'Rule channel (default: all rule channels)', channelTypes: RULE_CHANNEL_TYPES }),
+          channel: opt.channel({ description: 'Rule channel (default: all rule channels)', channelTypes: TEXT_CHANNEL_TYPES }),
         },
         execute: async (ctx, { user, channel }) => {
           const removed = await ctx.db.run(async (tx) =>

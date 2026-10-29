@@ -1,7 +1,6 @@
-import { defineEntity, formatDuration } from '@bronto/core';
+import { defineEntity, formatDuration, yesNo } from '@bronto/core';
 import { rules } from './db/schema.js';
 
-const yesNo = (value: boolean) => (value ? 'Yes' : 'No');
 const duration = (ms: number) => (ms === 0 ? 'Off' : formatDuration(ms));
 
 export const ruleEntity = defineEntity({

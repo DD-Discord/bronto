@@ -1,4 +1,6 @@
 import {
+  channelKeyOption,
+  POST_CHANNEL_TYPES,
   crudSubcommands,
   defineCommand,
   ensureWebhook,
@@ -10,7 +12,7 @@ import {
   type CommandDefinition,
   type HandlerContext,
 } from '@bronto/core';
-import { ChannelType, PermissionFlagsBits } from 'discord.js';
+import { PermissionFlagsBits } from 'discord.js';
 import { and, eq, ne } from 'drizzle-orm';
 import type { MediaonlyConfig } from './config.js';
 import { rules, type Rule } from './db/schema.js';
@@ -18,15 +20,6 @@ import { ruleEntity } from './entity.js';
 import type { RuleIndex } from './rule-index.js';
 
 type MediaonlyContext = HandlerContext<MediaonlyConfig>;
-
-/** Text and announcement channels and threads; forum and media channels have no posts of their own. */
-const CHANNEL_TYPES = [
-  ChannelType.GuildText,
-  ChannelType.GuildAnnouncement,
-  ChannelType.PublicThread,
-  ChannelType.PrivateThread,
-  ChannelType.AnnouncementThread,
-];
 
 const LOG_COLUMNS_CLEARED = {
   logChannelId: null,
@@ -71,13 +64,7 @@ export function createMediaonlyCommand(deps: { index: RuleIndex }): CommandDefin
     permissions: PermissionFlagsBits.ManageChannels,
     subcommands: crudSubcommands(ruleEntity, {
       style: 'set',
-      key: {
-        name: 'channel',
-        option: opt.channel({ description: 'Channel or thread of the rule (default: this one)', channelTypes: CHANNEL_TYPES }),
-        toKey: (value) => value.id,
-        format: (channelId) => `<#${channelId}>`,
-        fallback: (ctx) => ctx.channelId,
-      },
+      key: channelKeyOption({ description: 'Channel or thread of the rule (default: this one)', channelTypes: POST_CHANNEL_TYPES }),
       fields: {
         'require-spoiler': {
           option: opt.boolean({ description: 'Every attachment and link must be marked spoiler (default: no)' }),
@@ -85,7 +72,7 @@ export function createMediaonlyCommand(deps: { index: RuleIndex }): CommandDefin
           default: false,
         },
         'log-channel': {
-          option: opt.channel({ description: 'Channel or thread for reports', channelTypes: CHANNEL_TYPES }),
+          option: opt.channel({ description: 'Channel or thread for reports', channelTypes: POST_CHANNEL_TYPES }),
           // A null default keeps the option optional when `set` creates a rule; the value only reaches `prepare`.
           default: null as never,
         },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { batchLines, plainText, truncate } from './format.js';
+import { batchLines, plainText, truncate, yesNo } from './format.js';
 
 describe('batchLines', () => {
   it('keeps lines together while they fit', () => {
@@ -32,5 +32,12 @@ describe('plainText', () => {
     for (const text of ['foo_bar_baz', '2 * 3 * 4', '<#123>', '<@123> <@&456>', '#general', 'a # b', 'snake_case_name']) {
       expect(plainText(text)).toBe(text);
     }
+  });
+});
+
+describe('yesNo', () => {
+  it('words a boolean', () => {
+    expect(yesNo(true)).toBe('Yes');
+    expect(yesNo(false)).toBe('No');
   });
 });
