@@ -6,7 +6,7 @@
 - `to`: a link to the last message to move. Without it, only the `from` message moves. Both links must point to the same channel, and either may be the older one.
 - `target`: the text channel, announcement channel or thread the messages go to.
 
-A move covers at most 200 messages, system messages included. You and the bot need access to both places: you need Manage Messages in the source and permission to post in the target, and the bot needs Manage Messages there too, plus the right to manage webhooks in the target. If something is missing, `/move` names it.
+A move covers at most 200 messages, system messages included. You and the bot need access to both places: you need Manage Messages in the source and permission to post in the target, and the bot needs Manage Messages there too, plus the right to manage webhooks in the target. If something is missing, `/move` names it. Messages in an archived thread can't be moved; unarchive the thread first.
 
 ## Confirming
 
@@ -45,7 +45,7 @@ When a reaction can't be added to a copy, its original stays behind too and is l
 
 When Discord refuses a message, for example because an embed is invalid, that message stays behind without a copy and the move goes on. If the move fails for another reason, for example the bot loses access to the target, the copies already posted are removed and nothing is deleted. The result lists every message that stayed behind or couldn't be deleted.
 
-Other system messages in the range, such as pin notices, are deleted with it. A "thread started" notice is always kept.
+Other system messages in the range, such as pin notices, are deleted with it. A "thread started" notice, and the starter message shown at the top of a thread, are always kept.
 
 ## A move can't be undone
 

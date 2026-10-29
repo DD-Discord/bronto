@@ -197,6 +197,15 @@ describe('/move', () => {
     expect(text).toContain('1 stay behind: 1 forum post starters.');
   });
 
+  it('refuses an archived source thread', async () => {
+    await start(BOT_PERMISSIONS, () => {
+      (discord.channels.get(THREAD) as unknown as { thread_metadata: { archived: boolean } }).thread_metadata.archived = true;
+    });
+    const [id] = addHistory(discord, THREAD, [{ content: 'a' }]);
+    const text = String(answer(await runCommand(mb!, { from: messageLink(THREAD, id!), target: targetOption(SOURCE) }, THREAD)).content);
+    expect(text).toContain('Unarchive the thread first');
+  });
+
   it('refuses ranges over the cap', async () => {
     await start();
     const ids = addHistory(discord, SOURCE, Array.from({ length: 201 }, () => ({ content: 'x' })));

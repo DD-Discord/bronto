@@ -5,6 +5,9 @@ import { fitFiles, messageFiles } from './render.js';
 export type StayReason = 'too-large' | 'poll' | 'thread' | 'forum-start' | 'interactive';
 export type Plan = { kind: 'skip-delete' | 'skip-keep' } | { kind: 'repost'; stays: StayReason[] };
 
+/** System messages that stay: a thread's notice in its parent and the starter copy at the top of a thread. */
+const KEPT_SYSTEM_TYPES: ReadonlySet<MessageType> = new Set([MessageType.ThreadCreated, MessageType.ThreadStarterMessage]);
+
 /** True when the tree holds anything but action rows and link buttons. */
 function hasInteractive(components: unknown[]): boolean {
   return components.some((component) => {
@@ -23,7 +26,7 @@ export function classify(
   message: Message,
   ctx: { uploadLimit: number; sourceIsForumPost: boolean; isSticky: (message: Message) => boolean },
 ): Plan {
-  if (message.system) return { kind: message.type === MessageType.ThreadCreated ? 'skip-keep' : 'skip-delete' };
+  if (message.system) return { kind: KEPT_SYSTEM_TYPES.has(message.type) ? 'skip-keep' : 'skip-delete' };
   const stays: StayReason[] = [];
   if (fitFiles(messageFiles(message), ctx.uploadLimit).dropped.length > 0) stays.push('too-large');
   if (message.poll !== null) stays.push('poll');

@@ -530,6 +530,30 @@ describe('running a move', () => {
     expect(logged.lists.stayed).toEqual(ids.map((id) => `${messageLink(SOURCE, id)} (poll)`));
   });
 
+  it("keeps a thread's starter message when moving out of the thread", async () => {
+    await start();
+    const ids = addHistory(discord, THREAD, [{ type: MessageType.ThreadStarterMessage }, { content: 'a' }]);
+    const text = result(await move(ids[0]!, ids[1]!, TARGET, THREAD));
+    expect(sentContents()).toEqual(['a']);
+    expect(discord.liveMessages(THREAD)).toEqual([ids[0]]);
+    expect(text).toBe(`Moved **1** message to <#${TARGET}>.`);
+  });
+
+  it('refuses an archived source thread on Move, changing nothing', async () => {
+    await start();
+    const ids = addHistory(discord, THREAD, [{ content: 'a' }]);
+    const customId = await confirmation(ids[0]!, null, TARGET, THREAD);
+    // As a thread update from the gateway would: the thread was archived meanwhile.
+    (discord.channels.get(THREAD) as unknown as { thread_metadata: { archived: boolean } }).thread_metadata.archived = true;
+    (mb!.client.channels.cache.get(THREAD) as unknown as { archived: boolean }).archived = true;
+    const before = mb!.requests.length;
+    const text = result(await pressButton(mb!, customId));
+    expect(text).toContain('Unarchive the thread first');
+    expect(text).toContain('Nothing was moved.');
+    expect(mb!.requests.slice(before).filter((r) => r.method !== 'GET')).toEqual([]);
+    expect(discord.liveMessages(THREAD)).toEqual(ids);
+  });
+
   it('never deletes the source thread', async () => {
     await start();
     const ids = addHistory(discord, THREAD, [{ content: 'a' }, { content: 'b' }]);

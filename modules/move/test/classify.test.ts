@@ -30,6 +30,10 @@ describe('classify', () => {
     expect(classify(await fetchOne(SOURCE, { type: MessageType.ThreadCreated }), ctx)).toEqual({ kind: 'skip-keep' });
   });
 
+  it("keeps a thread's starter message", async () => {
+    expect(classify(await fetchOne(THREAD, { type: MessageType.ThreadStarterMessage }), ctx)).toEqual({ kind: 'skip-keep' });
+  });
+
   it('moves plain messages', async () => {
     expect(classify(await fetchOne(SOURCE, { content: 'hi' }), ctx)).toEqual({ kind: 'repost', stays: [] });
   });

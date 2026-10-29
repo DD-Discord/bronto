@@ -62,6 +62,8 @@ export async function loadChannels(
   const guild = await client.guilds.fetch(guildId);
   const source = await guild.channels.fetch(sourceId).catch(() => null);
   if (source === null || !source.isTextBased()) throw new UserError("I can't find that channel, or it has no messages to move.");
+  // Messages in an archived thread can't be deleted, so a move would only copy them.
+  if (source.isThread() && source.archived === true) throw new UserError('The messages are in an archived thread. Unarchive the thread first.');
   const target = await guild.channels.fetch(targetId).catch(() => null);
   if (target === null || !target.isTextBased() || !TARGET_TYPES.includes(target.type)) {
     throw new UserError("Messages can't be moved there. Choose a text channel, an announcement channel or a thread.");
