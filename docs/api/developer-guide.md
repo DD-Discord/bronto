@@ -629,6 +629,12 @@ listeners: [
 - The bot reads raw packets only when a loaded module listens to one. Declare the intents the packet needs.
 - The discord.js event still fires for cached objects; don't handle the same change twice.
 
+### Gone objects
+
+`isUnknownChannel(error)` tells whether Discord reports a channel or thread as deleted, and `isGone(error)` also
+accepts an unknown message. Use them around fetches and sends instead of comparing error codes, and treat any other
+failure (permissions, outages) as a real error.
+
 ### Webhooks
 
 Use native Discord.js webhook objects. Core provides helpers for selecting a thread's parent, reusing stored credentials
@@ -903,6 +909,44 @@ export const badgesModule = defineModule({
   optional dependencies are rejected.
 - **Asks:** a module may answer asks of an optional dependency; its listeners run when that module is loaded and on.
 
+### A forum the module owns
+
+Some modules keep records as the posts of one forum channel the bot creates. `defineManagedForum` handles the
+forum's life: members' new posts become records, and records follow their posts when those are renamed or deleted.
+
+```ts
+import { defineManagedForum } from '@bronto/core';
+
+export const templateForum = defineManagedForum({
+  forumName: 'templates',
+  tables: { forums, records: templates },   // forums needs a unique index on guild_id
+  wording: { noun: 'template', forumLabel: 'template forum', logKey: 'templateId' },
+  createFromPost: (ctx, thread) => createFromPost(ctx, thread),
+  forgotOne: (ctx, record) => ctx.emit(templatesEvents.deleted, { id: record.id }),
+  forgotAll: (ctx, records) => { for (const { id } of records) ctx.emit(templatesEvents.deleted, { id }); },
+});
+
+// In defineModule: listeners: [...templateForum.listeners], hooks: { guildReady: (ctx) => templateForum.reconcile(ctx) }
+```
+
+- **`listeners`:** new posts (deleted once `createFromPost` made the record; a `UserError` is answered in the post, and
+  returning `'skip'` leaves it alone), deleted posts, the deleted forum, and renamed posts.
+- **`reconcile(ctx)`:** call it from `guildReady` to forget records whose forum or post vanished while the bot was
+  away. Only Unknown Channel counts as gone; other failures keep the data and log a warning.
+- **`ensure(ctx)`:** returns the stored forum while it exists, otherwise creates one hidden from `@everyone` and stores
+  it. It throws a `UserError` on servers without Community. `storedId`, `channelExists` and `forget` are there for
+  your own commands.
+- **Overrides:** `forgetOne`, `forgetAllTx`, `forgotOne`, `forgotAll` and `rename` change what happens to a record;
+  by default a record is deleted and logged, and a rename sets the record's `name`.
+
+Helpers for the surrounding commands:
+
+- **`channelExists(client, id)`** and **`deleteThread(client, id)`** treat an already deleted channel as done.
+- **`importModal({ customId, title, label })`** builds a modal with a JSON paragraph and an optional file upload;
+  **`uploadedJson(ctx)`** reads the file back (`MAX_IMPORT_TEXT` and `MAX_IMPORT_FILE_BYTES` are the limits).
+- **`exportFileName(name, fallback)`** names an export file, **`recordList({ guildId, rows })`** formats a list of
+  records as links to their posts, and **`escapeLinkText`** escapes a name for a Markdown link.
+
 ## 9. Lifecycle hooks
 
 ```ts
@@ -1019,6 +1063,28 @@ Hooks connect records to the outside world:
 | `validate(record)` | Before the write | Cross-field checks; return messages for the user. |
 | `afterWrite(ctx, record, action)` | After `create`/`edit` committed | Update in-memory state, trigger work. |
 | `beforeDelete(ctx, record)` | Before `delete` | Clean up outside the database. |
+
+### Channel rules
+
+A rule per channel (a slowmode, an allowlist) is a table with a `channelId` column. Core ships the pieces:
+
+```ts
+import { channelKeyOption, channelRuleHooks, channelRuleListeners, ChannelRuleIndex, TEXT_CHANNEL_TYPES } from '@bronto/core';
+
+const store = { table: rules, index: new ChannelRuleIndex() };
+// defineModule: hooks: channelRuleHooks(store), listeners: channelRuleListeners(store)
+// crudSubcommands: key: channelKeyOption({ description: 'The channel', channelTypes: TEXT_CHANNEL_TYPES })
+```
+
+- **`channelKeyOption`** is a CRUD key named `channel`; `show` falls back to the current channel.
+- **Channel types:** `TEXT_CHANNEL_TYPES`, `THREAD_CHANNEL_TYPES` and `POST_CHANNEL_TYPES` (both) fit `channelTypes`.
+- **`channelRuleHooks(store)`** loads the guild's rules into the index in `guildReady` and drops them in
+  `guildStopped`; **`channelRuleListeners(store)`** deletes the rule of a deleted channel or thread.
+- **`logChannel({ table, webhookName, channelTypes, descriptions })`** adds `log-channel` and `remove-log-channel`
+  fields (`fields`) and the hooks that keep the log webhook (`prepare`, `afterWrite`, `beforeDelete`, and `onRemoved`
+  for `channelRuleListeners`). The table needs `logChannelId`, `logThreadId`, `logWebhookId` and `logWebhookToken`.
+  Call it once per command definition.
+- **`yesNo(value)`** formats a boolean for embeds.
 
 `examples/notes` is a complete CRUD module with a button and a modal. `modules/sticky/src/commands.ts` uses every hook.
 
