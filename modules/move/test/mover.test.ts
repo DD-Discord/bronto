@@ -519,6 +519,17 @@ describe('running a move', () => {
     expect(mb!.lines).toContainEqual(expect.objectContaining({ level: 30, result: `Moved **1** message to <#${TARGET}>.` }));
   });
 
+  it('logs the full lists when the result is cut short', async () => {
+    await start();
+    const ids = addHistory(discord, SOURCE, Array.from({ length: 30 }, () => ({ content: 'vote', poll: true })));
+    const text = result(await move(ids[0]!, ids.at(-1)!));
+    expect(text).toContain('…and');
+    expect(text.length).toBeLessThanOrEqual(2000);
+    const logged = mb!.lines.find((line) => (line as { lists?: unknown }).lists !== undefined) as unknown as { level: number; lists: { stayed: string[] } };
+    expect(logged.level).toBe(30);
+    expect(logged.lists.stayed).toEqual(ids.map((id) => `${messageLink(SOURCE, id)} (poll)`));
+  });
+
   it('never deletes the source thread', async () => {
     await start();
     const ids = addHistory(discord, THREAD, [{ content: 'a' }, { content: 'b' }]);

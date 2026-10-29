@@ -73,30 +73,57 @@ class SendFailed extends Error {
   }
 }
 
-/** Edits the confirmation message; once Discord refuses (the token expired), the result goes to the log instead. */
-class Progress {
-  private last = Date.now();
-  private broken = false;
+/** Errors that mean the interaction token is gone, so no later edit can succeed. */
+const TOKEN_ERRORS: ReadonlySet<number> = new Set([
+  RESTJSONErrorCodes.InvalidWebhookToken,
+  RESTJSONErrorCodes.UnknownWebhook,
+  RESTJSONErrorCodes.UnknownInteraction,
+]);
+const isTokenError = (error: unknown): boolean =>
+  (error as { status?: unknown } | null)?.status === 401 || (error instanceof DiscordAPIError && TOKEN_ERRORS.has(Number(error.code)));
 
-  constructor(private readonly ctx: ButtonContext) {}
+/** The result lists in full: section → entries (original links, with reasons). */
+export type ResultLists = Record<string, string[]>;
+
+/** What a move ends with: the text to show and, when it has lists, those in full. */
+interface Outcome {
+  content: string;
+  truncated?: boolean;
+  lists?: ResultLists;
+}
+
+/**
+ * Edits the confirmation message. A failed edit is skipped; once the token is gone, edits stop. The result goes to
+ * the log when it can't be shown, and its full lists when the shown result was cut short.
+ */
+export class Progress {
+  private last = Date.now();
+  private expired = false;
+
+  constructor(private readonly ctx: Pick<ButtonContext, 'update' | 'log'>) {}
 
   async show(content: string, force = false): Promise<void> {
-    if (this.broken || (!force && Date.now() - this.last < PROGRESS_MS)) return;
+    if (this.expired || (!force && Date.now() - this.last < PROGRESS_MS)) return;
     await this.edit(content);
   }
 
-  async finish(content: string): Promise<void> {
-    if (!this.broken) await this.edit(content);
-    if (this.broken) this.ctx.log.info({ result: content }, 'A move finished after its confirmation could no longer be edited');
+  async finish(content: string, details: { truncated?: boolean; lists?: ResultLists } = {}): Promise<void> {
+    const shown = !this.expired && (await this.edit(content));
+    const fields = { result: content, ...(details.lists === undefined ? {} : { lists: details.lists }) };
+    if (!shown) this.ctx.log.info(fields, 'A move finished but its confirmation could not be edited');
+    else if (details.truncated === true) this.ctx.log.info(fields, 'A move result was too long to show in full');
   }
 
-  private async edit(content: string): Promise<void> {
+  /** True when the edit went through. */
+  private async edit(content: string): Promise<boolean> {
     this.last = Date.now();
     try {
       await this.ctx.update({ content, components: [], flags: MessageFlags.SuppressEmbeds });
+      return true;
     } catch (error) {
-      this.broken = true;
+      if (isTokenError(error)) this.expired = true;
       this.ctx.log.info({ err: error }, 'Editing the move confirmation failed');
+      return false;
     }
   }
 }
@@ -136,7 +163,8 @@ export class Mover {
     const progress = new Progress(ctx);
     const release = await this.locks.acquire([move.sourceId, move.targetId], () => void progress.show('Waiting for another move…', true));
     try {
-      await progress.finish(await this.execute(ctx, move, progress));
+      const outcome = await this.execute(ctx, move, progress);
+      await progress.finish(outcome.content, outcome);
     } catch (error) {
       if (error instanceof UserError) {
         await progress.finish(`${error.message}\nNothing was moved.`);
@@ -149,21 +177,21 @@ export class Mover {
     }
   }
 
-  private async execute(ctx: ButtonContext, move: PendingMove, progress: Progress): Promise<string> {
+  private async execute(ctx: ButtonContext, move: PendingMove, progress: Progress): Promise<Outcome> {
     const { guild, source, target } = await loadChannels(ctx.client, move.guildId, move.sourceId, move.targetId, move.userId);
     const messages = await readRange(source, move.fromId, move.toId, { requireEnds: false });
     const stickyApi = ctx.modules.optional(sticky);
     const context = { uploadLimit: move.uploadLimit, sourceIsForumPost: isForumPost(source), isSticky: (m: Message) => stickyApi?.isSticky(m) === true };
     const plans = messages.map((message) => [message, classify(message, context)] as const);
     const total = plans.filter(([, plan]) => plan.kind === 'repost').length;
-    if (total === 0) return 'Nothing left to move.';
+    if (total === 0) return { content: 'Nothing left to move.' };
 
     const { webhook, threadId } = await findMoveWebhook(ctx.client, target.id);
     this.enter(webhook.id);
     try {
       const run = new Run(ctx, guild, source, target.id, webhook, threadId, move.uploadLimit);
       const failure = await run.repostAll(plans, async (done) => progress.show(`Moved ${done} of ${total}…`));
-      if (failure !== null) return failure;
+      if (failure !== null) return { content: failure };
       await progress.show('Deleting the originals…');
       await run.deleteOriginals();
       return run.summary();
@@ -417,35 +445,43 @@ class Run {
     }
   }
 
-  summary(): string {
+  summary(): Outcome {
     const original = (id: string) => link(this.guild.id, this.source.id, id);
-    const sections: { title: string; entries: string[] }[] = [];
+    const sections: { key: string; title: string; entries: string[] }[] = [];
     if (this.stayed.length > 0) {
       sections.push({
+        key: 'stayed',
         title: `${plural(this.stayed.length, 'message')} stayed behind, with a copy in <#${this.targetId}>:`,
-        entries: this.stayed.map(({ id, reasons }) => `- ${original(id)} (${reasons.map((reason) => REASON_TEXT[reason]).join(', ')})`),
+        entries: this.stayed.map(({ id, reasons }) => `${original(id)} (${reasons.map((reason) => REASON_TEXT[reason]).join(', ')})`),
       });
     }
     if (this.notCopied.length > 0) {
-      sections.push({ title: `${plural(this.notCopied.length, 'message')} couldn't be copied and stayed behind:`, entries: this.notCopied.map((id) => `- ${original(id)}`) });
+      sections.push({ key: 'notCopied', title: `${plural(this.notCopied.length, 'message')} couldn't be copied and stayed behind:`, entries: this.notCopied.map(original) });
     }
     if (this.partlyCopied.length > 0) {
       sections.push({
+        key: 'partlyCopied',
         title: `${plural(this.partlyCopied.length, 'message')} couldn't be copied fully and stayed behind; part of a copy is in the target:`,
-        entries: this.partlyCopied.map((id) => `- ${original(id)}`),
+        entries: this.partlyCopied.map(original),
       });
     }
     const undeletedCopies = this.notDeleted.filter((id) => !this.system.has(id));
     const undeletedSystem = this.notDeleted.filter((id) => this.system.has(id));
     if (undeletedCopies.length > 0) {
-      sections.push({ title: `${plural(undeletedCopies.length, 'message')} couldn't be deleted; the copies are in the target:`, entries: undeletedCopies.map((id) => `- ${original(id)}`) });
+      sections.push({ key: 'notDeleted', title: `${plural(undeletedCopies.length, 'message')} couldn't be deleted; the copies are in the target:`, entries: undeletedCopies.map(original) });
     }
     if (undeletedSystem.length > 0) {
-      sections.push({ title: `${plural(undeletedSystem.length, 'system message')} couldn't be deleted:`, entries: undeletedSystem.map((id) => `- ${original(id)}`) });
+      sections.push({ key: 'systemNotDeleted', title: `${plural(undeletedSystem.length, 'system message')} couldn't be deleted:`, entries: undeletedSystem.map(original) });
     }
     const lines = [`Moved ${plural(this.moved, 'message')} to <#${this.targetId}>.`];
     const room = RESULT_LENGTH - lines[0]!.length - sections.reduce((sum, section) => sum + section.title.length + 1, 0);
-    for (const section of sections) lines.push(section.title, ...listLines(section.entries, Math.floor(room / sections.length)));
-    return lines.join('\n');
+    let truncated = false;
+    for (const section of sections) {
+      const shown = listLines(section.entries.map((entry) => `- ${entry}`), Math.floor(room / sections.length));
+      truncated ||= shown.at(-1)?.startsWith('- …and ') === true;
+      lines.push(section.title, ...shown);
+    }
+    if (sections.length === 0) return { content: lines.join('\n') };
+    return { content: lines.join('\n'), truncated, lists: Object.fromEntries(sections.map((section) => [section.key, section.entries])) };
   }
 }
