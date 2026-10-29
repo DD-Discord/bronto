@@ -7,6 +7,7 @@ import { mediaonlyConfigSchema, type MediaonlyConfig } from './config.js';
 import * as schema from './db/schema.js';
 import { rules } from './db/schema.js';
 import { Enforcer } from './enforcer.js';
+import { mediaonlyGates } from './gates.js';
 import { RuleIndex } from './rule-index.js';
 
 export interface MediaonlyApi {
@@ -29,6 +30,7 @@ export function createMediaonlyModule(): ModuleDefinition<MediaonlyConfig, Media
     intents: [GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
     config: mediaonlyConfigSchema,
     db: { schema, migrations: new URL('../drizzle/', import.meta.url) },
+    gates: mediaonlyGates,
     api: (ctx) => ({ rejects: (message) => rejection(ctx, index, message) !== null }),
     botPermissions: [
       PermissionFlagsBits.ViewChannel,
@@ -49,3 +51,4 @@ export default createMediaonlyModule();
 export { mediaonlyConfigSchema, type MediaonlyConfig } from './config.js';
 export { mediaProblem, type MediaProblem } from './check.js';
 export { NOTICE_MS } from './enforcer.js';
+export { mediaonlyGates, type RemovingPayload } from './gates.js';

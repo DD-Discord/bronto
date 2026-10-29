@@ -1,10 +1,10 @@
-import { defineModule, on, type HandlerContext, type LoadedModule } from '@bronto/core';
+import { defineModule, gate, on, type HandlerContext, type LoadedModule } from '@bronto/core';
 import { FakeDiscordHttp } from '@bronto/core/testing';
 import templates from '@bronto/templates';
 import { Collection, Events } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
-import mediaonly from '../src/index.js';
+import mediaonly, { mediaonlyGates } from '../src/index.js';
 import {
   CHANNEL,
   channelOption,
@@ -315,5 +315,34 @@ describe('rule lifecycle', () => {
     expect(await ruleRows(t)).toEqual([]);
     await say(fakeMessage(CHANNEL), fakeMessage(THREAD));
     expect(discord.deletedPosts).toEqual([]);
+  });
+
+  describe('removing gate', () => {
+    async function startWithExemption(): Promise<void> {
+      const exempter = defineModule({
+        name: 'exempter',
+        dependsOn: [mediaonly],
+        listeners: [gate(mediaonlyGates.removing, (_ctx, { webhookId }) => (webhookId === 'W' ? { deny: 'Exempt' } : undefined))],
+      });
+      await start({ extra: [{ packageName: '@test/exempter', definition: exempter, config: {} }] });
+      await loggedRule({ channelId: CHANNEL, ignoreBots: false });
+      await ready(mb!);
+    }
+
+    it('keeps a post another module exempts', async () => {
+      await startWithExemption();
+      const kept = fakeMessage(CHANNEL, { member: null, bot: true, webhookId: 'W' });
+      await say(kept);
+      expect(discord.deletedPosts).not.toContain(kept.id);
+      expect(discord.dms).toEqual([]);
+      expect(discord.reports).toEqual([]);
+    });
+
+    it('deletes as before when no module denies', async () => {
+      await startWithExemption();
+      const removed = fakeMessage(CHANNEL, { member: null, bot: true, webhookId: 'X' });
+      await say(removed);
+      expect(discord.deletedPosts).toContain(removed.id);
+    });
   });
 });

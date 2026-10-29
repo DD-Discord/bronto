@@ -9,7 +9,7 @@
 - `enabled` (default yes): whether the rule applies.
 - `ignore-bots` (default yes): posts of bots and webhooks are left alone. A sticky's own post and the bot's own posts are always left alone.
 
-A post passes when it has at least one attachment of any kind (images, videos, audio, other files) or at least one link starting with `http://` or `https://`. Link previews aren't checked. A forwarded message counts by what it forwards.
+A post passes when it has at least one attachment of any kind (images, videos, audio, other files) or at least one link starting with `http://` or `https://`. Link previews aren't checked. A forwarded message counts by what it forwards. Other modules may exempt their own posts from removal.
 
 ## Other commands
 
