@@ -14,7 +14,7 @@ import {
 import { createMediaonlyModule, mediaonlyConfigSchema } from '@bronto/mediaonly';
 import { createStickyModule, stickyConfigSchema } from '@bronto/sticky';
 import { createTemplatesModule } from '@bronto/templates';
-import { ChannelType, Events } from 'discord.js';
+import { ChannelType, Events, OverwriteType, PermissionFlagsBits } from 'discord.js';
 import type { TestDatabase } from '../../../packages/core/test/test-db.js';
 import { createMoveModule } from '../src/index.js';
 
@@ -53,25 +53,42 @@ function modulesFor(options: { sticky?: boolean; mediaonly?: boolean; extra?: Lo
   return [...modules, { packageName: '@bronto/move', definition: createMoveModule(), config: {} }, ...(options.extra ?? [])];
 }
 
-/** Adds GUILD with its channels, a thread of TARGET, a forum with one post and three members, without a bot yet. */
-export function addMoveFixtures(discord: FakeDiscordHttp): void {
+/** What the bot needs for moving; the fixture channels grant it to the bot's member. */
+export const BOT_PERMISSIONS =
+  PermissionFlagsBits.ViewChannel |
+  PermissionFlagsBits.SendMessages |
+  PermissionFlagsBits.ReadMessageHistory |
+  PermissionFlagsBits.ManageMessages |
+  PermissionFlagsBits.ManageWebhooks |
+  PermissionFlagsBits.AttachFiles |
+  PermissionFlagsBits.AddReactions |
+  PermissionFlagsBits.UseExternalEmojis;
+
+const CHANNEL_NAMES: Record<string, string> = { [SOURCE]: 'general', [TARGET]: 'games', [THREAD]: 'games-thread' };
+
+/**
+ * Adds GUILD with its channels, a thread of TARGET, a forum with one post and three members, without a bot yet. The
+ * bot holds `botPermissions` in SOURCE and TARGET through member overwrites.
+ */
+export function addMoveFixtures(discord: FakeDiscordHttp, botPermissions: bigint = BOT_PERMISSIONS): void {
   discord.addGuild(GUILD, { community: true });
+  const grant = [{ id: discord.botId, type: OverwriteType.Member, allow: String(botPermissions), deny: '0' }] as never;
   for (const id of [SOURCE, TARGET]) {
-    if (!discord.channels.has(id)) discord.addChannel(id, { guildId: GUILD, type: ChannelType.GuildText });
+    if (!discord.channels.has(id)) discord.addChannel(id, { guildId: GUILD, type: ChannelType.GuildText, name: CHANNEL_NAMES[id]!, permissionOverwrites: grant });
   }
-  if (!discord.channels.has(THREAD)) discord.addChannel(THREAD, { guildId: GUILD, type: ChannelType.PublicThread, parentId: TARGET });
+  if (!discord.channels.has(THREAD)) discord.addChannel(THREAD, { guildId: GUILD, type: ChannelType.PublicThread, parentId: TARGET, name: CHANNEL_NAMES[THREAD]! });
   if (!discord.channels.has(FORUM)) discord.addChannel(FORUM, { guildId: GUILD, type: ChannelType.GuildForum });
   if (!discord.channels.has(FORUM_POST)) discord.addChannel(FORUM_POST, { guildId: GUILD, type: ChannelType.PublicThread, parentId: FORUM });
-  for (const id of [MOD, MEMBER, OTHER]) discord.addMember(GUILD, id);
+  for (const id of [MOD, MEMBER, OTHER, discord.botId]) discord.addMember(GUILD, id);
 }
 
 /** A bot with the move module: GUILD registered, not yet ready. */
 export async function prepareMoveBot(
   t: TestDatabase,
   discord: FakeDiscordHttp,
-  options: { sticky?: boolean; mediaonly?: boolean; extra?: LoadedModule[] } = {},
+  options: { sticky?: boolean; mediaonly?: boolean; extra?: LoadedModule[]; botPermissions?: bigint } = {},
 ): Promise<MoveBot> {
-  addMoveFixtures(discord);
+  addMoveFixtures(discord, options.botPermissions);
   const native = await createNativeTestClient(discord);
   const { client, requests } = native;
   const { log, lines } = captureLog();
