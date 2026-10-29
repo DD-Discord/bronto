@@ -35,20 +35,50 @@ export function webhookName(name: string): string {
   return cut === '' ? 'Unknown' : cut;
 }
 
+const URL_PATTERN = /https?:\/\/[^\s<>()]+/g;
+
+const escapeChars = (text: string): string => text.replace(/[\\*_~|>#[\]()`]/g, '\\$&');
+
+/** Escapes the characters Discord reads as markdown, and a leading `-` (of `-#`). */
+function escapeMarkdown(text: string): string {
+  return escapeChars(text).replace(/^-/, '\\-');
+}
+
+/** Escapes text and wraps its links in `<>`, so they show no preview. */
+function inlineSafe(text: string): string {
+  let out = '';
+  let last = 0;
+  for (const match of text.matchAll(URL_PATTERN)) {
+    out += `${escapeChars(text.slice(last, match.index))}<${match[0]}>`;
+    last = match.index + match[0].length;
+  }
+  return (out + escapeChars(text.slice(last))).replace(/^-/, '\\-');
+}
+
+/**
+ * About the first 40 characters of a message as plain text: spoilers hidden (an unclosed `||` hides the rest), code
+ * marks dropped, cut at a word break. Safe to place inside a line of markdown.
+ */
 function excerpt(text: string): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
+  const plain = text
+    .replace(/\|\|[\s\S]*?\|\|/g, '(spoiler)')
+    .replace(/\|\|[\s\S]*$/, '(spoiler)')
+    .replace(/```[\w+-]*\n/g, ' ')
+    .replace(/`/g, '')
+    .replace(/<(https?:\/\/[^\s<>]+)>/g, '$1');
+  const flat = plain.replace(/\s+/g, ' ').trim();
   if (flat === '') return '(attachment)';
-  if (Array.from(flat).length <= EXCERPT_LENGTH) return flat;
-  const head = Array.from(flat).slice(0, EXCERPT_LENGTH).join('');
+  const chars = Array.from(flat);
+  if (chars.length <= EXCERPT_LENGTH) return inlineSafe(flat);
+  const head = chars.slice(0, EXCERPT_LENGTH).join('');
   const space = head.lastIndexOf(' ');
-  return `${(space > 0 ? head.slice(0, space) : head).trimEnd()}…`;
+  return `${inlineSafe((space > 0 ? head.slice(0, space) : head).trimEnd())}…`;
 }
 
 /** The one-line pointer to the replied message. */
 export function replyLine(target: NonNullable<ReplyTarget>): string {
   if (target === 'deleted') return '-# ↪ (deleted message)';
-  const name = target.name.replace(/[[\]]/g, '\\$&');
-  return `-# ↪ [@${name}](<${target.link}>) ${excerpt(target.text)}`;
+  return `-# ↪ [@${escapeMarkdown(target.name)}](<${target.link}>) ${excerpt(target.text)}`;
 }
 
 /** Cuts a position that would split a surrogate pair back by one. */

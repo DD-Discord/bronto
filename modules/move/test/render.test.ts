@@ -37,6 +37,37 @@ describe('replyLine', () => {
     expect(replyLine({ name: 'Ann', link: LINK, text: '' })).toBe(`-# ↪ [@Ann](<${LINK}>) (attachment)`);
   });
 
+  const excerptOf = (text: string, name = 'Ann') => replyLine({ name, link: LINK, text }).slice(`-# ↪ [@${name}](<${LINK}>) `.length);
+
+  it('hides spoilers, also unclosed ones', () => {
+    expect(excerptOf('see ||the twist|| now')).toBe('see \\(spoiler\\) now');
+    expect(excerptOf('a ||b\nc')).toBe('a \\(spoiler\\)');
+    expect(excerptOf(`${'word '.repeat(6)}||${'secret '.repeat(10)}||`)).not.toContain('secret');
+    expect(excerptOf(`${'word '.repeat(6)}||${'secret '.repeat(10)}`)).not.toContain('secret');
+  });
+
+  it('drops code marks', () => {
+    expect(excerptOf('```js\nconst x = 1;\n```')).toBe('const x = 1;');
+    expect(excerptOf('run `npm test` first')).toBe('run npm test first');
+  });
+
+  it('wraps links so they show no preview', () => {
+    expect(excerptOf('look https://example.test/a_b here')).toBe('look <https://example.test/a_b> here');
+    expect(excerptOf('see <https://example.test>')).toBe('see <https://example.test>');
+    expect(excerptOf('[click](https://example.test)')).toBe('\\[click\\]\\(<https://example.test>\\)');
+  });
+
+  it('escapes markdown in the name and excerpt', () => {
+    expect(excerptOf('**b** _i_ ~~g~~ ||x|| > q # h \\ e')).toBe('\\*\\*b\\*\\* \\_i\\_ \\~\\~g\\~\\~ \\(spoiler\\) \\> q \\# h \\\\ e');
+    expect(excerptOf('a | b')).toBe('a \\| b');
+    expect(excerptOf('-# tiny')).toBe('\\-\\# tiny');
+    expect(replyLine({ name: '*A* [b] (c) `d`', link: LINK, text: 'x' })).toBe(`-# ↪ [@\\*A\\* \\[b\\] \\(c\\) \\\`d\\\`](<${LINK}>) x`);
+  });
+
+  it('cuts the plain text at a word, before escaping', () => {
+    expect(excerptOf('**aaaa** bbbb cccc dddd eeee ffff gggg hhhh iiii')).toBe('\\*\\*aaaa\\*\\* bbbb cccc dddd eeee ffff gggg…');
+  });
+
   it('writes the deleted line', () => {
     expect(replyLine('deleted')).toBe('-# ↪ (deleted message)');
   });
