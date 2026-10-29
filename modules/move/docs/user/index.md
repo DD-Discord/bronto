@@ -1,6 +1,6 @@
 # Move
 
-Moves messages to another channel or thread, with their authors' names and avatars, files and reactions.
+Moves messages to another channel or thread, with authors, files and reactions.
 
 Moderators move a range of messages with `/move` and need the Manage Messages permission by default. The originals are deleted once their copies are posted.
 

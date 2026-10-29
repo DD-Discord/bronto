@@ -14,7 +14,7 @@ A move covers at most 200 messages, system messages included. You and the bot ne
 
 ## What carries over
 
-- The text, posted under the author's server nickname (or name) and avatar. A repost is marked as sent by the Move webhook.
+- The text, posted under the author's server nickname (or name) and avatar. A repost shows a bot tag.
 - Files, spoilers and stickers. A sticker becomes a `Sticker: <name>` line, plus its image when it can be attached.
 - Embeds of bots and webhooks.
 - Reactions: each emoji once, added by the bot. Custom emojis only when the bot can use them.
@@ -38,7 +38,7 @@ Some messages can't be moved faithfully. They stay in the source channel and a c
 - Messages with an attachment too large for the bot to upload.
 - Polls.
 - Messages that have a thread.
-- The first post of a forum post.
+- The first message of a forum post.
 - Interactive messages: any message with buttons or menus other than link buttons, new-style component messages and sticky posts.
 
 When a reaction can't be added to a copy, its original stays behind too and is listed in the result; the copy keeps the reactions that could be added.
