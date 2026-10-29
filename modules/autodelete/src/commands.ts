@@ -1,4 +1,5 @@
 import {
+  type ChannelRuleIndex,
   crudSubcommands,
   defineCommand,
   defineSubcommand,
@@ -8,13 +9,13 @@ import {
   UserError,
   type CommandContext,
   type CommandDefinition,
+  type HandlerContext,
 } from '@bronto/core';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { and, eq, ne } from 'drizzle-orm';
 import type { AutodeleteConfig } from './config.js';
 import { cooldowns, rules, type Rule } from './db/schema.js';
 import { ruleEntity } from './entity.js';
-import type { RuleIndex } from './rule-index.js';
 
 export type AutodeleteContext = CommandContext<AutodeleteConfig>;
 
@@ -22,7 +23,7 @@ const RULE_CHANNEL_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement
 const LOG_CHANNEL_TYPES = [...RULE_CHANNEL_TYPES, ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread];
 
 export interface AutodeleteCommandDeps {
-  index: RuleIndex;
+  index: ChannelRuleIndex<Rule>;
 }
 
 const LOG_COLUMNS_CLEARED = {
@@ -34,7 +35,7 @@ const LOG_COLUMNS_CLEARED = {
 
 /** Deletes a log webhook unless another rule of this server still uses it. */
 async function deleteUnusedWebhook(
-  ctx: AutodeleteContext,
+  ctx: HandlerContext<AutodeleteConfig>,
   webhook: { id: string; token: string },
   ruleChannelId: string,
 ): Promise<void> {
@@ -48,6 +49,16 @@ async function deleteUnusedWebhook(
   if (shared.length === 0) {
     try { await withWebhookErrors(webhook.token, () => ctx.client.deleteWebhook(webhook.id, { token: webhook.token })); }
     catch (error) { if (!(error instanceof UnknownWebhookError)) throw error; }
+  }
+}
+
+/** Deletes the log webhook of a removed rule unless another rule uses it. */
+export async function cleanUpRemovedRule(ctx: HandlerContext<AutodeleteConfig>, removed: Rule): Promise<void> {
+  if (removed.logWebhookId === null || removed.logWebhookToken === null) return;
+  try {
+    await deleteUnusedWebhook(ctx, { id: removed.logWebhookId, token: removed.logWebhookToken }, removed.channelId);
+  } catch (error) {
+    ctx.log.warn({ err: error, channelId: removed.channelId }, 'Deleting the log webhook of a removed rule failed');
   }
 }
 
