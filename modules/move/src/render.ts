@@ -1,6 +1,7 @@
 import type { APIActionRowComponent, APIComponentInMessageActionRow, APIEmbed, GuildMember, Message, MessageSnapshot, User } from 'discord.js';
 import { MessageReferenceType, StickerFormatType } from 'discord.js';
 import type { Plan, StayReason } from './classify.js';
+import { MAX_FILES } from './limits.js';
 
 const ZERO_WIDTH_SPACE = '\u200b';
 const FORBIDDEN_NAME_WORDS = /(d)(iscord)|(c)(lyde)/gi;
@@ -125,12 +126,13 @@ export function splitContent(text: string, firstPrefix: string, limit = 2000): s
 
 const NOTICES: Record<StayReason, string> = {
   'too-large': 'Attachment too large to move',
+  embeds: 'Too many embeds to move',
   poll: 'Poll not moved',
   thread: 'Has a thread',
   'forum-start': 'Original post',
   interactive: 'Interactive message not moved',
 };
-const NOTICE_ORDER: StayReason[] = ['too-large', 'poll', 'thread', 'forum-start', 'interactive'];
+const NOTICE_ORDER: StayReason[] = ['too-large', 'embeds', 'poll', 'thread', 'forum-start', 'interactive'];
 
 /** The files a message carries (its own, then those of forwarded messages), as reposts would upload them. */
 export function messageFiles(message: Message): RepostFile[] {
@@ -193,30 +195,63 @@ function imageSlots(embed: APIEmbed): { get: () => string | undefined; set: (url
   return slots;
 }
 
-/** The attachment ID an embed URL points at, when it is an uploaded file. */
-function linkedId(url: string | undefined): { id: string; name: string } | null {
+/** The attachment an embed URL points at, when it is an uploaded file; `name` is null when it can't be decoded. */
+function linkedFile(url: string | undefined): { id: string; name: string | null } | null {
   const match = url === undefined ? null : ATTACHMENT_LINK.exec(url);
-  return match === null ? null : { id: match[1]!, name: decodeURIComponent(match[2]!) };
+  if (match === null) return null;
+  try {
+    return { id: match[1]!, name: decodeURIComponent(match[2]!) };
+  } catch {
+    return { id: match[1]!, name: null };
+  }
 }
+
+const isRich = (embed: { data: { type?: string } }): boolean => (embed.data.type ?? 'rich') === 'rich';
 
 /**
  * Rich embeds to copy, as copies: the message's own when a bot or webhook sent it (a member's are link previews),
- * then those of forwarded messages. At most ten.
+ * then those of forwarded messages. Not cut to Discord's limit.
  */
-function copiedEmbeds(message: Message, snapshots: MessageSnapshot[]): APIEmbed[] {
-  const rich = (source: Message | MessageSnapshot) => source.embeds.filter((embed) => (embed.data.type ?? 'rich') === 'rich').map((embed) => structuredClone(embed.toJSON()));
+function richEmbeds(message: Message): APIEmbed[] {
+  const snapshots = message.reference?.type === MessageReferenceType.Forward ? [...message.messageSnapshots.values()] : [];
+  const rich = (source: Message | MessageSnapshot) => source.embeds.filter(isRich).map((embed) => structuredClone(embed.toJSON()));
   const own = message.author.bot || message.webhookId !== null ? rich(message) : [];
-  return [...own, ...snapshots.flatMap(rich)].slice(0, MAX_EMBEDS);
+  return [...own, ...snapshots.flatMap(rich)];
+}
+
+/**
+ * The attachment IDs the copied embeds show that can't go on the post with them: those whose name can't be decoded,
+ * and those past the per-post file limit.
+ */
+function unattachable(embeds: APIEmbed[]): Set<string> {
+  const usable: string[] = [];
+  const blocked = new Set<string>();
+  for (const slot of embeds.flatMap(imageSlots)) {
+    const link = linkedFile(slot.get());
+    if (link === null || usable.includes(link.id) || blocked.has(link.id)) continue;
+    if (link.name === null || usable.length === MAX_FILES) blocked.add(link.id);
+    else usable.push(link.id);
+  }
+  return blocked;
+}
+
+/** What a message's embeds keep behind: more embeds than a post takes, or files that can't go with them. */
+export function embedStays(message: Message): StayReason[] {
+  const embeds = richEmbeds(message);
+  const stays: StayReason[] = [];
+  if (unattachable(embeds.slice(0, MAX_EMBEDS)).size > 0) stays.push('too-large');
+  if (embeds.length > MAX_EMBEDS) stays.push('embeds');
+  return stays;
 }
 
 /** Files that embeds show but the message doesn't list, each once, under a name no other file has. */
-function embedOnlyFiles(embeds: APIEmbed[], listed: RepostFile[]): RepostFile[] {
+function embedOnlyFiles(embeds: APIEmbed[], listed: RepostFile[], blocked: ReadonlySet<string>): RepostFile[] {
   const files: RepostFile[] = [];
   const names = new Set(listed.map(uploadName));
   for (const slot of embeds.flatMap(imageSlots)) {
     const url = slot.get();
-    const link = linkedId(url);
-    if (link === null || listed.some((file) => file.id === link.id) || files.some((file) => file.id === link.id)) continue;
+    const link = linkedFile(url);
+    if (link?.name == null || blocked.has(link.id) || listed.some((file) => file.id === link.id) || files.some((file) => file.id === link.id)) continue;
     const spoiler = link.name.startsWith('SPOILER_');
     const base = link.name.replace(/^SPOILER_/, '');
     let name = base;
@@ -228,24 +263,25 @@ function embedOnlyFiles(embeds: APIEmbed[], listed: RepostFile[]): RepostFile[] 
   return files;
 }
 
-/** Points embed images at the uploaded copies of their files; those not uploaded keep their URL. */
-function pointAtUploads(embeds: APIEmbed[], files: RepostFile[]): void {
+/** Points embed images at the uploaded copies of their files; the others keep their URL. */
+function pointAtUploads(embeds: APIEmbed[], files: RepostFile[], blocked: ReadonlySet<string>): void {
   for (const slot of embeds.flatMap(imageSlots)) {
-    const link = linkedId(slot.get());
-    const file = link === null ? undefined : files.find((entry) => entry.id === link.id);
+    const link = linkedFile(slot.get());
+    const file = link === null || blocked.has(link.id) ? undefined : files.find((entry) => entry.id === link.id);
     if (file !== undefined) slot.set(`attachment://${uploadName(file)}`);
   }
 }
 
-/** True when an embed shows the file. */
-const shown = (embeds: APIEmbed[], file: RepostFile): boolean =>
-  file.id !== undefined && embeds.flatMap(imageSlots).some((slot) => linkedId(slot.get())?.id === file.id);
+/** True when an embed shows the file through a link that goes with the post. */
+const shown = (embeds: APIEmbed[], file: RepostFile, blocked: ReadonlySet<string>): boolean =>
+  file.id !== undefined && !blocked.has(file.id) && embeds.flatMap(imageSlots).some((slot) => linkedFile(slot.get())?.id === file.id);
 
 /**
  * Renders one message as consecutive webhook posts. Embeds are rich ones of bots, webhooks and forwarded messages;
  * the files, embeds and link buttons go on the last part, files embeds show first. Files that exceed the upload
  * limit, or are in `missing` (by URL, e.g. a failed download), are dropped with a notice, and embeds showing them
- * keep pointing at the original.
+ * keep pointing at the original, as do embeds showing files that can't go on their post (see `embedStays`). The
+ * copy shows the first ten embeds.
  */
 export function renderMessage(
   message: Message,
@@ -259,12 +295,13 @@ export function renderMessage(
   const used = fit.reduce((sum, file) => sum + file.size, 0);
   // Sticker images have no size before download, so they only count once downloaded; skip them when nothing is left.
   const stickerFiles = used < input.uploadLimit ? stickers.files : [];
-  const embeds = copiedEmbeds(message, snapshots);
+  const embeds = richEmbeds(message).slice(0, MAX_EMBEDS);
+  const blocked = unattachable(embeds);
   const missing = input.missing ?? new Set<string>();
-  const files = [...fit, ...stickerFiles, ...embedOnlyFiles(embeds, listed)].filter((file) => !missing.has(file.url));
+  const files = [...fit, ...stickerFiles, ...embedOnlyFiles(embeds, listed, blocked)].filter((file) => !missing.has(file.url));
   // Files beyond the first ten go out on further posts, so those the embeds show come first.
-  const ordered = [...files.filter((file) => shown(embeds, file)), ...files.filter((file) => !shown(embeds, file))];
-  pointAtUploads(embeds, ordered);
+  const ordered = [...files.filter((file) => shown(embeds, file, blocked)), ...files.filter((file) => !shown(embeds, file, blocked))];
+  pointAtUploads(embeds, ordered, blocked);
 
   const reasons = new Set<StayReason>(plan.stays);
   if (dropped.length > 0) reasons.add('too-large');

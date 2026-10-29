@@ -191,6 +191,8 @@ describe('running a move', () => {
     const stored = discord.messages.get(id!)!;
     const doc = stored.attachments.find((attachment) => attachment.filename === 'doc.txt')!;
     stored.embeds[0]!.footer = { text: 'f', icon_url: `https://cdn.discordapp.com/attachments/${SOURCE}/${doc.id}/doc.txt` };
+    // As Discord serves it, pic.png is only in the embed URLs, not under attachments.
+    expect(discord.present(stored).attachments.map((attachment) => attachment.filename)).toEqual(['doc.txt']);
     await move(id!, null);
     const [sent] = discord.sent;
     expect(sent!.files).toEqual([
@@ -223,6 +225,59 @@ describe('running a move', () => {
     expect(sent!.message.content).toBe(`card\n-# Attachment too large to move: [original](<${messageLink(SOURCE, id!)}>)`);
     expect(discord.liveMessages(SOURCE)).toEqual([id]);
     expect(result(pressed)).toContain(`${messageLink(SOURCE, id!)} (attachment too large)`);
+  });
+
+  it('keeps a message whose embeds show more than ten files; the copy shows the rest from the original', async () => {
+    await start();
+    discord.addUser(HOOK_USER, { bot: true, username: 'Hook Name' });
+    const files = Array.from({ length: 11 }, (_, index) => ({ filename: `p${index}.png`, data: 'png' }));
+    const embeds = Array.from({ length: 6 }, (_, index) => ({
+      type: 'rich' as const,
+      title: `e${index}`,
+      image: { url: `attachment://p${index * 2}.png` },
+      ...(index * 2 + 1 < 11 ? { thumbnail: { url: `attachment://p${index * 2 + 1}.png` } } : {}),
+    }));
+    const ids = addHistory(discord, SOURCE, [{ content: 'cards', authorId: HOOK_USER, webhookId: FOREIGN_HOOK, files, embeds }, { content: 'next' }]);
+    const pressed = await move(ids[0]!, ids[1]!);
+    const [sent] = discord.sent;
+    const urls = sent!.message.embeds.flatMap((embed) => [embed.image?.url, embed.thumbnail?.url]).filter((url) => url !== undefined);
+    const uploaded = new Set(sent!.files.map((file) => `attachment://${file.name}`));
+    expect(sent!.files).toHaveLength(10);
+    expect(urls.filter((url) => url.startsWith('attachment://')).every((url) => uploaded.has(url))).toBe(true);
+    expect(urls.filter((url) => !url.startsWith('attachment://'))).toEqual([expect.stringMatching(/^https:\/\/cdn\.discordapp\.com\/attachments\/.*\/p10\.png/)]);
+    expect(sent!.message.content).toContain('-# Attachment too large to move');
+    expect(sentContents()[1]).toBe('next');
+    expect(discord.liveMessages(SOURCE)).toEqual([ids[0]]);
+    expect(result(pressed)).toContain(`${messageLink(SOURCE, ids[0]!)} (attachment too large)`);
+  });
+
+  it('keeps a message whose embed file name is unreadable and goes on', async () => {
+    await start();
+    discord.addUser(HOOK_USER, { bot: true, username: 'Hook Name' });
+    const bad = `https://cdn.discordapp.com/attachments/${SOURCE}/100000000000000600/bad%E0%A4%A.png`;
+    const ids = addHistory(discord, SOURCE, [
+      { content: 'card', authorId: HOOK_USER, webhookId: FOREIGN_HOOK, embeds: [{ type: 'rich', title: 'Card', image: { url: bad } }] },
+      { content: 'next' },
+    ]);
+    const pressed = await move(ids[0]!, ids[1]!);
+    expect(sentContents()).toEqual([`card\n-# Attachment too large to move: [original](<${messageLink(SOURCE, ids[0]!)}>)`, 'next']);
+    expect(discord.sent[0]!.message.embeds[0]!.image!.url).toBe(bad);
+    expect(discord.liveMessages(SOURCE)).toEqual([ids[0]]);
+    expect(result(pressed)).toContain(`${messageLink(SOURCE, ids[0]!)} (attachment too large)`);
+  });
+
+  it('keeps a message with more than ten embeds, forwarded ones included', async () => {
+    await start();
+    discord.addUser(HOOK_USER, { bot: true, username: 'Hook Name' });
+    const embeds = (prefix: string, count: number) => Array.from({ length: count }, (_, index) => ({ type: 'rich' as const, title: `${prefix}${index}` }));
+    const ids = addHistory(discord, SOURCE, [
+      { content: '', authorId: HOOK_USER, webhookId: FOREIGN_HOOK, embeds: embeds('a', 4), snapshots: [{ content: '', embeds: embeds('b', 7) }] },
+    ]);
+    const pressed = await move(ids[0]!, null);
+    expect(discord.sent[0]!.message.embeds).toHaveLength(10);
+    expect(discord.sent[0]!.message.content).toContain(`-# Too many embeds to move: [original](<${messageLink(SOURCE, ids[0]!)}>)`);
+    expect(discord.liveMessages(SOURCE)).toEqual(ids);
+    expect(result(pressed)).toContain(`${messageLink(SOURCE, ids[0]!)} (too many embeds)`);
   });
 
   it('copies the embeds of a forwarded message', async () => {

@@ -36,7 +36,8 @@ Messages over 2000 characters are split into several posts, and more than 10 fil
 
 Some messages can't be moved faithfully. They stay in the source channel and a copy goes to the target with a note and a link to the original:
 
-- Messages with an attachment too large for the bot to upload, also one an embed shows.
+- Messages with an attachment too large for the bot to upload, also one an embed shows, or with embeds that show more than 10 files.
+- Messages with more than 10 embeds, forwarded ones included.
 - Polls, also forwarded ones.
 - Messages that have a thread.
 - The first message of a forum post.

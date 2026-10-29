@@ -2,7 +2,7 @@ import { createNativeTestClient, FakeDiscordHttp } from '@bronto/core/testing';
 import { MessageFlags, MessageType, type GuildTextBasedChannel, type Message } from 'discord.js';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { classify } from '../src/classify.js';
-import { addHistory, addMoveFixtures, FORUM_POST, SOURCE, THREAD } from './harness.js';
+import { addHistory, addMoveFixtures, FORUM_POST, MEMBER, SOURCE, THREAD } from './harness.js';
 
 describe('classify', () => {
   let discord: FakeDiscordHttp;
@@ -80,6 +80,24 @@ describe('classify', () => {
     expect(classify(v2, ctx)).toEqual({ kind: 'repost', stays: ['interactive'] });
     const plain = await fetchOne(SOURCE, { snapshots: [{ content: 'x', embeds: [{ type: 'rich', title: 'ok' }] }] });
     expect(classify(plain, ctx)).toEqual({ kind: 'repost', stays: [] });
+  });
+
+  it('more than ten embeds stay; a member\'s link previews don\'t count', async () => {
+    const rich = (count: number) => Array.from({ length: count }, (_, index) => ({ type: 'rich', title: `e${index}` }));
+    expect(classify(await fetchOne(SOURCE, { embeds: rich(10) }), ctx)).toEqual({ kind: 'repost', stays: [] });
+    expect(classify(await fetchOne(SOURCE, { embeds: rich(4), snapshots: [{ content: '', embeds: rich(7) }] }), ctx)).toEqual({ kind: 'repost', stays: ['embeds'] });
+    const previews = Array.from({ length: 11 }, (_, index) => ({ type: 'link', url: `https://x.test/${index}` }));
+    expect(classify(await fetchOne(SOURCE, { authorId: MEMBER, embeds: previews }), ctx)).toEqual({ kind: 'repost', stays: [] });
+  });
+
+  it('embeds showing more than ten files, or a file name that can\'t be read, stay', async () => {
+    const link = (index: number) => `https://cdn.discordapp.com/attachments/${SOURCE}/1000000000000006${String(index).padStart(2, '0')}/p${index}.png`;
+    const embeds = (count: number) => Array.from({ length: count }, (_, index) => ({ type: 'rich', image: { url: link(index) } }));
+    expect(classify(await fetchOne(SOURCE, { embeds: embeds(10) }), ctx)).toEqual({ kind: 'repost', stays: [] });
+    const many = [...embeds(10).slice(0, 9), { type: 'rich', image: { url: link(9) }, thumbnail: { url: link(10) } }];
+    expect(classify(await fetchOne(SOURCE, { embeds: many }), ctx)).toEqual({ kind: 'repost', stays: ['too-large'] });
+    const bad = [{ type: 'rich', image: { url: `https://cdn.discordapp.com/attachments/${SOURCE}/100000000000000600/%E0%A4%A.png` } }];
+    expect(classify(await fetchOne(SOURCE, { embeds: bad }), ctx)).toEqual({ kind: 'repost', stays: ['too-large'] });
   });
 
   it('sticky posts stay', async () => {

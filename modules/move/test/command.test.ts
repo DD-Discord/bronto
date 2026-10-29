@@ -61,15 +61,16 @@ it('asks for the Message Content intent, without which fetched messages arrive e
 describe('/move', () => {
   it('shows the confirmation with links and counts', async () => {
     const bot = await start();
-    const ids = addHistory(discord, SOURCE, [{ content: 'a' }, { content: 'b' }, { content: 'poll', poll: true }, { content: 'c' }]);
+    const embeds = Array.from({ length: 11 }, (_, index) => ({ type: 'rich' as const, title: `e${index}` }));
+    const ids = addHistory(discord, SOURCE, [{ content: 'a' }, { content: 'b', embeds }, { content: 'poll', poll: true }, { content: 'c' }]);
     const fake = await runCommand(bot, { from: messageLink(SOURCE, ids[0]!), to: messageLink(SOURCE, ids[3]!), target: targetOption(TARGET) });
     const message = answer(fake);
     expect(message.content).toContain(`<#${SOURCE}>`);
     expect(message.content).toContain(`<#${TARGET}>`);
     expect(message.content).toContain(`First: ${messageLink(SOURCE, ids[0]!)}`);
     expect(message.content).toContain(`Last: ${messageLink(SOURCE, ids[3]!)}`);
-    expect(message.content).toContain('**3** messages will move.');
-    expect(message.content).toContain('1 stay behind: 1 polls.');
+    expect(message.content).toContain('**2** messages will move.');
+    expect(message.content).toContain('2 stay behind: 1 with too many embeds, 1 polls.');
     expect(buttons(message).map((b) => b.label)).toEqual(['Move', 'Cancel']);
   });
 

@@ -28,6 +28,7 @@ const TARGET_TYPES = [
 
 const STAY_TEXT: Record<StayReason, string> = {
   'too-large': 'with too-large attachments',
+  embeds: 'with too many embeds',
   poll: 'polls',
   thread: 'with a thread',
   'forum-start': 'forum post starters',

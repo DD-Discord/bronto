@@ -1,8 +1,8 @@
 import type { Message } from 'discord.js';
 import { ButtonStyle, ComponentType, MessageFlags, MessageType } from 'discord.js';
-import { fitFiles, messageFiles } from './render.js';
+import { embedStays, fitFiles, messageFiles } from './render.js';
 
-export type StayReason = 'too-large' | 'poll' | 'thread' | 'forum-start' | 'interactive';
+export type StayReason = 'too-large' | 'embeds' | 'poll' | 'thread' | 'forum-start' | 'interactive';
 export type Plan = { kind: 'skip-delete' | 'skip-keep' } | { kind: 'repost'; stays: StayReason[] };
 
 /** System messages that stay: a thread's notice in its parent and the starter copy at the top of a thread. */
@@ -28,7 +28,9 @@ export function classify(
 ): Plan {
   if (message.system) return { kind: KEPT_SYSTEM_TYPES.has(message.type) ? 'skip-keep' : 'skip-delete' };
   const stays: StayReason[] = [];
-  if (fitFiles(messageFiles(message), ctx.uploadLimit).dropped.length > 0) stays.push('too-large');
+  const fromEmbeds = embedStays(message);
+  if (fitFiles(messageFiles(message), ctx.uploadLimit).dropped.length > 0 || fromEmbeds.includes('too-large')) stays.push('too-large');
+  if (fromEmbeds.includes('embeds')) stays.push('embeds');
   // A forward's poll or components can't be copied.
   const snapshots = [...message.messageSnapshots.values()];
   if (message.poll !== null || snapshots.some((snapshot) => snapshot.poll !== null)) stays.push('poll');

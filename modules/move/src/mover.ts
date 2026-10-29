@@ -19,14 +19,13 @@ import type { PendingMove } from './pending.js';
 import { readRange } from './range.js';
 import { displayName, renderMessage, uploadName, webhookName, type LinkRow, type ReplyTarget, type RepostPart } from './render.js';
 import { findMoveWebhook } from './webhook.js';
+import { MAX_FILES } from './limits.js';
 
 /** The shortest time between two progress edits. */
 const PROGRESS_MS = 3000;
 /** Discord bulk-deletes only messages younger than 14 days; the margin covers the time the move takes. */
 const BULK_MAX_AGE_MS = 14 * 24 * 3600_000 - 10 * 60_000;
 const BULK_SIZE = 100;
-/** Discord takes at most this many files per message. */
-const MAX_FILES = 10;
 /** How long reposts still count as moved after a move ends, since their gateway events can arrive late. */
 const ACTIVE_GRACE_MS = 60_000;
 /**
@@ -50,6 +49,7 @@ type ResultReason = StayReason | 'reaction';
 
 const REASON_TEXT: Record<ResultReason, string> = {
   'too-large': 'attachment too large',
+  embeds: 'too many embeds',
   poll: 'poll',
   thread: 'has a thread',
   'forum-start': 'original post',

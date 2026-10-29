@@ -206,7 +206,7 @@ describe('renderMessage', () => {
     expect(parts[0]!.files).toMatchObject([{ url: expect.stringContaining('/stickers/100000000000000503.png'), name: 'Wave.png' }]);
   });
 
-  it('copies rich embeds of forwards, after the message\'s own, ten at most', async () => {
+  it('copies rich embeds of forwards, after the message\'s own; the copy shows the first ten', async () => {
     const own = Array.from({ length: 4 }, (_, index) => ({ type: 'rich', title: `own ${index}` }));
     const forwarded = Array.from({ length: 8 }, (_, index) => ({ type: 'rich', title: `fwd ${index}` }));
     const parts = await render({ embeds: own, snapshots: [{ content: '', embeds: [{ type: 'link', url: 'https://x.test' }, ...forwarded] }] });
@@ -214,9 +214,10 @@ describe('renderMessage', () => {
   });
 
   it('adds one notice per stay reason', async () => {
-    const parts = await render({ content: 'hi' }, ['poll', 'thread', 'forum-start', 'interactive']);
+    const parts = await render({ content: 'hi' }, ['embeds', 'poll', 'thread', 'forum-start', 'interactive']);
     expect(parts[0]!.content).toBe([
       'hi',
+      `-# Too many embeds to move: [original](<${LINK}>)`,
       `-# Poll not moved: [original](<${LINK}>)`,
       `-# Has a thread: [original](<${LINK}>)`,
       `-# Original post: [original](<${LINK}>)`,
