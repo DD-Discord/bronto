@@ -1,10 +1,9 @@
+import { isGone } from '@bronto/core';
 import sticky from '@bronto/sticky';
 import templates from '@bronto/templates';
 import {
   ButtonStyle,
   ComponentType,
-  DiscordAPIError,
-  RESTJSONErrorCodes,
   type APIActionRowComponent,
   type APIButtonComponentWithCustomId,
 } from 'discord.js';
@@ -60,9 +59,6 @@ export function openerRows(ctx: FormsContext, list: OpenerButton[]): OpenerRow[]
   }
   return rows;
 }
-
-const isGone = (error: unknown) =>
-  error instanceof DiscordAPIError && (error.code === RESTJSONErrorCodes.UnknownMessage || error.code === RESTJSONErrorCodes.UnknownChannel);
 
 /** The channel's message manager, or null when the channel is gone or can't hold messages. */
 async function messagesOf(ctx: FormsContext, channelId: string) {

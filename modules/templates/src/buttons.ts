@@ -1,13 +1,11 @@
-import { defineButton, defineModal, downloadFile, UserError, type ButtonDefinition } from '@bronto/core';
+import { defineButton, defineModal, downloadFile, UserError, type ButtonDefinition, isUnknownChannel } from '@bronto/core';
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  DiscordAPIError,
   FileUploadBuilder,
   LabelBuilder,
   ModalBuilder,
-  RESTJSONErrorCodes,
   TextInputBuilder,
   TextInputStyle,
   type APIEmbed,
@@ -154,7 +152,7 @@ async function deleteThread(ctx: TemplatesContext, threadId: string): Promise<vo
     const thread = await ctx.client.channels.fetch(threadId);
     await thread?.delete();
   } catch (error) {
-    if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return;
+    if (isUnknownChannel(error)) return;
     throw error;
   }
 }

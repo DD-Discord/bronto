@@ -1,4 +1,4 @@
-import { downloadFile } from '@bronto/core';
+import { downloadFile, isUnknownChannel } from '@bronto/core';
 import { ChannelType, DiscordAPIError, RESTJSONErrorCodes, type ThreadChannel } from 'discord.js';
 import { and, eq, lt, notExists, or, sql } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
@@ -73,7 +73,7 @@ async function existingThread(ctx: FormsContext): Promise<ThreadChannel | null> 
     const thread = await ctx.client.channels.fetch(id);
     return thread?.isThread() === true ? thread : null;
   } catch (error) {
-    if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return null;
+    if (isUnknownChannel(error)) return null;
     throw error;
   }
 }

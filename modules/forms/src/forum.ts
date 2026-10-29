@@ -1,4 +1,4 @@
-import { UserError } from '@bronto/core';
+import { UserError, isUnknownChannel } from '@bronto/core';
 import { ChannelType, DiscordAPIError, OverwriteType, PermissionFlagsBits, RESTJSONErrorCodes } from 'discord.js';
 import type { FormsContext } from './context.js';
 import { forums } from './db/schema.js';
@@ -18,7 +18,7 @@ export async function channelExists(ctx: FormsContext, channelId: string): Promi
     await ctx.client.channels.fetch(channelId, { force: true });
     return true;
   } catch (error) {
-    if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return false;
+    if (isUnknownChannel(error)) return false;
     throw error;
   }
 }

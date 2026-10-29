@@ -1,5 +1,6 @@
 import { DiscordAPIError, RESTJSONErrorCodes, type Client, type MessageCreateOptions, type WebhookMessageCreateOptions } from 'discord.js';
 import type { Logger } from 'pino';
+import { isGone } from '../discord/index.js';
 import {
   MissingWebhookPermissionError, UnknownWebhookError, ensureWebhook, resolveWebhook, stripRequestBody, withWebhookErrors,
   type IncomingWebhook, type WebhookMessage, type WebhookTarget,
@@ -7,8 +8,6 @@ import {
 
 const MAX_USERNAME = 80;
 
-const isGone = (error: unknown) => error instanceof DiscordAPIError &&
-  (error.code === RESTJSONErrorCodes.UnknownMessage || error.code === RESTJSONErrorCodes.UnknownChannel);
 const isChannelLost = (error: unknown): boolean => error instanceof DiscordAPIError &&
   (error.code === RESTJSONErrorCodes.UnknownChannel || error.code === RESTJSONErrorCodes.MissingAccess);
 

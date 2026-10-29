@@ -1,6 +1,6 @@
 import autoreact from '@bronto/autoreact';
 import autothread from '@bronto/autothread';
-import { defineButton, UserError, type Reply, type ReplyMessage } from '@bronto/core';
+import { defineButton, UserError, type Reply, type ReplyMessage, isUnknownChannel } from '@bronto/core';
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -266,7 +266,7 @@ function failure(ctx: FormsContext, form: Form, submissionId: string, reason: st
 
 function reasonOf(error: unknown): string {
   if (error instanceof MissingFileError) return `${error.file.name} is no longer available.`;
-  if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return "the submissions channel or the form's post no longer exists.";
+  if (isUnknownChannel(error)) return "the submissions channel or the form's post no longer exists.";
   if (error instanceof DiscordAPIError) return `Discord answered "${error.message}".`;
   return 'something went wrong.';
 }
@@ -320,7 +320,7 @@ async function fetchChannel(ctx: FormsContext, id: string): Promise<Channel | nu
   try {
     return await ctx.client.channels.fetch(id, { force: true });
   } catch (error) {
-    if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return null;
+    if (isUnknownChannel(error)) return null;
     throw error;
   }
 }
