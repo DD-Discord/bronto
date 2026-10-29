@@ -177,6 +177,32 @@ describe('running a move', () => {
     ]);
   });
 
+  it('keeps and lists a message whose reaction fails to add; its copy keeps the reactions that worked', async () => {
+    await start();
+    const hook = discord.addWebhook(TARGET, { name: 'Move' });
+    const refuse = { status: 403, json: { code: 50013, message: 'Missing Permissions' } };
+    intercept('POST', `/webhooks/${hook.id}/${hook.token}`, {
+      1: async (pass) => {
+        const answer = await pass();
+        const repost = (answer.json as { id: string }).id;
+        discord.override('PUT', `/channels/${TARGET}/messages/${repost}/reactions/${encodeURIComponent('👍')}/@me`, () => refuse);
+        return answer;
+      },
+    });
+    const ids = addHistory(discord, SOURCE, [
+      { content: 'liked', reactions: [{ emoji: { id: null, name: '👍' }, count: 1 }, { emoji: { id: null, name: '🎉' }, count: 1 }] },
+      { content: 'plain' },
+    ]);
+    const text = result(await move(ids[0]!, ids[1]!));
+    const [liked] = discord.sent;
+    expect(sentContents()).toEqual(['liked', 'plain']);
+    expect(discord.reactions).toEqual([{ messageId: liked!.id, emoji: '🎉' }]);
+    expect(discord.liveMessages(SOURCE)).toEqual([ids[0]]);
+    expect(discord.liveMessages(TARGET)).toContain(liked!.id);
+    expect(text).toContain('Moved **1** message to');
+    expect(text).toContain(`${messageLink(SOURCE, ids[0]!)} (reaction not added)`);
+  });
+
   it('reply inside the range links to the repost; outside links to the original', async () => {
     await start();
     const [outside] = addHistory(discord, SOURCE, [{ content: 'said before the range', authorId: OTHER }]);

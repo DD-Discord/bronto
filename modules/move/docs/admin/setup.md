@@ -4,8 +4,8 @@
   intent; without it messages arrive without their text, embeds, files and components, and a move would delete
   originals after posting empty copies.
 - `/move` needs Manage Messages by default.
-- The bot needs View Channel, Read Message History and Manage Messages in the source, and View Channel, Attach Files,
-  Add Reactions and Use External Emojis in the target. Manage Webhooks is needed on the target channel (a thread's
+- The bot needs View Channel, Read Message History and Manage Messages in the source, and View Channel, Read Message
+  History (to add reactions), Attach Files, Add Reactions and Use External Emojis in the target. Manage Webhooks is needed on the target channel (a thread's
   parent). Reposts go through a webhook named `Move` that the bot creates there; only webhooks it created with that
   name are used.
 - Intents: Guilds, Guild Messages, Message Content and Guild Expressions.

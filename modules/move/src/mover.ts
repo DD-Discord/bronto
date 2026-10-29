@@ -45,12 +45,16 @@ const isContentError = (error: unknown): boolean =>
 /** Room for the result in one message. */
 const RESULT_LENGTH = 1900;
 
-const REASON_TEXT: Record<StayReason, string> = {
+/** Why an original stays: a reason found before posting, or a reaction that couldn't be added to its copy. */
+type ResultReason = StayReason | 'reaction';
+
+const REASON_TEXT: Record<ResultReason, string> = {
   'too-large': 'attachment too large',
   poll: 'poll',
   thread: 'has a thread',
   'forum-start': 'original post',
   interactive: 'interactive',
+  reaction: 'reaction not added',
 };
 
 const link = (guildId: string, channelId: string, messageId: string): string => `https://discord.com/channels/${guildId}/${channelId}/${messageId}`;
@@ -192,7 +196,7 @@ class Run {
   private readonly posted: string[] = [];
   private readonly toDelete: string[] = [];
   /** Reposted originals that stay, with their reasons. */
-  private readonly stayed: { id: string; reasons: StayReason[] }[] = [];
+  private readonly stayed: { id: string; reasons: ResultReason[] }[] = [];
   /** Originals that stay without a copy, since nothing of them could be posted. */
   private readonly notCopied: string[] = [];
   /** Originals that stay with part of a copy, since removing the posted parts failed. */
@@ -306,8 +310,8 @@ class Run {
       this.posted.push(last.id);
     }
     this.reposted.set(message.id, own[0]!);
-    await this.react(message, last!);
-    if (stays.length > 0) this.stayed.push({ id: message.id, reasons: stays });
+    const reasons: ResultReason[] = (await this.react(message, last!)) ? stays : [...stays, 'reaction'];
+    if (reasons.length > 0) this.stayed.push({ id: message.id, reasons });
     else this.toDelete.push(message.id);
   }
 
@@ -324,17 +328,23 @@ class Run {
     return sends.filter((send) => send.content.trim() !== '' || send.embeds.length > 0 || send.files.length > 0);
   }
 
-  /** Each emoji once, in order; custom emojis only when the bot can use them. Failures are skipped. */
-  private async react(message: Message, repost: Message): Promise<void> {
+  /**
+   * Each emoji once, in order; custom emojis only when the bot can use them. A failed reaction doesn't stop the
+   * others; returns false when any failed, so the original stays.
+   */
+  private async react(message: Message, repost: Message): Promise<boolean> {
+    let complete = true;
     for (const reaction of message.reactions.cache.values()) {
+      const { emoji } = reaction;
+      if (emoji.id !== null && !this.ctx.client.emojis.cache.has(emoji.id)) continue;
       try {
-        const { emoji } = reaction;
-        if (emoji.id !== null && !this.ctx.client.emojis.cache.has(emoji.id)) continue;
         await repost.react(emoji);
       } catch (error) {
-        this.ctx.log.debug({ err: error, messageId: repost.id }, 'Adding a reaction to a repost failed');
+        complete = false;
+        this.ctx.log.warn({ err: error, messageId: repost.id }, 'Adding a reaction to a repost failed');
       }
     }
+    return complete;
   }
 
   private async replyTarget(message: Message): Promise<ReplyTarget> {

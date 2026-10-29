@@ -41,6 +41,8 @@ Some messages can't be moved faithfully. They stay in the source channel and a c
 - The first post of a forum post.
 - Interactive messages: any message with buttons or menus other than link buttons, new-style component messages and sticky posts.
 
+When a reaction can't be added to a copy, its original stays behind too and is listed in the result; the copy keeps the reactions that could be added.
+
 When Discord refuses a message, for example because an embed is invalid, that message stays behind without a copy and the move goes on. If the move fails for another reason, for example the bot loses access to the target, the copies already posted are removed and nothing is deleted. The result lists every message that stayed behind or couldn't be deleted.
 
 Other system messages in the range, such as pin notices, are deleted with it. A "thread started" notice is always kept.

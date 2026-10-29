@@ -54,6 +54,8 @@ export async function checkPermissions(
     ]),
     ...missing('Bot', target, me, [
       ['View Channel', PermissionFlagsBits.ViewChannel],
+      // Adding a reaction needs the message history.
+      ['Read Message History', PermissionFlagsBits.ReadMessageHistory],
       ['Attach Files', PermissionFlagsBits.AttachFiles],
       ['Add Reactions', PermissionFlagsBits.AddReactions],
       ['Use External Emojis', PermissionFlagsBits.UseExternalEmojis],

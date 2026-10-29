@@ -1,5 +1,5 @@
 import { FakeDiscordHttp, type FakeInteraction } from '@bronto/core/testing';
-import { GatewayIntentBits, PermissionFlagsBits } from 'discord.js';
+import { ChannelType, GatewayIntentBits, OverwriteType, PermissionFlagsBits } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { createMoveModule } from '../src/index.js';
@@ -107,6 +107,17 @@ describe('/move', () => {
     const text = await refusal({ from: messageLink(SOURCE, id!), target: targetOption(TARGET) });
     expect(text).toContain('Bot: Manage Webhooks in #games');
     expect(text).not.toContain('You:');
+  });
+
+  it('asks for Read Message History in the target, which adding reactions needs', async () => {
+    const deny = PermissionFlagsBits.ReadMessageHistory;
+    const overwrites = [{ id: discord.botId, type: OverwriteType.Member, allow: String(BOT_PERMISSIONS & ~deny), deny: String(deny) }] as never;
+    discord.addChannel(TARGET, { guildId: GUILD, type: ChannelType.GuildText, name: 'games', permissionOverwrites: overwrites });
+    await start();
+    const [id] = addHistory(discord, SOURCE, [{ content: 'a' }]);
+    const text = await refusal({ from: messageLink(SOURCE, id!), target: targetOption(TARGET) });
+    expect(text).toContain('Bot: Read Message History in #games');
+    expect(text).not.toContain('#general');
   });
 
   it('names the parent for Manage Webhooks when the target is a thread', async () => {
