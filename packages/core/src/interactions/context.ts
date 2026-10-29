@@ -20,7 +20,7 @@ export interface CommandContext<TConfig = any> extends InteractionContext<TConfi
 
 /** Component interactions can replace the message their component sits on. */
 export interface UpdatableContext {
-  /** Replaces the component's message; the first answer, or the one after `deferUpdate`. */
+  /** Replaces the component's message; the first answer, after `deferUpdate`, or again after an update. */
   update(message: Reply): Promise<void>;
   /** Acknowledges without changing the message yet. Components slower than 2 s are deferred automatically. */
   deferUpdate(): Promise<void>;
