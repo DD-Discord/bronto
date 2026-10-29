@@ -370,6 +370,27 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
 
+  modules/move:
+    devDependencies:
+      '@bronto/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@bronto/mediaonly':
+        specifier: workspace:*
+        version: link:../mediaonly
+      '@bronto/sticky':
+        specifier: workspace:*
+        version: link:../sticky
+      '@bronto/templates':
+        specifier: workspace:*
+        version: link:../templates
+      discord.js:
+        specifier: 14.27.0
+        version: 14.27.0
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+
   modules/sticky:
     devDependencies:
       '@bronto/core':
