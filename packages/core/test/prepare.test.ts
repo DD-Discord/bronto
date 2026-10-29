@@ -30,7 +30,7 @@ describe('prepareDatabase', () => {
   it('migrates core and modules, grants the roles and checks the schemas', async () => {
     expect(await prepareDatabase(t.database, options())).toEqual([]);
     expect(await historyCount(t, 'core')).toBe(1);
-    expect(await historyCount(t, 'widgets')).toBe(2);
+    expect(await historyCount(t, 'widgets')).toBe(3);
     await expect(asWidgets('select count(*) from widgets.items')).resolves.toBeDefined();
     await expect(t.database.appPool.query('select count(*) from widgets.items')).rejects.toThrow(/permission denied/);
   });
@@ -87,7 +87,7 @@ describe('prepareDatabase', () => {
       const results = await Promise.all([prepareDatabase(other.database, options()), prepareDatabase(other.database, options())]);
       expect(results).toEqual([[], []]);
       expect(await historyCount(other, 'core')).toBe(1);
-      expect(await historyCount(other, 'widgets')).toBe(2);
+      expect(await historyCount(other, 'widgets')).toBe(3);
     } finally {
       await other.drop();
     }
