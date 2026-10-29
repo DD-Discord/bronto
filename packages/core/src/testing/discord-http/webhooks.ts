@@ -80,8 +80,11 @@ export function webhookRoutes(state: DiscordState) {
   return [
     route('POST', '/channels/:channelId/webhooks', (_request, { channelId }) => {
       if (!state.channels.has(channelId)) return error(10003);
-      const credentials = state.addWebhook(channelId);
-      return ok(state.webhooks.get(credentials.id));
+      return ok(state.addWebhook(channelId));
+    }),
+    route('GET', '/channels/:channelId/webhooks', (_request, { channelId }) => {
+      if (!state.channels.has(channelId)) return error(10003);
+      return ok([...state.webhooks.values()].filter(webhook => webhook.channel_id === channelId));
     }),
     route('GET', '/webhooks/:webhookId', fetch),
     route('GET', '/webhooks/:webhookId/:token', fetch),

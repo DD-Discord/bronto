@@ -1,4 +1,4 @@
-import { ChannelType, MessageFlags, type APIAttachment, type APIEmbed } from 'discord.js';
+import { ChannelType, MessageFlags, type APIAttachment, type APIEmbed, type APIMessage } from 'discord.js';
 import type { WebhookMessage } from '../../webhooks/types.js';
 import type { FakeRestAnswer, RecordedRequest } from '../rest.js';
 import { guessContentType } from './state.js';
@@ -6,8 +6,43 @@ import { route } from './router.js';
 import { error, gone, ok } from './responses.js';
 import type { DiscordState } from './state.js';
 
+/** Discord rejects bulk deletes of messages older than 14 days, judged by the snowflake's timestamp. */
+const BULK_DELETE_MAX_AGE_MS = 14 * 24 * 3600_000;
+const DISCORD_EPOCH = 1420070400000n;
+const snowflakeTime = (id: string): number => Number((BigInt(id) >> 22n) + DISCORD_EPOCH);
+const newestFirst = (a: APIMessage, b: APIMessage): number => (BigInt(a.id) < BigInt(b.id) ? 1 : -1);
+
 export function messageRoutes(state: DiscordState) {
   return [
+    route('GET', '/channels/:channelId/messages', (request, { channelId }) => {
+      if (!state.channels.has(channelId)) return error(10003);
+      const query = new URLSearchParams(request.query);
+      const limit = query.has('limit') ? Number(query.get('limit')) : 50;
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) return error(50035, 400);
+      const inChannel = [...state.messages.values()].filter(m => m.channel_id === channelId).sort(newestFirst);
+      const after = query.get('after'), before = query.get('before'), around = query.get('around');
+      let page: APIMessage[];
+      if (after) page = inChannel.filter(m => BigInt(m.id) > BigInt(after)).slice(-limit);
+      else if (before) page = inChannel.filter(m => BigInt(m.id) < BigInt(before)).slice(0, limit);
+      else if (around) {
+        const newer = inChannel.filter(m => BigInt(m.id) > BigInt(around)).slice(-Math.floor(limit / 2));
+        page = [...newer, ...inChannel.filter(m => BigInt(m.id) <= BigInt(around)).slice(0, limit - newer.length)];
+      } else page = inChannel.slice(0, limit);
+      return ok(page.map(m => state.present(m)));
+    }),
+    route('POST', '/channels/:channelId/messages/bulk-delete', async (request, { channelId }) => {
+      if (!state.channels.has(channelId)) return error(10003);
+      const { body } = await readPayload(request);
+      const ids = Array.isArray(body.messages) ? body.messages as string[] : [];
+      if (ids.length < 2 || ids.length > 100) return error(50035, 400);
+      const cutoff = Date.now() - BULK_DELETE_MAX_AGE_MS;
+      if (ids.some(id => state.messages.get(id)?.channel_id !== channelId || snowflakeTime(id) < cutoff)) return error(50034, 400);
+      for (const id of ids) {
+        state.messages.delete(id);
+        state.botDeleted.push(id);
+      }
+      return gone();
+    }),
     route('GET', '/channels/:channelId/messages/:messageId', (_request, { channelId, messageId }) => {
       if (!state.channels.has(channelId)) return error(10003);
       const message = state.messages.get(messageId);
@@ -88,7 +123,11 @@ export async function sendMessage(
     state.sent.push({
       id, webhookId, channelId: webhook.channel_id!, threadId,
       message: { content: message.content, embeds: message.embeds },
-      options: { ...options, silent: Boolean(Number(body.flags) & MessageFlags.SuppressNotifications) },
+      options: {
+        ...options, silent: Boolean(Number(body.flags) & MessageFlags.SuppressNotifications),
+        flags: Number(body.flags ?? 0), allowedMentions: body.allowed_mentions,
+      },
+      files: message.attachments.map(({ filename, description, size }) => ({ name: filename, ...(description ? { description } : {}), size })),
       startedAt: performance.now(),
     });
   } else {
