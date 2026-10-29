@@ -7,6 +7,9 @@ import {
   ChannelType,
   PermissionFlagsBits,
   MessageFlags,
+  type Client,
+  type Guild,
+  type GuildTextBasedChannel,
   type Message,
 } from 'discord.js';
 import { classify, type StayReason } from './classify.js';
@@ -40,6 +43,38 @@ function readLink(text: string, name: string, guildId: string): NonNullable<Retu
   return parsed;
 }
 
+/** True for a forum or media channel's post, whose starter message stays behind. */
+export function isForumPost(channel: GuildTextBasedChannel): boolean {
+  return channel.isThread() && [ChannelType.GuildForum, ChannelType.GuildMedia].includes(channel.parent?.type as ChannelType);
+}
+
+/**
+ * Fetches the source and target afresh and checks both members' permissions. Throws a `UserError` when a channel is
+ * gone, unsuitable or permissions are missing.
+ */
+export async function loadChannels(
+  client: Client,
+  guildId: string,
+  sourceId: string,
+  targetId: string,
+  userId: string,
+): Promise<{ guild: Guild; source: GuildTextBasedChannel; target: GuildTextBasedChannel }> {
+  const guild = await client.guilds.fetch(guildId);
+  const source = await guild.channels.fetch(sourceId).catch(() => null);
+  if (source === null || !source.isTextBased()) throw new UserError("I can't find that channel, or it has no messages to move.");
+  const target = await guild.channels.fetch(targetId).catch(() => null);
+  if (target === null || !target.isTextBased() || !TARGET_TYPES.includes(target.type)) {
+    throw new UserError("Messages can't be moved there. Choose a text channel, an announcement channel or a thread.");
+  }
+  // Threads inherit permissions from their parent, which may not be cached yet.
+  for (const channel of [source, target]) if (channel.isThread() && channel.parentId !== null) await guild.channels.fetch(channel.parentId);
+  // Roles may have changed since a member was cached, so both are read afresh.
+  const [moderator, me] = await Promise.all([guild.members.fetch({ user: userId, force: true }), guild.members.fetchMe({ force: true })]);
+  const refused = await checkPermissions(source, target, moderator, me);
+  if (refused.length > 0) throw new UserError(`Missing permissions:\n${refused.map((name) => `- ${name}`).join('\n')}`);
+  return { guild, source, target };
+}
+
 /** The counts of the confirmation: messages that move, and those that stay behind by reason. */
 function summarize(plans: ReturnType<typeof classify>[]): string[] {
   const reposts = plans.filter((plan) => plan.kind === 'repost');
@@ -67,29 +102,16 @@ export function createMoveCommand(deps: { pending: PendingMoves; buttons: MoveBu
       target: opt.channel({ description: 'Where the messages go', channelTypes: TARGET_TYPES, required: true }),
     },
     execute: async (ctx, options) => {
-      const guild = await ctx.client.guilds.fetch(ctx.guildId);
       const from = readLink(options.from, 'from', ctx.guildId);
       const to = options.to === null ? null : readLink(options.to, 'to', ctx.guildId);
       if (to !== null && to.channelId !== from.channelId) throw new UserError('Both links must point to the same channel.');
       if (options.target.id === from.channelId) throw new UserError('The messages are already in that channel.');
 
-      const source = await guild.channels.fetch(from.channelId).catch(() => null);
-      if (source === null || !source.isTextBased()) throw new UserError("I can't find that channel, or it has no messages to move.");
-      const target = await guild.channels.fetch(options.target.id).catch(() => null);
-      if (target === null || !target.isTextBased() || !TARGET_TYPES.includes(target.type)) {
-        throw new UserError("Messages can't be moved there. Choose a text channel, an announcement channel or a thread.");
-      }
-      // Threads inherit permissions from their parent, which may not be cached yet.
-      for (const channel of [source, target]) if (channel.isThread() && channel.parentId !== null) await guild.channels.fetch(channel.parentId);
-      // Roles may have changed since a member was cached, so both are read afresh.
-      const [moderator, me] = await Promise.all([guild.members.fetch({ user: ctx.interaction.user.id, force: true }), guild.members.fetchMe({ force: true })]);
-      const refused = await checkPermissions(source, target, moderator, me);
-      if (refused.length > 0) throw new UserError(`Missing permissions:\n${refused.map((name) => `- ${name}`).join('\n')}`);
-
+      const { source, target } = await loadChannels(ctx.client, ctx.guildId, from.channelId, options.target.id, ctx.interaction.user.id);
       const messages = await readRange(source, from.messageId, to?.messageId ?? null);
-      const sourceIsForumPost = source.isThread() && [ChannelType.GuildForum, ChannelType.GuildMedia].includes(source.parent?.type as ChannelType);
       const uploadLimit = ctx.interaction.attachmentSizeLimit;
       const stickyApi = ctx.modules.optional(sticky);
+      const sourceIsForumPost = isForumPost(source);
       const plans = messages.map((message: Message) =>
         classify(message, { uploadLimit, sourceIsForumPost, isSticky: (m) => stickyApi?.isSticky(m) === true }),
       );

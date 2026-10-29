@@ -131,8 +131,8 @@ describe('confirmation buttons', () => {
   it('moving answers "Moving…" without buttons', async () => {
     const { move } = await confirmation();
     const pressed = await pressButton(mb!, move);
-    expect(answer(pressed).content).toBe('Moving…');
-    expect(answer(pressed).components).toEqual([]);
+    expect(answer(pressed, 0).content).toBe('Moving…');
+    expect(answer(pressed, 0).components).toEqual([]);
   });
 
   it('cancel ends without changes', async () => {
@@ -160,7 +160,7 @@ describe('confirmation buttons', () => {
     const pressed = await pressButton(mb!, move, { userId: MEMBER });
     expect(answer(pressed).content).not.toBe('Moving…');
     expect(mb!.requests.slice(requestsBefore).filter((r) => r.method !== 'GET')).toEqual([]);
-    expect(answer(await pressButton(mb!, move)).content).toBe('Moving…');
+    expect(answer(await pressButton(mb!, move), 0).content).toBe('Moving…');
   });
 });
 

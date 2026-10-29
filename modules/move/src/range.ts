@@ -20,10 +20,15 @@ const PAGE = 100;
 
 /**
  * The messages from `fromId` to `toId` (or just `fromId`) of the channel, oldest first and inclusive. The ends may
- * be given in either order. Throws a `UserError` when an end doesn't exist or the range holds more than
- * `MAX_MESSAGES` messages; reading stops as soon as the cap is exceeded.
+ * be given in either order. Throws a `UserError` when the range holds more than `MAX_MESSAGES` messages (reading
+ * stops as soon as the cap is exceeded) and, unless `requireEnds` is false, when an end doesn't exist.
  */
-export async function readRange(channel: GuildTextBasedChannel, fromId: string, toId: string | null): Promise<Message[]> {
+export async function readRange(
+  channel: GuildTextBasedChannel,
+  fromId: string,
+  toId: string | null,
+  options: { requireEnds?: boolean } = {},
+): Promise<Message[]> {
   const first = BigInt(fromId);
   const second = toId === null ? first : BigInt(toId);
   const [low, high] = first <= second ? [first, second] : [second, first];
@@ -46,6 +51,7 @@ export async function readRange(channel: GuildTextBasedChannel, fromId: string, 
     cursor = BigInt(page[page.length - 1]!.id);
     if (page.length < PAGE) done = true;
   }
+  if (options.requireEnds === false) return messages;
   if (messages[0]?.id !== String(low) || messages[messages.length - 1]?.id !== String(high)) throw new UserError("That message doesn't exist.");
   return messages;
 }
