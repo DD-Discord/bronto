@@ -4,7 +4,6 @@ import { and, eq, lt, notExists, or, sql } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 import type { FormsContext } from './context.js';
 import { drafts, forums, submissions, type Draft, type DraftFile, type Form } from './db/schema.js';
-import { channelExists } from './forum.js';
 
 /** How long unfinished answers are kept after the last saved page. */
 export const DRAFT_TTL_MS = 86_400_000;
@@ -33,11 +32,22 @@ async function storedThreadId(ctx: FormsContext): Promise<string | null> {
   return row?.id ?? null;
 }
 
+/** Whether the drafts post still exists on Discord; only Unknown Channel counts as gone. */
+async function threadExists(ctx: FormsContext, threadId: string): Promise<boolean> {
+  try {
+    await ctx.client.channels.fetch(threadId, { force: true });
+    return true;
+  } catch (error) {
+    if (isUnknownChannel(error)) return false;
+    throw error;
+  }
+}
+
 /** Creates the drafts post unless the stored one exists. Runs queued, so that concurrent uploads create one post. */
 async function ensureDraftsThread(ctx: FormsContext): Promise<void> {
   const [row] = await ctx.db.run(async (tx) => tx.select().from(forums));
   if (row === undefined) throw new Error('The server has no forms forum for draft files.');
-  if (row.draftsThreadId !== null && (await channelExists(ctx, row.draftsThreadId))) return;
+  if (row.draftsThreadId !== null && (await threadExists(ctx, row.draftsThreadId))) return;
   const forum = await ctx.client.channels.fetch(row.forumChannelId);
   if (forum?.type !== ChannelType.GuildForum) throw new Error(`Forms forum ${row.forumChannelId} is not a forum channel.`);
   const thread = await forum.threads.create({

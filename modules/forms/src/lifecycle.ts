@@ -1,22 +1,19 @@
-import type { AnyThreadChannel, Channel, PartialDMChannel } from 'discord.js';
+import { defineManagedForum, UserError } from '@bronto/core';
+import { ChannelType, MessageFlags, TextDisplayBuilder, type AnyThreadChannel } from 'discord.js';
 import { and, eq, ne } from 'drizzle-orm';
 import type { FormsContext } from './context.js';
 import { drafts, forms, forums, openers, type Form } from './db/schema.js';
 import { releaseFiles } from './drafts.js';
-import { channelExists, storedForumId } from './forum.js';
+import { formsEvents } from './events.js';
 import { formName } from './model.js';
 import { cleanupOpeners } from './openers.js';
 import { updatePreview } from './preview.js';
 
 type Gone = Pick<Form, 'id' | 'name' | 'threadId'>;
 
-function announce(ctx: FormsContext, gone: Gone[]): void {
-  for (const { id, name, threadId } of gone) ctx.log.info({ formId: id, name, threadId }, 'Form deleted');
-}
-
 /**
- * Deletes the form's row under a lock (its drafts and submissions go with it) and logs it, then removes its opener
- * messages, sticky buttons and draft files from Discord. False when the form was already gone. With
+ * Deletes the form's row under a lock (its drafts and submissions go with it), logs it and emits `deleted`, then
+ * removes its opener messages, sticky buttons and draft files from Discord. False when the form was already gone. With
  * `refuseWithOpeners`, a form that has openers is kept and the channels of its openers are returned instead.
  */
 export async function forgetForm(ctx: FormsContext, form: Gone, options: { refuseWithOpeners?: boolean } = {}): Promise<boolean | { blockedBy: string[] }> {
@@ -34,43 +31,16 @@ export async function forgetForm(ctx: FormsContext, form: Gone, options: { refus
   });
   if (removed === null) return false;
   if (removed.blocked !== undefined) return { blockedBy: removed.blocked };
-  announce(ctx, [removed.row]);
+  const { id, name, threadId } = removed.row;
+  ctx.log.info({ formId: id, name, threadId }, 'Form deleted');
+  ctx.emit(formsEvents.deleted, { id });
   await cleanupOpeners(ctx, removed.gone);
   await releaseFiles(ctx, removed.files, []);
   return true;
 }
 
-/**
- * Deletes every form and the forum row. Does nothing once another forum is stored: `init` may have replaced the gone
- * forum while it was being checked.
- */
-async function forgetForum(ctx: FormsContext, forumId: string): Promise<void> {
-  const removed = await ctx.db.run(async (tx) => {
-    const [stored] = await tx.select({ id: forums.forumChannelId }).from(forums).for('update');
-    if (stored?.id !== forumId) return null;
-    const gone = await tx.delete(openers).returning();
-    const deleted = await tx.delete(forms).returning();
-    await tx.delete(forums);
-    return { deleted, gone };
-  });
-  if (removed === null) return;
-  announce(ctx, removed.deleted);
-  await cleanupOpeners(ctx, removed.gone);
-}
-
-/** A post deleted in Discord deletes its form. */
-export async function onThreadDelete(ctx: FormsContext, data: { id: string }): Promise<void> {
-  const [row] = await ctx.db.run(async (tx) => tx.select().from(forms).where(eq(forms.threadId, data.id)));
-  if (row !== undefined) await forgetForm(ctx, row);
-}
-
-/** The forms forum deleted in Discord deletes all its forms. */
-export async function onChannelDelete(ctx: FormsContext, channel: Channel | PartialDMChannel): Promise<void> {
-  await forgetForum(ctx, channel.id);
-}
-
 /** A renamed post renames its form, cut to `MAX_NAME`, and redraws its preview. */
-export async function onThreadUpdate(ctx: FormsContext, _old: AnyThreadChannel, thread: AnyThreadChannel): Promise<void> {
+async function renameForm(ctx: FormsContext, thread: AnyThreadChannel): Promise<void> {
   const name = formName(thread.name);
   if (name === '') return;
   const [row] = await ctx.db.run(async (tx) =>
@@ -89,33 +59,58 @@ export async function onThreadUpdate(ctx: FormsContext, _old: AnyThreadChannel, 
 }
 
 /**
- * Drops forms whose forum or post was deleted while the bot was away. Only Unknown Channel counts as gone; any other
- * failure (permissions, outages) keeps the data and logs a warning.
+ * The forms forum. A deleted post deletes its form through `forgetForm`; a deleted forum deletes every form and its
+ * openers, which are then removed from Discord.
  */
-export async function reconcile(ctx: FormsContext): Promise<void> {
-  const forumId = await storedForumId(ctx);
-  if (forumId !== null) {
-    let exists: boolean;
+export const formForum = defineManagedForum({
+  forumName: 'forms',
+  tables: { forums, records: forms },
+  wording: { noun: 'form', forumLabel: 'forms forum', logKey: 'formId' },
+  createFromPost: (ctx, thread) => createFormPost(ctx, { name: thread.name, tags: thread.appliedTags }),
+  forgetOne: (ctx, record) => forgetForm(ctx, record),
+  forgetAllTx: (tx) => tx.delete(openers).returning(),
+  forgotAll: async (ctx, records, removedOpeners) => {
+    for (const { id } of records) ctx.emit(formsEvents.deleted, { id });
+    await cleanupOpeners(ctx, removedOpeners);
+  },
+  rename: (ctx, thread) => renameForm(ctx, thread),
+});
+
+/**
+ * Creates a form: its post in the forms forum first, then the row, then the preview. The buttons are signed for the
+ * thread, so the starter message is a placeholder until the thread exists. If anything fails, the post is deleted.
+ */
+export async function createFormPost(ctx: FormsContext, input: { name: string; tags?: string[] }): Promise<Form> {
+  const name = formName(input.name);
+  if (name === '') throw new UserError('A form needs a name.');
+  const forumId = await formForum.ensure(ctx);
+  const forum = await ctx.client.channels.fetch(forumId);
+  if (forum?.type !== ChannelType.GuildForum) throw new Error(`Forms forum ${forumId} is not a forum channel.`);
+  const thread = await forum.threads.create({
+    name,
+    appliedTags: input.tags,
+    message: {
+      components: [new TextDisplayBuilder().setContent(`Setting up **${name}**…`)],
+      flags: MessageFlags.IsComponentsV2,
+      allowedMentions: { parse: [] },
+    },
+  });
+  try {
+    // The starter message has the thread's ID.
+    const [row] = await ctx.db.run(async (tx) =>
+      tx.insert(forms).values({ name, threadId: thread.id, previewMessageId: thread.id }).returning(),
+    );
+    await updatePreview(ctx, row!);
+    return row!;
+  } catch (error) {
+    await ctx.db.run(async (tx) => {
+      await tx.delete(forms).where(eq(forms.threadId, thread.id));
+    });
     try {
-      exists = await channelExists(ctx, forumId);
-    } catch (error) {
-      ctx.log.warn({ err: error, channelId: forumId }, 'Checking the forms forum failed');
-      return;
+      await thread.delete();
+    } catch (deleteError) {
+      ctx.log.warn({ err: deleteError, threadId: thread.id }, 'Deleting the post of a form that failed to save failed');
     }
-    if (!exists) {
-      await forgetForum(ctx, forumId);
-      return;
-    }
-  }
-  const rows = await ctx.db.run(async (tx) => tx.select().from(forms));
-  for (const row of rows) {
-    let exists: boolean;
-    try {
-      exists = await channelExists(ctx, row.threadId);
-    } catch (error) {
-      ctx.log.warn({ err: error, formId: row.id, threadId: row.threadId }, 'Checking a form post failed');
-      continue;
-    }
-    if (!exists) await forgetForm(ctx, row);
+    throw error;
   }
 }

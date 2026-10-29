@@ -1,28 +1,24 @@
-import { defineButton, defineModal, downloadFile, UserError, type ButtonDefinition, isUnknownChannel } from '@bronto/core';
 import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  FileUploadBuilder,
-  LabelBuilder,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  type APIEmbed,
-} from 'discord.js';
-import type { TemplatesContext } from './context.js';
+  defineButton,
+  defineModal,
+  deleteThread,
+  exportFileName,
+  importModal as importModalBuilder,
+  uploadedJson,
+  UserError,
+  type ButtonDefinition,
+} from '@bronto/core';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, type APIEmbed } from 'discord.js';
 import { IMAGE_SLOTS, type ImageSlot, type TemplateImage } from './db/schema.js';
 import { openEditor } from './editor.js';
 import { templatesGates } from './events.js';
-import { forgetTemplate } from './lifecycle.js';
+import { templateForum } from './lifecycle.js';
 import { requireEditor, templateForThread } from './permissions.js';
 import { clearSlot, render, setSlot, slotUrl } from './render.js';
 import { storeTemplate } from './save.js';
 import { exportJson, parseTemplateJson } from './transfer.js';
 
 const CONFIRM_TTL_MS = 15 * 60_000;
-const MAX_IMPORT_TEXT = 4000;
-const MAX_IMPORT_FILE_BYTES = 1_000_000;
 const UPLOAD_PREFIX = 'attachment://';
 // Captures the attachment ID of a Discord attachment link.
 const ATTACHMENT_LINK = /^https:\/\/(?:cdn\.discordapp\.com|media\.discordapp\.net)\/attachments\/\d+\/(\d+)\//;
@@ -65,23 +61,8 @@ export const exportButton = previewButton('export', async (ctx) => {
   if (message === null) throw new UserError('This template no longer exists.');
   // The time of posting is filled in at post time; it isn't part of the template's content.
   if (template.showPostTime && message.embed !== null) delete message.embed.timestamp;
-  const base = template.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50);
-  await ctx.reply({ files: [{ attachment: Buffer.from(exportJson(message)), name: `${base || 'template'}.json` }] });
+  await ctx.reply({ files: [{ attachment: Buffer.from(exportJson(message)), name: exportFileName(template.name, 'template') }] });
 });
-
-/** The text of the uploaded `.json` file, or null when the form has none. */
-async function uploadedText(ctx: Parameters<typeof importModal.execute>[0]): Promise<string | null> {
-  const file = ctx.interaction.fields.getUploadedFiles('file')?.first();
-  if (file === undefined) return null;
-  if (!file.name.toLowerCase().endsWith('.json')) throw new UserError('The file must be a .json file.');
-  if (file.size > MAX_IMPORT_FILE_BYTES) throw new UserError('The file is too large.');
-  const failure = new UserError("I couldn't download that file.");
-  try {
-    return (await downloadFile(file.url, MAX_IMPORT_FILE_BYTES)).toString('utf8');
-  } catch {
-    throw failure;
-  }
-}
 
 export const importModal = defineModal({
   name: 'import',
@@ -90,7 +71,7 @@ export const importModal = defineModal({
   execute: async (ctx) => {
     requireEditor(ctx);
     await templateForThread(ctx, ctx.channelId!);
-    const text = (await uploadedText(ctx)) ?? ctx.field('json');
+    const text = (await uploadedJson(ctx)) ?? ctx.field('json');
     if (text.trim() === '') throw new UserError('Paste template JSON or upload a .json file.');
     const parsed = parseTemplateJson(text);
     const { failure } = await storeTemplate(ctx, ctx.channelId!, (current, stored) => ({
@@ -104,21 +85,7 @@ export const importModal = defineModal({
 export const importButton = previewButton('import', async (ctx) => {
   requireEditor(ctx);
   await templateForThread(ctx, ctx.channelId!);
-  const json = new TextInputBuilder()
-    .setCustomId('json')
-    .setStyle(TextInputStyle.Paragraph)
-    .setMaxLength(MAX_IMPORT_TEXT)
-    .setRequired(false);
-  const file = new FileUploadBuilder().setCustomId('file').setMinValues(0).setMaxValues(1).setRequired(false);
-  await ctx.showModal(
-    new ModalBuilder()
-      .setCustomId(ctx.customId(importModal))
-      .setTitle('Import template')
-      .addLabelComponents(
-        new LabelBuilder().setLabel('Template JSON').setTextInputComponent(json),
-        new LabelBuilder().setLabel('Or a .json file').setFileUploadComponent(file),
-      ),
-  );
+  await ctx.showModal(importModalBuilder({ customId: ctx.customId(importModal), title: 'Import template', label: 'Template JSON' }));
 });
 
 export const deleteConfirmButton = defineButton({
@@ -137,25 +104,15 @@ export const deleteConfirmButton = defineButton({
     }
     // The interaction lives in the thread, so it is answered before the thread goes away.
     await ctx.update({ content: 'Template deleted.', components: [] });
-    await forgetTemplate(ctx, template);
+    await templateForum.forget(ctx, template);
     try {
-      await deleteThread(ctx, template.threadId);
+      await deleteThread(ctx.client, template.threadId);
     } catch (error) {
       ctx.log.warn({ err: error, threadId: template.threadId }, 'Deleting the post of a deleted template failed');
       await ctx.followUp({ content: "Template deleted, but its post couldn't be removed.", ephemeral: true });
     }
   },
 });
-
-async function deleteThread(ctx: TemplatesContext, threadId: string): Promise<void> {
-  try {
-    const thread = await ctx.client.channels.fetch(threadId);
-    await thread?.delete();
-  } catch (error) {
-    if (isUnknownChannel(error)) return;
-    throw error;
-  }
-}
 
 export const deleteButton = previewButton('delete', async (ctx) => {
   requireEditor(ctx);

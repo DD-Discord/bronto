@@ -1,17 +1,17 @@
 import autoreact from '@bronto/autoreact';
 import autothread from '@bronto/autothread';
-import { answer, defineModule, gate, gatewayEvent, on, type ModuleDefinition } from '@bronto/core';
+import { answer, defineModule, gate, on, type ModuleDefinition } from '@bronto/core';
 import sticky, { stickyAsks, stickyEvents } from '@bronto/sticky';
 import templates, { templatesEvents, templatesGates } from '@bronto/templates';
-import { Events, GatewayDispatchEvents, GatewayIntentBits, PermissionFlagsBits } from 'discord.js';
+import { GatewayIntentBits, PermissionFlagsBits } from 'discord.js';
 import { previewComponents, registerPreviewActions } from './buttons.js';
 import { editorComponents, openAddField, openEditField } from './editor.js';
 import { createFormsCommand } from './commands.js';
 import * as schema from './db/schema.js';
-import { onChannelDelete, onThreadDelete, onThreadUpdate, reconcile } from './lifecycle.js';
+import { formsEvents } from './events.js';
+import { formForum } from './lifecycle.js';
 import { DRAFT_SWEEP_MS, sweepDrafts } from './drafts.js';
 import { fillComponents, openTrial } from './fill.js';
-import { onThreadCreate } from './new-post.js';
 import { openButton } from './open.js';
 import { channelsUsingTemplate, dropStickyOpeners, dropTemplateOpeners, openerRows, refreshTemplateMessages, stickyOpenersOf } from './openers.js';
 import { removeOpenerSelect } from './post.js';
@@ -51,12 +51,9 @@ export function createFormsModule(): ModuleDefinition<Record<string, never>, und
       PermissionFlagsBits.AttachFiles,
       PermissionFlagsBits.EmbedLinks,
     ],
+    events: formsEvents,
     listeners: [
-      on(Events.ThreadCreate, (ctx, thread, newlyCreated) => onThreadCreate(ctx, thread, newlyCreated)),
-      // Raw packet: discord.js emits ThreadDelete only for cached threads.
-      on(gatewayEvent(GatewayDispatchEvents.ThreadDelete), (ctx, data) => onThreadDelete(ctx, data)),
-      on(Events.ChannelDelete, (ctx, channel) => onChannelDelete(ctx, channel)),
-      on(Events.ThreadUpdate, (ctx, before, after) => onThreadUpdate(ctx, before, after)),
+      ...formForum.listeners,
       answer(stickyAsks.components, async (ctx, { channelId }) => openerRows(ctx, await stickyOpenersOf(ctx, channelId))),
       on(stickyEvents.deleted, (ctx, { channelId }) => dropStickyOpeners(ctx, channelId)),
       on(templatesEvents.updated, (ctx, { id }) => refreshTemplateMessages(ctx, id)),
@@ -72,7 +69,7 @@ export function createFormsModule(): ModuleDefinition<Record<string, never>, und
       // Queued, not awaited: the guild's events and interactions wait for guildReady, and reconcile asks Discord once
       // per form.
       guildReady: (ctx) => {
-        void ctx.queue.run('reconcile', (task) => reconcile(task));
+        void ctx.queue.run('reconcile', (task) => formForum.reconcile(task));
         clearInterval(sweeps.get(ctx.guildId));
         // The timer keeps the ctx that started it; queue.run starts a new handler run each time it fires.
         const timer = setInterval(() => {
@@ -91,3 +88,4 @@ export function createFormsModule(): ModuleDefinition<Record<string, never>, und
 }
 
 export default createFormsModule();
+export { formsEvents } from './events.js';

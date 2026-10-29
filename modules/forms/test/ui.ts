@@ -11,7 +11,7 @@ import { eq } from 'drizzle-orm';
 import { expect } from 'vitest';
 import type { TestDatabase } from '../../../packages/core/test/test-db.js';
 import { forms, forums, type Form } from '../src/db/schema.js';
-import { createFormPost } from '../src/new-post.js';
+import { createFormPost } from '../src/lifecycle.js';
 import { FORUM, GUILD, formsDb, inHandler, USER, type FormsBot } from './harness.js';
 
 export type Json = Record<string, any>;

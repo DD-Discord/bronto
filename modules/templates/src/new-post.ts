@@ -3,7 +3,6 @@ import { PermissionFlagsBits, type APIEmbed, type AnyThreadChannel, type GuildBa
 import { sendableEmbed, type TemplateMessage } from './content.js';
 import type { TemplatesContext } from './context.js';
 import type { ImageSlot } from './db/schema.js';
-import { storedForumId } from './forum.js';
 import { createPost, type PendingUpload } from './posts.js';
 import { parseBody } from './transfer.js';
 
@@ -85,37 +84,14 @@ async function bodyOf(ctx: TemplatesContext, text: string, posterId: string): Pr
   }
 }
 
-async function reply(ctx: TemplatesContext, thread: AnyThreadChannel, text: string): Promise<void> {
-  try {
-    await thread.send({ content: text, allowedMentions: { parse: [] } });
-  } catch (error) {
-    ctx.log.warn({ err: error, threadId: thread.id }, 'Replying in a forum post failed');
-  }
-}
-
 /**
- * Turns a new post in the template forum into a template owned by the bot: the starter message is read as a link,
- * JSON or plain text, and once the template exists the user's post is deleted. Problems are answered in the post,
- * which stays.
+ * Turns a member's new post in the template forum into a template owned by the bot: the starter message is read as a
+ * link, JSON or plain text. A post without a starter message is skipped.
  */
-export async function onThreadCreate(ctx: TemplatesContext, thread: AnyThreadChannel, newlyCreated: boolean): Promise<void> {
-  if (!newlyCreated || thread.ownerId === ctx.client.user?.id) return;
-  const forumId = await storedForumId(ctx);
-  if (forumId === null || thread.parentId !== forumId) return;
-  try {
-    const starter = await thread.fetchStarterMessage();
-    if (starter === null) return;
-    const body = await bodyOf(ctx, starter.content, starter.author.id);
-    await createPost(ctx, { name: thread.name, tags: thread.appliedTags, ...body });
-  } catch (error) {
-    const reason = error instanceof UserError ? error.message : 'Something went wrong.';
-    await reply(ctx, thread, `I couldn't turn this post into a template: ${reason}`);
-    if (!(error instanceof UserError)) throw error;
-    return;
-  }
-  try {
-    await thread.delete();
-  } catch (error) {
-    ctx.log.warn({ err: error, threadId: thread.id }, "Deleting the user's post after creating its template failed");
-  }
+export async function createFromPost(ctx: TemplatesContext, thread: AnyThreadChannel): Promise<'skip' | undefined> {
+  const starter = await thread.fetchStarterMessage();
+  if (starter === null) return 'skip';
+  const body = await bodyOf(ctx, starter.content, starter.author.id);
+  await createPost(ctx, { name: thread.name, tags: thread.appliedTags, ...body });
+  return undefined;
 }

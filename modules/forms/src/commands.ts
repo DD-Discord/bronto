@@ -1,12 +1,11 @@
-import { defineCommand, defineSubcommand, opt, UserError, type CommandDefinition } from '@bronto/core';
+import { defineCommand, defineSubcommand, opt, recordList, UserError, type CommandDefinition } from '@bronto/core';
 import { suggestTemplates } from '@bronto/templates';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import type { FormsContext } from './context.js';
 import { forms } from './db/schema.js';
-import { channelExists, ensureForum, storedForumId } from './forum.js';
+import { formForum } from './lifecycle.js';
 import { buttonsMessage, postOpener, suggestForms } from './post.js';
 
-const MAX_LISTED = 50;
 const OPENER_CHANNEL_TYPES = [
   ChannelType.GuildText,
   ChannelType.GuildAnnouncement,
@@ -15,42 +14,21 @@ const OPENER_CHANNEL_TYPES = [
   ChannelType.PrivateThread,
   ChannelType.AnnouncementThread,
 ];
-// Discord's limit for message content.
-const MAX_CONTENT = 2000;
-
-/** Escapes the characters that would end a Markdown link's text or target early, e.g. in a form name. */
-function escapeLinkText(name: string): string {
-  return name.replace(/[\\[\]()]/g, '\\$&');
-}
-
-const moreLine = (count: number) => `…and ${count} more`;
-
 /** The reply of `/forms list`: one line per form with its state and a link, cut to fit a message. */
 async function listReply(ctx: FormsContext): Promise<string> {
   const rows = await ctx.db.run(async (tx) =>
     tx.select({ name: forms.name, threadId: forms.threadId, active: forms.active }).from(forms),
   );
   if (rows.length === 0) {
-    const forumId = await storedForumId(ctx);
+    const forumId = await formForum.storedId(ctx);
     return forumId === null
       ? 'No forms yet. Run /forms init to create the forms forum.'
       : `No forms yet. Create a post in <#${forumId}>.`;
   }
-  rows.sort((a, b) => {
-    const left = a.name.toLowerCase();
-    const right = b.name.toLowerCase();
-    return left < right ? -1 : left > right ? 1 : a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  return recordList({
+    guildId: ctx.guildId,
+    rows: rows.map((row) => ({ name: row.name, threadId: row.threadId, suffix: row.active ? 'active' : 'inactive' })),
   });
-  const lines: string[] = [];
-  for (const row of rows.slice(0, MAX_LISTED)) {
-    const line = `[${escapeLinkText(row.name)}](https://discord.com/channels/${ctx.guildId}/${row.threadId}) · ${row.active ? 'active' : 'inactive'}`;
-    const rest = rows.length - lines.length - 1;
-    const text = [...lines, line].join('\n') + (rest > 0 ? `\n${moreLine(rest)}` : '');
-    if (text.length > MAX_CONTENT) break;
-    lines.push(line);
-  }
-  if (lines.length < rows.length) lines.push(moreLine(rows.length - lines.length));
-  return lines.join('\n');
 }
 
 export function createFormsCommand(): CommandDefinition {
@@ -90,9 +68,9 @@ export function createFormsCommand(): CommandDefinition {
       init: defineSubcommand({
         description: 'Creates the forum that holds the forms',
         execute: async (ctx) => {
-          const stored = await storedForumId(ctx);
-          if (stored !== null && (await channelExists(ctx, stored))) throw new UserError(`Forms already live in <#${stored}>.`);
-          const forumId = await ensureForum(ctx);
+          const stored = await formForum.storedId(ctx);
+          if (stored !== null && (await formForum.channelExists(ctx, stored))) throw new UserError(`Forms already live in <#${stored}>.`);
+          const forumId = await formForum.ensure(ctx);
           await ctx.reply(`Forms now live in <#${forumId}>.`);
         },
       }),

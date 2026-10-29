@@ -1,18 +1,28 @@
+import { defineModule, on } from '@bronto/core';
 import { fakeCommand, FakeDiscordHttp } from '@bronto/core/testing';
 import { ChannelType, ComponentType, Events, MessageFlags, OverwriteType, PermissionFlagsBits } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
 import { forms, forums } from '../src/db/schema.js';
-import { FORUM, GUILD, formsDb, prepareFormsBot, ready, USER, type FormsBot } from './harness.js';
+import { formsEvents } from '../src/events.js';
+import { createFormsModule } from '../src/index.js';
+import { FORUM, GUILD, formsDb, prepareFormsBot, ready, USER, type FormsBot, type FormsBotOptions } from './harness.js';
 
 let t: TestDatabase;
 let discord: FakeDiscordHttp;
 let fb: FormsBot;
+let emitted: string[];
+
+const watcher = defineModule({
+  name: 'watcher',
+  dependsOn: [createFormsModule()],
+  listeners: [on(formsEvents.deleted, (_ctx, { id }) => void emitted.push(id))],
+});
 
 let nextId = 100000000000007000n;
 const id = () => String(++nextId);
 
-async function start(options: { community?: boolean; sticky?: boolean } = {}): Promise<void> {
+async function start(options: FormsBotOptions = {}): Promise<void> {
   fb = await prepareFormsBot(t, discord, options);
   await ready(fb);
 }
@@ -63,6 +73,7 @@ function texts(components: unknown): string[] {
 beforeEach(async () => {
   t = await createTestDatabase();
   discord = new FakeDiscordHttp();
+  emitted = [];
 });
 
 afterEach(async () => {
@@ -116,7 +127,7 @@ describe('/forms list', () => {
 
 describe('forum posts', () => {
   beforeEach(async () => {
-    await start();
+    await start({ extra: [{ packageName: '@test/watcher', definition: watcher, config: {} }] });
     await storeForum();
     await fb.client.channels.fetch(FORUM);
   });
@@ -192,6 +203,23 @@ describe('forum posts', () => {
     fb.client.emit(Events.Raw, { op: 0, t: 'THREAD_DELETE', d: { id: row!.threadId, guild_id: GUILD, parent_id: FORUM, type: 11 }, s: 1 }, 0);
     await fb.bot.idle();
     expect(await storedForms()).toEqual([]);
+  });
+
+  it("emits deleted when a form's post is deleted", async () => {
+    await userPost('Story contest');
+    const [row] = await storedForms();
+    fb.client.emit(Events.Raw, { op: 0, t: 'THREAD_DELETE', d: { id: row!.threadId, guild_id: GUILD, parent_id: FORUM, type: 11 }, s: 1 }, 0);
+    await fb.bot.idle();
+    expect(emitted).toEqual([row!.id]);
+  });
+
+  it('emits deleted for each form when the forum is deleted', async () => {
+    await userPost('One');
+    await userPost('Two');
+    const ids = (await storedForms()).map((row) => row.id);
+    fb.client.emit(Events.ChannelDelete, (await fb.client.channels.fetch(FORUM)) as never);
+    await fb.bot.idle();
+    expect(emitted.sort()).toEqual(ids.sort());
   });
 
   it('deletes all forms and the forum row when the forum is deleted', async () => {
