@@ -1,7 +1,6 @@
 import { defineEntity, yesNo } from '@bronto/core';
 import { rules } from './db/schema.js';
 
-
 export const ruleEntity = defineEntity({
   table: rules,
   key: 'channelId',

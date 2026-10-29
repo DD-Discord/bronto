@@ -1,5 +1,6 @@
 import {
   batchLines,
+  channelKeyOption,
   crudSubcommands,
   defineCommand,
   defineSubcommand,
@@ -33,20 +34,15 @@ export interface StickyCommandDeps {
   reposter: Reposter;
 }
 
-const channelOption = () => opt.channel({ description: 'Channel or thread of the sticky', channelTypes: STICKY_CHANNEL_TYPES });
+const CHANNEL_DESCRIPTION = 'Channel or thread of the sticky';
+const channelOption = () => opt.channel({ description: CHANNEL_DESCRIPTION, channelTypes: STICKY_CHANNEL_TYPES });
 
 export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition {
   return defineCommand({
     description: 'Keeps a message at the bottom of a channel',
     permissions: PermissionFlagsBits.ManageMessages,
     subcommands: crudSubcommands(stickyEntity, {
-      key: {
-        name: 'channel',
-        option: channelOption(),
-        toKey: (value) => value.id,
-        format: (channelId) => `<#${channelId}>`,
-        fallback: (ctx) => ctx.channelId,
-      },
+      key: channelKeyOption({ description: CHANNEL_DESCRIPTION, channelTypes: STICKY_CHANNEL_TYPES }),
       fields: {
         template: { option: opt.string({ description: 'Template to post', autocomplete: suggestTemplates }), column: 'templateId' },
         'ignore-bots': { option: opt.boolean({ description: 'Ignore messages from bots (default: yes)' }), column: 'ignoreBots', default: true },
