@@ -17,7 +17,7 @@ import { isForumPost, loadChannels } from './command.js';
 import type { ChannelLocks } from './locks.js';
 import type { PendingMove } from './pending.js';
 import { readRange } from './range.js';
-import { displayName, renderMessage, webhookName, type ReplyTarget, type RepostPart } from './render.js';
+import { displayName, renderMessage, uploadName, webhookName, type LinkRow, type ReplyTarget, type RepostPart } from './render.js';
 import { findMoveWebhook } from './webhook.js';
 
 /** The shortest time between two progress edits. */
@@ -64,6 +64,7 @@ interface Send {
   content: string;
   embeds: APIEmbed[];
   files: { attachment: Buffer; name: string; description?: string }[];
+  components: LinkRow[];
 }
 
 /** A send that failed in a way that ends the move. */
@@ -276,29 +277,29 @@ class Run {
     let stays = plan.stays;
     let parts = renderMessage(message, plan, input);
 
-    const files = parts.at(-1)!.files;
-    const data: (Buffer | null)[] = [];
+    // Downloads by URL; sticker images and files only embeds show have no size until downloaded, so the total is
+    // checked here too.
+    const downloads = new Map<string, Buffer | null>();
     let size = 0;
-    for (const file of files) {
+    for (const file of parts.at(-1)!.files) {
       const buffer = await downloadFile(file.url, this.uploadLimit).catch((error: unknown) => {
         this.ctx.log.debug({ err: error, messageId: message.id }, 'Downloading an attachment for a move failed');
         return null;
       });
-      // Sticker images have no size until downloaded, so the total is checked here too.
       const fits = buffer !== null && size + buffer.length <= this.uploadLimit;
       if (fits) size += buffer.length;
-      data.push(fits ? buffer : null);
+      downloads.set(file.url, fits ? buffer : null);
     }
-    if (data.includes(null) && !stays.includes('too-large')) {
-      stays = [...stays, 'too-large'];
-      parts = renderMessage(message, { kind: 'repost', stays }, input);
+    const missing = new Set([...downloads].filter(([, buffer]) => buffer === null).map(([url]) => url));
+    if (missing.size > 0) {
+      if (!stays.includes('too-large')) stays = [...stays, 'too-large'];
+      parts = renderMessage(message, { kind: 'repost', stays }, { ...input, missing });
     }
-    const attached = parts.at(-1)!.files.flatMap((file, index) => {
-      const buffer = data[index];
-      if (buffer === null || buffer === undefined) return [];
-      const name = file.spoiler ? `SPOILER_${file.name}` : file.name;
-      return [{ attachment: buffer, name, ...(file.description === undefined ? {} : { description: file.description }) }];
-    });
+    const attached = parts.at(-1)!.files.map((file) => ({
+      attachment: downloads.get(file.url)!,
+      name: uploadName(file),
+      ...(file.description === undefined ? {} : { description: file.description }),
+    }));
 
     const sends = this.sends(parts, attached);
     if (sends.length === 0) {
@@ -321,6 +322,7 @@ class Run {
             threadId: this.threadId ?? undefined,
             allowedMentions: { parse: [] },
             flags: MessageFlags.SuppressNotifications,
+            ...(send.components.length > 0 ? { withComponents: true } : {}),
           }),
         );
       } catch (error) {
@@ -349,11 +351,12 @@ class Run {
       content: part.content,
       embeds: part.embeds,
       files: index === parts.length - 1 ? attached.slice(0, MAX_FILES) : [],
+      components: part.components,
     }));
     for (let index = MAX_FILES; index < attached.length; index += MAX_FILES) {
-      sends.push({ content: '', embeds: [], files: attached.slice(index, index + MAX_FILES) });
+      sends.push({ content: '', embeds: [], files: attached.slice(index, index + MAX_FILES), components: [] });
     }
-    return sends.filter((send) => send.content.trim() !== '' || send.embeds.length > 0 || send.files.length > 0);
+    return sends.filter((send) => send.content.trim() !== '' || send.embeds.length > 0 || send.files.length > 0 || send.components.length > 0);
   }
 
   /**

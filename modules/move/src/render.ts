@@ -1,4 +1,4 @@
-import type { APIEmbed, GuildMember, Message, User } from 'discord.js';
+import type { APIActionRowComponent, APIComponentInMessageActionRow, APIEmbed, GuildMember, Message, MessageSnapshot, User } from 'discord.js';
 import { MessageReferenceType, StickerFormatType } from 'discord.js';
 import type { Plan, StayReason } from './classify.js';
 
@@ -14,14 +14,24 @@ export interface RepostFile {
   name: string;
   description?: string;
   spoiler: boolean;
+  /** 0 when unknown before downloading (sticker images, files only an embed shows). */
   size: number;
+  /** The attachment ID, for uploaded files of the original. */
+  id?: string;
 }
+
+export type LinkRow = APIActionRowComponent<APIComponentInMessageActionRow>;
 
 export interface RepostPart {
   content: string;
   embeds: APIEmbed[];
   files: RepostFile[];
+  /** Action rows of link buttons. */
+  components: LinkRow[];
 }
+
+/** The name a file is uploaded under; `attachment://` links use it. */
+export const uploadName = (file: RepostFile): string => (file.spoiler ? `SPOILER_${file.name}` : file.name);
 
 /** Server nickname, else global display name, else username. */
 export function displayName(member: GuildMember | null, user: User): string {
@@ -126,6 +136,7 @@ const NOTICE_ORDER: StayReason[] = ['too-large', 'poll', 'thread', 'forum-start'
 export function messageFiles(message: Message): RepostFile[] {
   const attachments = [...message.attachments.values(), ...[...message.messageSnapshots.values()].flatMap((snapshot) => [...snapshot.attachments.values()])];
   return attachments.map((attachment) => ({
+    id: attachment.id,
     url: attachment.url,
     name: attachment.name.replace(/^SPOILER_/, ''),
     ...(attachment.description ? { description: attachment.description } : {}),
@@ -155,10 +166,10 @@ const STICKER_EXTENSIONS: Partial<Record<StickerFormatType, string>> = {
   [StickerFormatType.GIF]: 'gif',
 };
 
-function stickerImage(message: Message): { lines: string[]; files: RepostFile[] } {
+function stickerImage(messages: (Message | MessageSnapshot)[]): { lines: string[]; files: RepostFile[] } {
   const lines: string[] = [];
   const files: RepostFile[] = [];
-  for (const sticker of message.stickers.values()) {
+  for (const sticker of messages.flatMap((message) => [...message.stickers.values()])) {
     lines.push(`-# Sticker: ${sticker.name}`);
     // Message stickers carry no guild, so standard and custom ones are alike; Lottie stickers have no image.
     const extension = STICKER_EXTENSIONS[sticker.format];
@@ -169,31 +180,98 @@ function stickerImage(message: Message): { lines: string[]; files: RepostFile[] 
 
 const quote = (text: string): string => text.split('\n').map((line) => `> ${line}`).join('\n');
 
+const ATTACHMENT_LINK = /^https:\/\/(?:cdn\.discordapp\.com|media\.discordapp\.net)\/attachments\/\d+\/(\d+)\/([^/?#]+)/;
+
+/** The image slots of an embed that can show an uploaded file, as getter and setter. */
+function imageSlots(embed: APIEmbed): { get: () => string | undefined; set: (url: string) => void }[] {
+  const slots: { get: () => string | undefined; set: (url: string) => void }[] = [];
+  const { image, thumbnail, author, footer } = embed;
+  if (image) slots.push({ get: () => image.url, set: (url) => void (image.url = url) });
+  if (thumbnail) slots.push({ get: () => thumbnail.url, set: (url) => void (thumbnail.url = url) });
+  if (author) slots.push({ get: () => author.icon_url, set: (url) => void (author.icon_url = url) });
+  if (footer) slots.push({ get: () => footer.icon_url, set: (url) => void (footer.icon_url = url) });
+  return slots;
+}
+
+/** The attachment ID an embed URL points at, when it is an uploaded file. */
+function linkedId(url: string | undefined): { id: string; name: string } | null {
+  const match = url === undefined ? null : ATTACHMENT_LINK.exec(url);
+  return match === null ? null : { id: match[1]!, name: decodeURIComponent(match[2]!) };
+}
+
 /**
- * Renders one message as consecutive webhook posts. Embeds come only from bots and webhooks; the files and embeds go
- * on the last part, and files that exceed the upload limit are dropped with a notice.
+ * Rich embeds to copy, as copies: the message's own when a bot or webhook sent it (a member's are link previews),
+ * then those of forwarded messages. At most ten.
+ */
+function copiedEmbeds(message: Message, snapshots: MessageSnapshot[]): APIEmbed[] {
+  const rich = (source: Message | MessageSnapshot) => source.embeds.filter((embed) => (embed.data.type ?? 'rich') === 'rich').map((embed) => structuredClone(embed.toJSON()));
+  const own = message.author.bot || message.webhookId !== null ? rich(message) : [];
+  return [...own, ...snapshots.flatMap(rich)].slice(0, MAX_EMBEDS);
+}
+
+/** Files that embeds show but the message doesn't list, each once, under a name no other file has. */
+function embedOnlyFiles(embeds: APIEmbed[], listed: RepostFile[]): RepostFile[] {
+  const files: RepostFile[] = [];
+  const names = new Set(listed.map(uploadName));
+  for (const slot of embeds.flatMap(imageSlots)) {
+    const url = slot.get();
+    const link = linkedId(url);
+    if (link === null || listed.some((file) => file.id === link.id) || files.some((file) => file.id === link.id)) continue;
+    const spoiler = link.name.startsWith('SPOILER_');
+    const base = link.name.replace(/^SPOILER_/, '');
+    let name = base;
+    for (let n = 1; names.has(spoiler ? `SPOILER_${name}` : name); n += 1) name = `${n}-${base}`;
+    const file: RepostFile = { id: link.id, url: url!, name, spoiler, size: 0 };
+    names.add(uploadName(file));
+    files.push(file);
+  }
+  return files;
+}
+
+/** Points embed images at the uploaded copies of their files; those not uploaded keep their URL. */
+function pointAtUploads(embeds: APIEmbed[], files: RepostFile[]): void {
+  for (const slot of embeds.flatMap(imageSlots)) {
+    const link = linkedId(slot.get());
+    const file = link === null ? undefined : files.find((entry) => entry.id === link.id);
+    if (file !== undefined) slot.set(`attachment://${uploadName(file)}`);
+  }
+}
+
+/** True when an embed shows the file. */
+const shown = (embeds: APIEmbed[], file: RepostFile): boolean =>
+  file.id !== undefined && embeds.flatMap(imageSlots).some((slot) => linkedId(slot.get())?.id === file.id);
+
+/**
+ * Renders one message as consecutive webhook posts. Embeds are rich ones of bots, webhooks and forwarded messages;
+ * the files, embeds and link buttons go on the last part, files embeds show first. Files that exceed the upload
+ * limit, or are in `missing` (by URL, e.g. a failed download), are dropped with a notice, and embeds showing them
+ * keep pointing at the original.
  */
 export function renderMessage(
   message: Message,
   plan: Extract<Plan, { kind: 'repost' }>,
-  input: { replyTarget: ReplyTarget; uploadLimit: number; originalLink: string },
+  input: { replyTarget: ReplyTarget; uploadLimit: number; originalLink: string; missing?: ReadonlySet<string> },
 ): RepostPart[] {
-  const { fit, dropped } = fitFiles(messageFiles(message), input.uploadLimit);
-  const stickers = stickerImage(message);
+  const snapshots = message.reference?.type === MessageReferenceType.Forward ? [...message.messageSnapshots.values()] : [];
+  const listed = messageFiles(message);
+  const { fit, dropped } = fitFiles(listed, input.uploadLimit);
+  const stickers = stickerImage([message, ...snapshots]);
   const used = fit.reduce((sum, file) => sum + file.size, 0);
   // Sticker images have no size before download, so they only count once downloaded; skip them when nothing is left.
   const stickerFiles = used < input.uploadLimit ? stickers.files : [];
+  const embeds = copiedEmbeds(message, snapshots);
+  const missing = input.missing ?? new Set<string>();
+  const files = [...fit, ...stickerFiles, ...embedOnlyFiles(embeds, listed)].filter((file) => !missing.has(file.url));
+  // Files beyond the first ten go out on further posts, so those the embeds show come first.
+  const ordered = [...files.filter((file) => shown(embeds, file)), ...files.filter((file) => !shown(embeds, file))];
+  pointAtUploads(embeds, ordered);
 
   const reasons = new Set<StayReason>(plan.stays);
   if (dropped.length > 0) reasons.add('too-large');
 
   const pieces: string[] = [];
   if (message.content !== '') pieces.push(message.content);
-  if (message.reference?.type === MessageReferenceType.Forward) {
-    for (const snapshot of message.messageSnapshots.values()) {
-      pieces.push(snapshot.content ? `-# Forwarded\n${quote(snapshot.content)}` : '-# Forwarded');
-    }
-  }
+  for (const snapshot of snapshots) pieces.push(snapshot.content ? `-# Forwarded\n${quote(snapshot.content)}` : '-# Forwarded');
   pieces.push(...stickers.lines);
   for (const reason of NOTICE_ORDER) {
     if (reasons.has(reason)) pieces.push(`-# ${NOTICES[reason]}: [original](<${input.originalLink}>)`);
@@ -203,11 +281,10 @@ export function renderMessage(
   const contents = splitContent(pieces.join('\n'), prefix);
   if (contents.length === 0) contents.push('');
 
-  const embeds = message.author.bot || message.webhookId !== null
-    ? message.embeds.filter((embed) => (embed.data.type ?? 'rich') === 'rich').slice(0, MAX_EMBEDS).map((embed) => embed.toJSON())
-    : [];
+  // Only link buttons can be carried over; a message with other components stays and its copy has none.
+  const components = reasons.has('interactive') ? [] : message.components.map((row) => row.toJSON() as LinkRow);
   return contents.map((content, index) => {
     const last = index === contents.length - 1;
-    return { content, embeds: last ? embeds : [], files: last ? [...fit, ...stickerFiles] : [] };
+    return { content, embeds: last ? embeds : [], files: last ? ordered : [], components: last ? components : [] };
   });
 }

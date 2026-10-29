@@ -29,9 +29,12 @@ export function classify(
   if (message.system) return { kind: KEPT_SYSTEM_TYPES.has(message.type) ? 'skip-keep' : 'skip-delete' };
   const stays: StayReason[] = [];
   if (fitFiles(messageFiles(message), ctx.uploadLimit).dropped.length > 0) stays.push('too-large');
-  if (message.poll !== null) stays.push('poll');
+  // A forward's poll or components can't be copied.
+  const snapshots = [...message.messageSnapshots.values()];
+  if (message.poll !== null || snapshots.some((snapshot) => snapshot.poll !== null)) stays.push('poll');
   if (message.hasThread) stays.push('thread');
   if (ctx.sourceIsForumPost && message.id === message.channelId) stays.push('forum-start');
-  if (message.flags.has(MessageFlags.IsComponentsV2) || hasInteractive(message.components) || ctx.isSticky(message)) stays.push('interactive');
+  const forwardsComponents = snapshots.some((snapshot) => snapshot.components.length > 0 || snapshot.flags.has(MessageFlags.IsComponentsV2));
+  if (message.flags.has(MessageFlags.IsComponentsV2) || hasInteractive(message.components) || forwardsComponents || ctx.isSticky(message)) stays.push('interactive');
   return { kind: 'repost', stays };
 }

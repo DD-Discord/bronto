@@ -153,6 +153,108 @@ describe('running a move', () => {
     expect(discord.liveMessages(SOURCE)).toEqual([]);
   });
 
+  it('carries link buttons over, in their rows', async () => {
+    await start();
+    const link = (label: string) => ({ type: 2, style: 5, label, url: `https://example.test/${label}` });
+    const rows = [{ type: 1, components: [link('a'), link('b')] }, { type: 1, components: [link('c')] }];
+    discord.addUser(HOOK_USER, { bot: true, username: 'Hook Name' });
+    const [withText, alone] = addHistory(discord, SOURCE, [
+      { content: LONG, authorId: HOOK_USER, webhookId: FOREIGN_HOOK, components: rows },
+      { content: '', authorId: HOOK_USER, webhookId: FOREIGN_HOOK, components: rows },
+    ]);
+    await move(withText!, alone!);
+    const stored = discord.sent.map((sent) => discord.messages.get(sent.id)!.components ?? []);
+    expect(stored).toHaveLength(3);
+    expect(stored[0]).toEqual([]);
+    for (const components of [stored[1], stored[2]]) {
+      expect(components).toMatchObject([
+        { type: 1, components: [{ style: 5, label: 'a', url: 'https://example.test/a' }, { style: 5, label: 'b' }] },
+        { type: 1, components: [{ style: 5, label: 'c' }] },
+      ]);
+    }
+    expect(discord.liveMessages(SOURCE)).toEqual([]);
+  });
+
+  it('re-uploads files that embeds show and points the embeds at them', async () => {
+    await start();
+    discord.addUser(HOOK_USER, { bot: true, username: 'Hook Name' });
+    const [id] = addHistory(discord, SOURCE, [
+      {
+        content: 'card',
+        authorId: HOOK_USER,
+        webhookId: FOREIGN_HOOK,
+        files: [{ filename: 'pic.png', data: 'png' }, { filename: 'doc.txt', data: 'text' }],
+        embeds: [{ type: 'rich', title: 'Card', image: { url: 'attachment://pic.png' }, thumbnail: { url: 'attachment://pic.png' } }],
+      },
+    ]);
+    // An embed can also point at an attachment that the message lists as a file.
+    const stored = discord.messages.get(id!)!;
+    const doc = stored.attachments.find((attachment) => attachment.filename === 'doc.txt')!;
+    stored.embeds[0]!.footer = { text: 'f', icon_url: `https://cdn.discordapp.com/attachments/${SOURCE}/${doc.id}/doc.txt` };
+    await move(id!, null);
+    const [sent] = discord.sent;
+    expect(sent!.files).toEqual([
+      { name: 'doc.txt', size: 4 },
+      { name: 'pic.png', size: 3 },
+    ]);
+    expect(sent!.message.embeds).toMatchObject([
+      { title: 'Card', image: { url: 'attachment://pic.png' }, thumbnail: { url: 'attachment://pic.png' }, footer: { icon_url: 'attachment://doc.txt' } },
+    ]);
+    expect(sent!.message.content).toBe('card');
+    expect(discord.liveMessages(SOURCE)).toEqual([]);
+  });
+
+  it('keeps a message whose embed file is too large, its copy showing the original file', async () => {
+    await start();
+    discord.addUser(HOOK_USER, { bot: true, username: 'Hook Name' });
+    const [id] = addHistory(discord, SOURCE, [
+      {
+        content: 'card',
+        authorId: HOOK_USER,
+        webhookId: FOREIGN_HOOK,
+        files: [{ filename: 'pic.png', data: 'x'.repeat(20) }],
+        embeds: [{ type: 'rich', title: 'Card', image: { url: 'attachment://pic.png' } }],
+      },
+    ]);
+    const pressed = await move(id!, null, TARGET, SOURCE, { attachmentSizeLimit: 10 });
+    const [sent] = discord.sent;
+    expect(sent!.files).toEqual([]);
+    expect(sent!.message.embeds[0]!.image!.url).toMatch(new RegExp(`^https://cdn\\.discordapp\\.com/attachments/${SOURCE}/\\d+/pic\\.png`));
+    expect(sent!.message.content).toBe(`card\n-# Attachment too large to move: [original](<${messageLink(SOURCE, id!)}>)`);
+    expect(discord.liveMessages(SOURCE)).toEqual([id]);
+    expect(result(pressed)).toContain(`${messageLink(SOURCE, id!)} (attachment too large)`);
+  });
+
+  it('copies the embeds of a forwarded message', async () => {
+    await start();
+    const [id] = addHistory(discord, SOURCE, [
+      { content: '', authorId: MEMBER, snapshots: [{ content: '', embeds: [{ type: 'rich', title: 'Shared' }, { type: 'link', url: 'https://example.test' }] }] },
+    ]);
+    await move(id!, null);
+    const [sent] = discord.sent;
+    expect(sent!.message.content).toBe('-# Forwarded');
+    expect(sent!.message.embeds).toMatchObject([{ title: 'Shared' }]);
+    expect(sent!.message.embeds).toHaveLength(1);
+    expect(discord.liveMessages(SOURCE)).toEqual([]);
+  });
+
+  it('keeps a forward of a poll or of components', async () => {
+    await start();
+    const button = { type: 1, components: [{ type: 2, style: 5, label: 'Open', url: 'https://example.test' }] };
+    const ids = addHistory(discord, SOURCE, [
+      { content: '', authorId: MEMBER, snapshots: [{ content: 'vote', poll: true }] },
+      { content: '', authorId: MEMBER, snapshots: [{ content: 'click', components: [button] }] },
+    ]);
+    const text = result(await move(ids[0]!, ids[1]!));
+    expect(sentContents()).toEqual([
+      `-# Forwarded\n> vote\n-# Poll not moved: [original](<${messageLink(SOURCE, ids[0]!)}>)`,
+      `-# Forwarded\n> click\n-# Interactive message not moved: [original](<${messageLink(SOURCE, ids[1]!)}>)`,
+    ]);
+    expect(discord.liveMessages(SOURCE)).toEqual(ids);
+    expect(text).toContain(`${messageLink(SOURCE, ids[0]!)} (poll)`);
+    expect(text).toContain(`${messageLink(SOURCE, ids[1]!)} (interactive)`);
+  });
+
   it('adds reactions once, skips unknown custom emojis', async () => {
     await start();
     const known = '100000000000000300';

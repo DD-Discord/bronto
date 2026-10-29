@@ -71,6 +71,17 @@ describe('classify', () => {
     expect(classify(message, ctx)).toEqual({ kind: 'repost', stays: [] });
   });
 
+  it('forwards of polls and components stay', async () => {
+    const poll = await fetchOne(SOURCE, { snapshots: [{ content: 'vote', poll: true }] });
+    expect(classify(poll, ctx)).toEqual({ kind: 'repost', stays: ['poll'] });
+    const buttons = await fetchOne(SOURCE, { snapshots: [{ content: 'x', components: [{ type: 1, components: [linkButton] }] }] });
+    expect(classify(buttons, ctx)).toEqual({ kind: 'repost', stays: ['interactive'] });
+    const v2 = await fetchOne(SOURCE, { snapshots: [{ content: '', flags: MessageFlags.IsComponentsV2 }] });
+    expect(classify(v2, ctx)).toEqual({ kind: 'repost', stays: ['interactive'] });
+    const plain = await fetchOne(SOURCE, { snapshots: [{ content: 'x', embeds: [{ type: 'rich', title: 'ok' }] }] });
+    expect(classify(plain, ctx)).toEqual({ kind: 'repost', stays: [] });
+  });
+
   it('sticky posts stay', async () => {
     const message = await fetchOne(SOURCE, { content: 'sticky' });
     expect(classify(message, { ...ctx, isSticky: (m) => m.id === message.id })).toEqual({ kind: 'repost', stays: ['interactive'] });

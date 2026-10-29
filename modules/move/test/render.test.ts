@@ -151,6 +151,24 @@ describe('renderMessage', () => {
     expect(parts[0]!.embeds).toMatchObject([{ title: 'Rich' }]);
   });
 
+  it('names files only embeds show apart from the listed ones and puts shown files first', async () => {
+    const files = Array.from({ length: 11 }, (_, index) => ({ filename: index === 0 ? 'pic.png' : `f${index}.txt`, data: 'x' }));
+    const elsewhere = `https://cdn.discordapp.com/attachments/${SOURCE}/100000000000000600/pic.png?ex=1`;
+    const parts = await render({ files, embeds: [{ type: 'rich', title: 'Card', image: { url: elsewhere } }] });
+    expect(parts[0]!.files.map((file) => file.name)).toEqual(['1-pic.png', 'pic.png', ...files.slice(1).map((file) => file.filename)]);
+    expect(parts[0]!.files[0]).toMatchObject({ url: elsewhere, size: 0 });
+    expect(parts[0]!.embeds[0]!.image!.url).toBe('attachment://1-pic.png');
+  });
+
+  it('leaves embeds pointing at files that are missing', async () => {
+    const elsewhere = `https://cdn.discordapp.com/attachments/${SOURCE}/100000000000000600/pic.png`;
+    const message = await fetchOne({ embeds: [{ type: 'rich', image: { url: elsewhere } }] });
+    const parts = renderMessage(message, { kind: 'repost', stays: ['too-large'] }, { replyTarget: null, uploadLimit: 1000, originalLink: LINK, missing: new Set([elsewhere]) });
+    expect(parts[0]!.files).toEqual([]);
+    expect(parts[0]!.embeds[0]!.image!.url).toBe(elsewhere);
+    expect(message.embeds[0]!.image!.url).toBe(elsewhere);
+  });
+
   it('writes the sticker line, without an image for a Lottie sticker', async () => {
     const parts = await render({ content: 'hi', stickers: [{ id: '100000000000000500', name: 'Wave', format: StickerFormatType.Lottie }] });
     expect(parts[0]!.content).toBe('hi\n-# Sticker: Wave');
@@ -178,6 +196,23 @@ describe('renderMessage', () => {
     expect(parts[0]!.files).toMatchObject([{ name: 'f.txt', size: 2 }]);
   });
 
+  it('writes the stickers of forwards and attaches their images', async () => {
+    const parts = await render({
+      content: 'look',
+      authorId: MEMBER,
+      snapshots: [{ content: 'hi', stickers: [{ id: '100000000000000503', name: 'Wave', format: StickerFormatType.PNG }] }],
+    });
+    expect(parts[0]!.content).toBe('look\n-# Forwarded\n> hi\n-# Sticker: Wave');
+    expect(parts[0]!.files).toMatchObject([{ url: expect.stringContaining('/stickers/100000000000000503.png'), name: 'Wave.png' }]);
+  });
+
+  it('copies rich embeds of forwards, after the message\'s own, ten at most', async () => {
+    const own = Array.from({ length: 4 }, (_, index) => ({ type: 'rich', title: `own ${index}` }));
+    const forwarded = Array.from({ length: 8 }, (_, index) => ({ type: 'rich', title: `fwd ${index}` }));
+    const parts = await render({ embeds: own, snapshots: [{ content: '', embeds: [{ type: 'link', url: 'https://x.test' }, ...forwarded] }] });
+    expect(parts[0]!.embeds.map((embed) => embed.title)).toEqual([...own.map((e) => e.title), ...forwarded.slice(0, 6).map((e) => e.title)]);
+  });
+
   it('adds one notice per stay reason', async () => {
     const parts = await render({ content: 'hi' }, ['poll', 'thread', 'forum-start', 'interactive']);
     expect(parts[0]!.content).toBe([
@@ -198,7 +233,7 @@ describe('renderMessage', () => {
 
   it('writes a reply to a deleted message and an empty message', async () => {
     const parts = await render({}, [], { replyTarget: 'deleted' });
-    expect(parts).toEqual([{ content: '-# ↪ (deleted message)', embeds: [], files: [] }]);
-    expect(await render({})).toEqual([{ content: '', embeds: [], files: [] }]);
+    expect(parts).toEqual([{ content: '-# ↪ (deleted message)', embeds: [], files: [], components: [] }]);
+    expect(await render({})).toEqual([{ content: '', embeds: [], files: [], components: [] }]);
   });
 });
