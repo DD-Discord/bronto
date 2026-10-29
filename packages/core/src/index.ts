@@ -8,3 +8,5 @@ export * from './webhooks/index.js';
 export * from './files/index.js';
 export * from './reports/index.js';
 export * from './channel-rules/index.js';
+export * from './discord/index.js';
+export * from './forums/index.js';

@@ -1,5 +1,6 @@
 import {
   batchLines,
+  channelKeyOption,
   crudSubcommands,
   defineCommand,
   defineSubcommand,
@@ -7,10 +8,9 @@ import {
   UserError,
   ensureWebhook,
   MissingWebhookPermissionError,
-  type Autocomplete,
   type CommandDefinition,
 } from '@bronto/core';
-import templates from '@bronto/templates';
+import { suggestTemplates } from '@bronto/templates';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { sql } from 'drizzle-orm';
 import { stickies } from './db/schema.js';
@@ -34,27 +34,15 @@ export interface StickyCommandDeps {
   reposter: Reposter;
 }
 
-const channelOption = () => opt.channel({ description: 'Channel or thread of the sticky', channelTypes: STICKY_CHANNEL_TYPES });
-
-/** Templates whose name contains the query, as `name · created date` (UTC). */
-const suggestTemplates: Autocomplete = async (ctx, query) =>
-  (await ctx.modules.get(templates).search(query)).map((template) => ({
-    name: `${template.name} · ${template.createdAt.toISOString().slice(0, 10)}`,
-    value: template.id,
-  }));
+const CHANNEL_DESCRIPTION = 'Channel or thread of the sticky';
+const channelOption = () => opt.channel({ description: CHANNEL_DESCRIPTION, channelTypes: STICKY_CHANNEL_TYPES });
 
 export function createStickyCommand(deps: StickyCommandDeps): CommandDefinition {
   return defineCommand({
     description: 'Keeps a message at the bottom of a channel',
     permissions: PermissionFlagsBits.ManageMessages,
     subcommands: crudSubcommands(stickyEntity, {
-      key: {
-        name: 'channel',
-        option: channelOption(),
-        toKey: (value) => value.id,
-        format: (channelId) => `<#${channelId}>`,
-        fallback: (ctx) => ctx.channelId,
-      },
+      key: channelKeyOption({ description: CHANNEL_DESCRIPTION, channelTypes: STICKY_CHANNEL_TYPES }),
       fields: {
         template: { option: opt.string({ description: 'Template to post', autocomplete: suggestTemplates }), column: 'templateId' },
         'ignore-bots': { option: opt.boolean({ description: 'Ignore messages from bots (default: yes)' }), column: 'ignoreBots', default: true },

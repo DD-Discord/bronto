@@ -245,3 +245,41 @@ describe('/autodelete reset', () => {
     ]);
   });
 });
+
+describe('deleted channels and threads', () => {
+  const THREAD = '100000000000000020';
+  const threadDeleted = () => ab.client.emit(Events.Raw, { op: 0, t: 'THREAD_DELETE', d: { id: THREAD, guild_id: GUILD, parent_id: CHANNEL, type: 11 }, s: 1 }, 0);
+
+  async function postIn(channelId: string) {
+    const message = fakeMessage(channelId);
+    discord.addPost(channelId, message.id, { content: message.content, attachmentCount: 0 });
+    ab.client.emit(Events.MessageCreate, message);
+    await ab.bot.idle();
+  }
+
+  it('removes the rule of a deleted channel', async () => {
+    await say('create', { channel: channel(CHANNEL) });
+    ab.client.emit(Events.ChannelDelete, (await ab.client.channels.fetch(CHANNEL)) as never);
+    await ab.bot.idle();
+    expect(await ruleRows(t)).toEqual([]);
+    await postIn(CHANNEL);
+    expect(await postRows(t)).toEqual([]);
+  });
+
+  it('removes the rule of a deleted thread', async () => {
+    await say('create', { channel: channel(THREAD, CHANNEL) });
+    threadDeleted();
+    await ab.bot.idle();
+    expect(await ruleRows(t)).toEqual([]);
+    await postIn(THREAD);
+    expect(await postRows(t)).toEqual([]);
+  });
+
+  it('deletes the log webhook of a rule whose channel was deleted', async () => {
+    await say('create', { channel: channel(CHANNEL), 'log-channel': channel(LOG_CHANNEL) });
+    const [row] = await ruleRows(t);
+    ab.client.emit(Events.ChannelDelete, (await ab.client.channels.fetch(CHANNEL)) as never);
+    await ab.bot.idle();
+    expect(ab.requests.some((r) => r.method === 'DELETE' && r.path === `/webhooks/${row!.logWebhookId}/${row!.logWebhookToken}`)).toBe(true);
+  });
+});

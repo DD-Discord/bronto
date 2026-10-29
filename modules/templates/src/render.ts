@@ -1,6 +1,6 @@
-import { linkExpiry, REFRESH_MARGIN_MS } from '@bronto/core';
+import { linkExpiry, REFRESH_MARGIN_MS, isGone } from '@bronto/core';
 import { and, eq } from 'drizzle-orm';
-import { DiscordAPIError, RESTJSONErrorCodes, type APIEmbed } from 'discord.js';
+import { type APIEmbed } from 'discord.js';
 import type { TemplatesContext } from './context.js';
 import { embedLength, LIMITS, MAX_EMBED, type TemplateMessage } from './content.js';
 import { IMAGE_SLOTS, templateImages, templates, type ImageSlot, type TemplateImage } from './db/schema.js';
@@ -71,10 +71,7 @@ async function currentLinks(ctx: TemplatesContext, threadId: string, messageId: 
     const message = await channel.messages.fetch(messageId);
     return new Map(messageAttachments(message).map((attachment) => [attachment.id, attachment.url]));
   } catch (error) {
-    if (
-      error instanceof DiscordAPIError &&
-      (error.code === RESTJSONErrorCodes.UnknownMessage || error.code === RESTJSONErrorCodes.UnknownChannel)
-    ) {
+    if (isGone(error)) {
       return new Map();
     }
     throw error;

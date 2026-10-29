@@ -1,4 +1,4 @@
-import { ensureWebhook, resolveWebhook, withWebhookErrors, UnknownMessageError, UnknownWebhookError, type IncomingWebhook, type HandlerContext } from '@bronto/core';
+import { ensureWebhook, resolveWebhook, withWebhookErrors, UnknownMessageError, UnknownWebhookError, type IncomingWebhook, type HandlerContext, isGone } from '@bronto/core';
 import templates from '@bronto/templates';
 import {
   DiscordAPIError, RESTJSONErrorCodes, MessageFlags,
@@ -47,7 +47,7 @@ async function deleteChannelPost(ctx: StickyContext, channelId: string, messageI
     const channel = await ctx.client.channels.fetch(channelId);
     if (channel?.isTextBased()) await channel.messages.delete(messageId);
   } catch (error) {
-    if (!(error instanceof DiscordAPIError) || (error.code !== RESTJSONErrorCodes.UnknownMessage && error.code !== RESTJSONErrorCodes.UnknownChannel)) throw error;
+    if (!isGone(error)) throw error;
   }
 }
 

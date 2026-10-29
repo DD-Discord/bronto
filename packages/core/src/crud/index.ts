@@ -1,3 +1,4 @@
+export { channelKeyOption } from './keys.js';
 export { colorFromId, defineEntity, entityAutocomplete, type Entity, type EntityInput } from './entity.js';
 export {
   crudSubcommands,

@@ -1,19 +1,10 @@
-import { crudSubcommands, defineCommand, opt, UserError, type Autocomplete, type ChannelRuleIndex, type CommandDefinition } from '@bronto/core';
-import templates, { TIMESTAMP_PLACEHOLDERS } from '@bronto/templates';
-import { ChannelType, PermissionFlagsBits } from 'discord.js';
+import { channelKeyOption, TEXT_CHANNEL_TYPES, crudSubcommands, defineCommand, opt, UserError, type ChannelRuleIndex, type CommandDefinition } from '@bronto/core';
+import templates, { suggestTemplates, TIMESTAMP_PLACEHOLDERS } from '@bronto/templates';
+import { PermissionFlagsBits } from 'discord.js';
 import type { Rule } from './db/schema.js';
 import { ruleEntity } from './entity.js';
 
-/** Text and announcement channels; a forum post is already a thread. */
-const CHANNEL_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
 const MAX_SLOWMODE_MS = 6 * 60 * 60 * 1000;
-
-/** Templates whose name contains the query, as `name · created date` (UTC). */
-const suggestTemplates: Autocomplete = async (ctx, query) =>
-  (await ctx.modules.get(templates).search(query)).map((template) => ({
-    name: `${template.name} · ${template.createdAt.toISOString().slice(0, 10)}`,
-    value: template.id,
-  }));
 
 export function createAutothreadCommand(deps: { index: ChannelRuleIndex<Rule> }): CommandDefinition {
   return defineCommand({
@@ -21,13 +12,7 @@ export function createAutothreadCommand(deps: { index: ChannelRuleIndex<Rule> })
     permissions: PermissionFlagsBits.ManageChannels,
     subcommands: crudSubcommands(ruleEntity, {
       style: 'set',
-      key: {
-        name: 'channel',
-        option: opt.channel({ description: 'Channel of the rule (default: this one)', channelTypes: CHANNEL_TYPES }),
-        toKey: (value) => value.id,
-        format: (channelId) => `<#${channelId}>`,
-        fallback: (ctx) => ctx.channelId,
-      },
+      key: channelKeyOption({ description: 'Channel of the rule (default: this one)', channelTypes: TEXT_CHANNEL_TYPES }),
       fields: {
         'name-format': {
           option: opt.string({ description: 'Thread name, e.g. [Comments] {user.display} (default)', maxLength: 100 }),

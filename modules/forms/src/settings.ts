@@ -1,4 +1,4 @@
-import { defineModal, type ButtonContext, type ReplyMessage } from '@bronto/core';
+import { defineModal, type ButtonContext, type ReplyMessage, isUnknownChannel } from '@bronto/core';
 import {
   ChannelSelectMenuBuilder,
   ChannelType,
@@ -8,8 +8,6 @@ import {
   MentionableSelectMenuBuilder,
   ModalBuilder,
   PermissionFlagsBits,
-  RESTJSONErrorCodes,
-  DiscordAPIError,
   RoleSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
@@ -109,7 +107,7 @@ export async function checkSettingsAllowed(ctx: FormsContext, member: GuildMembe
   }
   if (settings.channelId !== null && settings.channelId !== current.channelId) {
     const channel = await ctx.client.channels.fetch(settings.channelId).catch((error: unknown) => {
-      if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownChannel) return null;
+      if (isUnknownChannel(error)) return null;
       throw error;
     });
     if (channel === null || channel.isDMBased() || channel.guildId !== guild.id) return `The channel <#${settings.channelId}> doesn't exist in this server.`;

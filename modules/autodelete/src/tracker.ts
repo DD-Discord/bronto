@@ -1,11 +1,10 @@
-import type { HandlerContext } from '@bronto/core';
+import type { ChannelRuleIndex, HandlerContext } from '@bronto/core';
 import { PermissionFlagsBits, SnowflakeUtil } from 'discord.js';
 import { and, desc, eq, gt, inArray, lt, ne } from 'drizzle-orm';
 import type { AutodeleteConfig } from './config.js';
 import { cooldowns, posts, rules, type Post, type Rule } from './db/schema.js';
 import { fetchPost, deletePost, type DeleteOutcome, type FetchedPost } from './discord.js';
 import { notifyReplaced, notifyRejected, notifyLeft } from './report/notifier.js';
-import type { RuleIndex } from './rule-index.js';
 
 export type AutodeleteContext = HandlerContext<AutodeleteConfig>;
 
@@ -45,7 +44,7 @@ export interface IncomingMessage {
 }
 
 export interface TrackerDeps {
-  index: RuleIndex;
+  index: ChannelRuleIndex<Rule>;
 }
 
 type Decision =
@@ -65,7 +64,7 @@ const newestOf = (ids: string[]): string => ids.reduce((a, b) => (BigInt(b) > Bi
 
 /** Tracks the posts and cooldowns of rule channels and removes posts the rules do not allow. */
 export class Tracker {
-  private readonly index: RuleIndex;
+  private readonly index: ChannelRuleIndex<Rule>;
 
   constructor(deps: TrackerDeps) {
     this.index = deps.index;
@@ -142,7 +141,7 @@ export class Tracker {
 
   /** Removes a leaving member's posts in the channels whose rule asks for it; their cooldowns stay. */
   async onLeave(ctx: AutodeleteContext, member: MemberLike): Promise<void> {
-    if (!this.index.rulesOf(ctx.guildId).some((rule) => rule.enabled && rule.deleteOnLeave)) return;
+    if (![...this.index.rulesOf(ctx.guildId)].some((rule) => rule.enabled && rule.deleteOnLeave)) return;
     const removed = await ctx.db.run(async (tx) => {
       const leaveRules = await tx
         .select()

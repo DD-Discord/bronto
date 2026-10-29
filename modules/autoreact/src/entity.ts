@@ -1,7 +1,5 @@
-import { defineEntity } from '@bronto/core';
+import { defineEntity, yesNo } from '@bronto/core';
 import { rules } from './db/schema.js';
-
-const yesNo = (value: boolean) => (value ? 'Yes' : 'No');
 
 export const ruleEntity = defineEntity({
   table: rules,

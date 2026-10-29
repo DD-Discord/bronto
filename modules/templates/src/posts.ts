@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { normalizeEmbed, validateTemplate, type TemplateMessage } from './content.js';
 import type { TemplatesContext } from './context.js';
 import { templateImages, templates, type ImageSlot, type Template } from './db/schema.js';
-import { ensureForum } from './forum.js';
+import { templateForum } from './lifecycle.js';
 import { messageAttachments } from './images.js';
 import { previewBody, previewButtonRow, previewMessage, uploadFileName, withUploads, type PendingUpload } from './preview.js';
 
@@ -53,7 +53,7 @@ export async function createPost(ctx: TemplatesContext, input: NewTemplate): Pro
   const problem = validateTemplate(message);
   if (problem !== null) throw new UserError(problem);
 
-  const forumId = await ensureForum(ctx);
+  const forumId = await templateForum.ensure(ctx);
   const forum = await ctx.client.channels.fetch(forumId);
   if (forum?.type !== ChannelType.GuildForum) throw new Error(`Template forum ${forumId} is not a forum channel.`);
   const thread = await forum.threads.create({ name, appliedTags: input.tags, message: previewBody(message, uploads) });

@@ -11,3 +11,5 @@ pgdata
 # The image only serves the user docs, through /help.
 docs/*
 !docs/user
+.jscpd.json
+.jscpd-report

@@ -1,5 +1,5 @@
-import { defineEntity, formatDuration, type HandlerContext } from '@bronto/core';
-import templates, { escapeLinkText } from '@bronto/templates';
+import { defineEntity, escapeLinkText, formatDuration, type HandlerContext } from '@bronto/core';
+import templates from '@bronto/templates';
 import { stickies, type Sticky } from './db/schema.js';
 
 /** What the templates module tells about a template: its name and a link to its post. */
