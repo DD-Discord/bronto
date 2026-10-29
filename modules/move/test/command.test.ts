@@ -1,7 +1,8 @@
 import { FakeDiscordHttp, type FakeInteraction } from '@bronto/core/testing';
-import { PermissionFlagsBits } from 'discord.js';
+import { GatewayIntentBits, PermissionFlagsBits } from 'discord.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
+import { createMoveModule } from '../src/index.js';
 import { CONFIRM_MS } from '../src/limits.js';
 import { PendingMoves } from '../src/pending.js';
 import { addHistory, BOT_PERMISSIONS, GUILD, MEMBER, pressButton, prepareMoveBot, ready, runCommand, SOURCE, TARGET, THREAD, type MoveBot } from './harness.js';
@@ -36,6 +37,10 @@ async function start(permissions: bigint = BOT_PERMISSIONS): Promise<MoveBot> {
 }
 
 const targetOption = (id: string) => ({ id });
+
+it('asks for the Message Content intent, without which fetched messages arrive empty', () => {
+  expect(createMoveModule().intents).toContain(GatewayIntentBits.MessageContent);
+});
 
 describe('/move', () => {
   it('shows the confirmation with links and counts', async () => {

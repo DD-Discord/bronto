@@ -29,7 +29,7 @@ export function createMoveModule(): ModuleDefinition<Record<string, never>, Move
       PermissionFlagsBits.AddReactions,
       PermissionFlagsBits.UseExternalEmojis,
     ],
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildExpressions],
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildExpressions],
     commands: { move: createMoveCommand({ pending, buttons }) },
     components: [buttons.confirm, buttons.cancel],
     // Reposts of a running move are kept: their originals are deleted, so removing them would lose the message.
