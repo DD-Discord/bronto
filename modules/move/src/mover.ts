@@ -29,6 +29,19 @@ const BULK_SIZE = 100;
 const MAX_FILES = 10;
 /** How long reposts still count as moved after a move ends, since their gateway events can arrive late. */
 const ACTIVE_GRACE_MS = 60_000;
+/**
+ * Errors about one message's own content: invalid form body (e.g. an embed Discord rejects), empty message, a file
+ * or request too large. That message stays and the move goes on; any other error ends the move.
+ */
+const CONTENT_ERRORS: ReadonlySet<number> = new Set([
+  RESTJSONErrorCodes.InvalidFormBodyOrContentType,
+  RESTJSONErrorCodes.CannotSendAnEmptyMessage,
+  RESTJSONErrorCodes.FileUploadedExceedsMaximumSize,
+  RESTJSONErrorCodes.RequestEntityTooLarge,
+]);
+const isContentError = (error: unknown): boolean =>
+  error instanceof DiscordAPIError && (error.status === 413 || (error.status === 400 && CONTENT_ERRORS.has(Number(error.code))));
+
 /** Room for the result in one message. */
 const RESULT_LENGTH = 1900;
 
@@ -182,7 +195,11 @@ class Run {
   private readonly stayed: { id: string; reasons: StayReason[] }[] = [];
   /** Originals that stay without a copy, since nothing of them could be posted. */
   private readonly notCopied: string[] = [];
+  /** Originals that stay with part of a copy, since removing the posted parts failed. */
+  private readonly partlyCopied: string[] = [];
   private readonly notDeleted: string[] = [];
+  /** Skipped system messages; they have no copy. */
+  private readonly system = new Set<string>();
   private moved = 0;
   private readonly members = new Map<string, Promise<GuildMember | null>>();
 
@@ -201,7 +218,10 @@ class Run {
     let done = 0;
     try {
       for (const [message, plan] of plans) {
-        if (plan.kind === 'skip-delete') this.toDelete.push(message.id);
+        if (plan.kind === 'skip-delete') {
+          this.toDelete.push(message.id);
+          this.system.add(message.id);
+        }
         if (plan.kind !== 'repost') continue;
         await this.repost(message, plan);
         done += 1;
@@ -272,12 +292,12 @@ class Run {
           }),
         );
       } catch (error) {
-        if (error instanceof DiscordAPIError && (error.status === 400 || error.status === 413)) {
-          // Discord refuses this message's content; it stays behind without a copy and the move goes on.
+        if (isContentError(error)) {
+          // Discord refuses this message's content; it stays behind and the move goes on.
           this.ctx.log.warn({ err: error, messageId: message.id }, 'Discord refused a repost');
           const left = new Set(await this.removeReposts(own));
           this.posted.splice(this.posted.length - own.length, own.length, ...own.filter((id) => left.has(id)));
-          this.notCopied.push(message.id);
+          (left.size > 0 ? this.partlyCopied : this.notCopied).push(message.id);
           return;
         }
         throw new SendFailed(error instanceof DiscordAPIError ? error.message : "I can't post in the target any more", { cause: error });
@@ -399,8 +419,19 @@ class Run {
     if (this.notCopied.length > 0) {
       sections.push({ title: `${plural(this.notCopied.length, 'message')} couldn't be copied and stayed behind:`, entries: this.notCopied.map((id) => `- ${original(id)}`) });
     }
-    if (this.notDeleted.length > 0) {
-      sections.push({ title: `${plural(this.notDeleted.length, 'message')} couldn't be deleted; the copies are in the target:`, entries: this.notDeleted.map((id) => `- ${original(id)}`) });
+    if (this.partlyCopied.length > 0) {
+      sections.push({
+        title: `${plural(this.partlyCopied.length, 'message')} couldn't be copied fully and stayed behind; part of a copy is in the target:`,
+        entries: this.partlyCopied.map((id) => `- ${original(id)}`),
+      });
+    }
+    const undeletedCopies = this.notDeleted.filter((id) => !this.system.has(id));
+    const undeletedSystem = this.notDeleted.filter((id) => this.system.has(id));
+    if (undeletedCopies.length > 0) {
+      sections.push({ title: `${plural(undeletedCopies.length, 'message')} couldn't be deleted; the copies are in the target:`, entries: undeletedCopies.map((id) => `- ${original(id)}`) });
+    }
+    if (undeletedSystem.length > 0) {
+      sections.push({ title: `${plural(undeletedSystem.length, 'system message')} couldn't be deleted:`, entries: undeletedSystem.map((id) => `- ${original(id)}`) });
     }
     const lines = [`Moved ${plural(this.moved, 'message')} to <#${this.targetId}>.`];
     const room = RESULT_LENGTH - lines[0]!.length - sections.reduce((sum, section) => sum + section.title.length + 1, 0);

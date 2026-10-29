@@ -71,12 +71,10 @@ async function move(from: string, to: string | null, target = TARGET, source = S
   return pressButton(mb!, await confirmation(from, to, target, source, input));
 }
 
-/** Answers the `n`th request to `method path` with `fail`; the others go to the fake as usual. */
-function failAt(method: string, path: string, n: number, fail: ReturnType<FakeHttpAnswer>): void {
+/** Lets requests to `method path` through to the fake, except the numbered calls `answers` answers itself. */
+function intercept(method: string, path: string, answers: Record<number, ReturnType<FakeHttpAnswer> | ((pass: () => ReturnType<FakeHttpAnswer>) => ReturnType<FakeHttpAnswer>)>): void {
   let calls = 0;
-  const handler: FakeHttpAnswer = async (request: RecordedRequest) => {
-    calls += 1;
-    if (calls === n) return fail;
+  const pass = (request: RecordedRequest) => async () => {
     discord.clearOverride(method, path);
     try {
       return await discord.answer(request);
@@ -84,8 +82,25 @@ function failAt(method: string, path: string, n: number, fail: ReturnType<FakeHt
       discord.override(method, path, handler);
     }
   };
+  const handler: FakeHttpAnswer = async (request: RecordedRequest) => {
+    calls += 1;
+    const answer = answers[calls];
+    if (answer === undefined) return pass(request)();
+    return typeof answer === 'function' ? answer(pass(request)) : answer;
+  };
   discord.override(method, path, handler);
 }
+
+/** Answers the `n`th request to `method path` with `fail`; the others go to the fake as usual. */
+function failAt(method: string, path: string, n: number, fail: ReturnType<FakeHttpAnswer>): void {
+  intercept(method, path, { [n]: fail });
+}
+
+const MISSING_ACCESS = { status: 403, json: { code: 50001, message: 'Missing Access' } };
+const INVALID_BODY = { status: 400, json: { code: 50035, message: 'Invalid Form Body' } };
+/** Content long enough for two posts. */
+const LONG = `${'word '.repeat(500)}\n${'more '.repeat(100)}`;
+const twelveFiles = () => Array.from({ length: 12 }, (_, index) => ({ filename: `f${index}.txt`, data: 'x' }));
 
 const deletes = (channelId: string) => mb!.requests.filter((r) => r.method === 'DELETE' && r.path.startsWith(`/channels/${channelId}/messages/`));
 const bulkDeletes = (channelId: string) => mb!.requests.filter((r) => r.method === 'POST' && r.path === `/channels/${channelId}/messages/bulk-delete`);
@@ -270,16 +285,72 @@ describe('running a move', () => {
   it('rolls back reposts when a send fails and deletes nothing', async () => {
     await start();
     const hook = discord.addWebhook(TARGET, { name: 'Move' });
-    const ids = addHistory(discord, SOURCE, [{ content: 'a' }, { content: 'b' }, { content: 'c' }]);
-    failAt('POST', `/webhooks/${hook.id}/${hook.token}`, 3, { status: 403, json: { code: 50001, message: 'Missing Access' } });
-    const pressed = await move(ids[0]!, ids[2]!);
+    // Sends: a (1), the long message (2, 3), the twelve files (4 with ten files, 5 with two), c (6) fails.
+    const ids = addHistory(discord, SOURCE, [{ content: 'a' }, { content: LONG }, { content: 'files', files: twelveFiles() }, { content: 'c' }]);
+    failAt('POST', `/webhooks/${hook.id}/${hook.token}`, 6, MISSING_ACCESS);
+    const pressed = await move(ids[0]!, ids[3]!);
+    expect(discord.sent.map((sent) => sent.files.length)).toEqual([0, 0, 0, 10, 2]);
     expect(discord.deleted).toEqual(discord.sent.map((sent) => sent.id));
-    expect(discord.deleted).toHaveLength(2);
     expect(discord.botDeleted).toEqual([]);
     expect(discord.liveMessages(SOURCE)).toEqual(ids);
     expect(discord.liveMessages(TARGET)).toEqual([]);
     expect(result(pressed)).toContain('The move failed');
     expect(result(pressed)).toContain('Nothing was deleted');
+  });
+
+  it('a refused message stays without a copy; the rest moves, and a later failure still rolls back', async () => {
+    await start();
+    const hook = discord.addWebhook(TARGET, { name: 'Move' });
+    // First move: a (1), long part 1 (2), long part 2 refused (3), b (4).
+    // Second move: long part 1 (5), long part 2 refused (6), d (7), e fails (8).
+    intercept('POST', `/webhooks/${hook.id}/${hook.token}`, { 3: INVALID_BODY, 6: INVALID_BODY, 8: MISSING_ACCESS });
+    const first = addHistory(discord, SOURCE, [{ content: 'a' }, { content: LONG }, { content: 'b' }]);
+    const pressed = await move(first[0]!, first[2]!);
+    const [a, longPart, b] = discord.sent;
+    expect([a, b].map((sent) => sent!.message.content)).toEqual(['a', 'b']);
+    expect(discord.deleted).toEqual([longPart!.id]);
+    expect(discord.liveMessages(SOURCE)).toEqual([first[1]]);
+    expect(discord.liveMessages(TARGET)).toEqual([a!.id, b!.id]);
+    expect(result(pressed)).toContain('Moved **2** messages');
+    expect(result(pressed)).toContain(`couldn't be copied and stayed behind:\n- ${messageLink(SOURCE, first[1]!)}`);
+
+    const second = addHistory(discord, SOURCE, [{ content: LONG }, { content: 'd' }, { content: 'e' }]);
+    const failed = await move(second[0]!, second[2]!);
+    expect(discord.deleted).toEqual(discord.sent.map((sent) => sent.id).filter((id) => id !== a!.id && id !== b!.id));
+    expect(discord.liveMessages(TARGET)).toEqual([a!.id, b!.id]);
+    expect(discord.liveMessages(SOURCE)).toEqual([first[1], ...second]);
+    expect(result(failed)).toContain('The move failed');
+  });
+
+  it('says so when part of a refused copy stays', async () => {
+    await start();
+    const hook = discord.addWebhook(TARGET, { name: 'Move' });
+    const refuseDelete = { status: 403, json: { code: 50013, message: 'Missing Permissions' } };
+    intercept('POST', `/webhooks/${hook.id}/${hook.token}`, {
+      1: async (pass) => {
+        const answer = await pass();
+        discord.override('DELETE', `/webhooks/${hook.id}/${hook.token}/messages/${(answer.json as { id: string }).id}`, () => refuseDelete);
+        return answer;
+      },
+      2: INVALID_BODY,
+    });
+    const [id] = addHistory(discord, SOURCE, [{ content: LONG }]);
+    const text = result(await move(id!, null));
+    expect(text).toContain(`couldn't be copied fully and stayed behind; part of a copy is in the target:\n- ${messageLink(SOURCE, id!)}`);
+    expect(text).not.toContain("couldn't be copied and stayed behind");
+    expect(discord.liveMessages(SOURCE)).toEqual([id]);
+  });
+
+  it('ends the move on an error about the target, not the message', async () => {
+    await start();
+    const hook = discord.addWebhook(TARGET, { name: 'Move' });
+    failAt('POST', `/webhooks/${hook.id}/${hook.token}`, 2, { status: 400, json: { code: 50083, message: 'Thread is archived' } });
+    const ids = addHistory(discord, SOURCE, [{ content: 'a' }, { content: 'b' }, { content: 'c' }]);
+    const text = result(await move(ids[0]!, ids[2]!));
+    expect(text).toContain('The move failed');
+    expect(discord.deleted).toEqual([discord.sent[0]!.id]);
+    expect(discord.sent).toHaveLength(1);
+    expect(discord.liveMessages(SOURCE)).toEqual(ids);
   });
 
   it('reports originals it could not delete', async () => {
@@ -290,6 +361,19 @@ describe('running a move', () => {
     expect(sentContents()).toEqual(['stuck']);
     expect(result(pressed)).toContain(`couldn't be deleted`);
     expect(result(pressed)).toContain(messageLink(SOURCE, id!));
+  });
+
+  it('lists a system message it could not delete without claiming a copy', async () => {
+    await start();
+    const [id, join] = addHistory(discord, SOURCE, [{ content: 'a' }, { type: MessageType.UserJoin }]);
+    const refuse = () => ({ status: 403, json: { code: 50013, message: 'Missing Permissions' } });
+    discord.override('POST', `/channels/${SOURCE}/messages/bulk-delete`, refuse);
+    discord.override('DELETE', `/channels/${SOURCE}/messages/${join}`, refuse);
+    const text = result(await move(id!, join!));
+    expect(discord.liveMessages(SOURCE)).toEqual([join]);
+    expect(text).toContain(`Moved **1** message to`);
+    expect(text).toContain(`**1** system message couldn't be deleted:\n- ${messageLink(SOURCE, join!)}`);
+    expect(text).not.toContain('the copies are in the target');
   });
 
   it("reuses an existing Move webhook, ignores sticky's", async () => {
