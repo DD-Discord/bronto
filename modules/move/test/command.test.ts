@@ -5,7 +5,23 @@ import { createTestDatabase, type TestDatabase } from '../../../packages/core/te
 import { createMoveModule } from '../src/index.js';
 import { CONFIRM_MS } from '../src/limits.js';
 import { PendingMoves } from '../src/pending.js';
-import { addHistory, BOT_PERMISSIONS, GUILD, MEMBER, pressButton, prepareMoveBot, ready, runCommand, SOURCE, TARGET, THREAD, type MoveBot } from './harness.js';
+import {
+  addHistory,
+  BOT_PERMISSIONS,
+  FORUM,
+  FORUM_POST,
+  GUILD,
+  MEMBER,
+  pressButton,
+  prepareMoveBot,
+  PRIVATE_THREAD,
+  ready,
+  runCommand,
+  SOURCE,
+  TARGET,
+  THREAD,
+  type MoveBot,
+} from './harness.js';
 
 let t: TestDatabase;
 let discord: FakeDiscordHttp;
@@ -29,9 +45,9 @@ const answer = (fake: FakeInteraction, index = fake.responses.length - 1): Json 
 const buttons = (message: Json): Json[] => json(message).components.flatMap((row: unknown) => json(row).components.map(json));
 const messageLink = (channelId: string, messageId: string, guildId = GUILD) => `https://discord.com/channels/${guildId}/${channelId}/${messageId}`;
 
-/** Starts the bot holding `permissions` in the source and target channels. */
-async function start(permissions: bigint = BOT_PERMISSIONS): Promise<MoveBot> {
-  mb = await prepareMoveBot(t, discord, { botPermissions: permissions });
+/** Starts the bot holding `permissions` in the source and target channels; `setup` runs on the fixtures first. */
+async function start(permissions: bigint = BOT_PERMISSIONS, setup?: () => void): Promise<MoveBot> {
+  mb = await prepareMoveBot(t, discord, { botPermissions: permissions, setup });
   await ready(mb);
   return mb;
 }
@@ -126,6 +142,59 @@ describe('/move', () => {
     const text = await refusal({ from: messageLink(SOURCE, id!), target: targetOption(THREAD) });
     expect(text).toContain('Bot: Manage Webhooks in #games');
     expect(text).not.toContain('#games-thread');
+  });
+
+  const MODS = '100000000000000080';
+  /** Gives MEMBER a role with Manage Messages and `extra`, so MEMBER can act as a moderator who isn't the owner. */
+  const moderatorRole = (extra = 0n) => () => {
+    discord.addRole(GUILD, { id: MODS, permissions: PermissionFlagsBits.ManageMessages | extra });
+    discord.members.get(`${GUILD}:${MEMBER}`)!.roles = [MODS];
+  };
+  /** Denies MEMBER `flag` in the target channel, its threads included. */
+  const denyInTarget = (flag: bigint) => () => {
+    const target = discord.channels.get(TARGET) as unknown as { permission_overwrites: unknown[] };
+    target.permission_overwrites.push({ id: MEMBER, type: OverwriteType.Member, allow: '0', deny: String(flag) });
+  };
+
+  it('refuses a private thread target that neither the moderator nor the bot can see', async () => {
+    await start(BOT_PERMISSIONS, moderatorRole());
+    const [id] = addHistory(discord, SOURCE, [{ content: 'a' }]);
+    const text = await refusal({ from: messageLink(SOURCE, id!), target: targetOption(PRIVATE_THREAD) }, { userId: MEMBER });
+    expect(text).toContain('You: access to #games-private (join the private thread or Manage Threads)');
+    expect(text).toContain('Bot: access to #games-private (join the private thread or Manage Threads)');
+  });
+
+  it('accepts a private thread target with Manage Threads', async () => {
+    await start(BOT_PERMISSIONS | PermissionFlagsBits.ManageThreads, moderatorRole(PermissionFlagsBits.ManageThreads));
+    const [id] = addHistory(discord, SOURCE, [{ content: 'a' }]);
+    const text = await refusal({ from: messageLink(SOURCE, id!), target: targetOption(PRIVATE_THREAD) }, { userId: MEMBER });
+    expect(text).toContain('**1** message will move.');
+  });
+
+  it('refuses a moderator who may not post in the target', async () => {
+    await start(BOT_PERMISSIONS, () => {
+      moderatorRole()();
+      denyInTarget(PermissionFlagsBits.SendMessages | PermissionFlagsBits.SendMessagesInThreads)();
+    });
+    const [id] = addHistory(discord, SOURCE, [{ content: 'a' }]);
+    const channel = await refusal({ from: messageLink(SOURCE, id!), target: targetOption(TARGET) }, { userId: MEMBER });
+    expect(channel).toContain('You: Send Messages in #games');
+    expect(channel).not.toContain('Bot:');
+    const thread = await refusal({ from: messageLink(SOURCE, id!), target: targetOption(THREAD) }, { userId: MEMBER });
+    expect(thread).toContain('You: Send Messages in Threads in #games-thread');
+    expect(thread).not.toContain('You: Send Messages in #');
+  });
+
+  it('counts the starter of a forum post source as staying behind', async () => {
+    await start(BOT_PERMISSIONS, () => {
+      const grant = [{ id: discord.botId, type: OverwriteType.Member, allow: String(BOT_PERMISSIONS), deny: '0' }];
+      (discord.channels.get(FORUM) as unknown as { permission_overwrites: unknown[] }).permission_overwrites = grant;
+    });
+    discord.addMessage(FORUM_POST, FORUM_POST, { content: 'opening', authorId: MEMBER });
+    const [comment] = addHistory(discord, FORUM_POST, [{ content: 'comment', authorId: MEMBER }]);
+    const text = String(answer(await runCommand(mb!, { from: messageLink(FORUM_POST, FORUM_POST), to: messageLink(FORUM_POST, comment!), target: targetOption(TARGET) }, FORUM_POST)).content);
+    expect(text).toContain('**1** message will move.');
+    expect(text).toContain('1 stay behind: 1 forum post starters.');
   });
 
   it('refuses ranges over the cap', async () => {

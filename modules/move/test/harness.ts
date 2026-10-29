@@ -25,6 +25,7 @@ export const TARGET = '100000000000000011';
 export const THREAD = '100000000000000014';
 export const FORUM = '100000000000000015';
 export const FORUM_POST = '100000000000000016';
+export const PRIVATE_THREAD = '100000000000000017';
 export const MOD = '100000000000000099';
 export const MEMBER = '100000000000000098';
 export const OTHER = '100000000000000097';
@@ -64,10 +65,10 @@ export const BOT_PERMISSIONS =
   PermissionFlagsBits.AddReactions |
   PermissionFlagsBits.UseExternalEmojis;
 
-const CHANNEL_NAMES: Record<string, string> = { [SOURCE]: 'general', [TARGET]: 'games', [THREAD]: 'games-thread' };
+const CHANNEL_NAMES: Record<string, string> = { [SOURCE]: 'general', [TARGET]: 'games', [THREAD]: 'games-thread', [PRIVATE_THREAD]: 'games-private' };
 
 /**
- * Adds GUILD with its channels, a thread of TARGET, a forum with one post and three members, without a bot yet. The
+ * Adds GUILD with its channels, a public and a private thread of TARGET (no one has joined the private one), a forum with one post and three members, without a bot yet. The
  * bot holds `botPermissions` in SOURCE and TARGET through member overwrites.
  */
 export function addMoveFixtures(discord: FakeDiscordHttp, botPermissions: bigint = BOT_PERMISSIONS): void {
@@ -77,6 +78,9 @@ export function addMoveFixtures(discord: FakeDiscordHttp, botPermissions: bigint
     if (!discord.channels.has(id)) discord.addChannel(id, { guildId: GUILD, type: ChannelType.GuildText, name: CHANNEL_NAMES[id]!, permissionOverwrites: grant });
   }
   if (!discord.channels.has(THREAD)) discord.addChannel(THREAD, { guildId: GUILD, type: ChannelType.PublicThread, parentId: TARGET, name: CHANNEL_NAMES[THREAD]! });
+  if (!discord.channels.has(PRIVATE_THREAD)) {
+    discord.addChannel(PRIVATE_THREAD, { guildId: GUILD, type: ChannelType.PrivateThread, parentId: TARGET, name: CHANNEL_NAMES[PRIVATE_THREAD]!, ownerId: OTHER });
+  }
   if (!discord.channels.has(FORUM)) discord.addChannel(FORUM, { guildId: GUILD, type: ChannelType.GuildForum });
   if (!discord.channels.has(FORUM_POST)) discord.addChannel(FORUM_POST, { guildId: GUILD, type: ChannelType.PublicThread, parentId: FORUM });
   for (const id of [MOD, MEMBER, OTHER, discord.botId]) discord.addMember(GUILD, id);
@@ -86,9 +90,11 @@ export function addMoveFixtures(discord: FakeDiscordHttp, botPermissions: bigint
 export async function prepareMoveBot(
   t: TestDatabase,
   discord: FakeDiscordHttp,
-  options: { sticky?: boolean; mediaonly?: boolean; extra?: LoadedModule[]; botPermissions?: bigint } = {},
+  options: { sticky?: boolean; mediaonly?: boolean; extra?: LoadedModule[]; botPermissions?: bigint; setup?: () => void } = {},
 ): Promise<MoveBot> {
   addMoveFixtures(discord, options.botPermissions);
+  // Runs before the client first reads the guild, so roles added here count.
+  options.setup?.();
   const native = await createNativeTestClient(discord);
   const { client, requests } = native;
   const { log, lines } = captureLog();
