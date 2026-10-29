@@ -1,10 +1,12 @@
 import { UserError } from '@bronto/core';
-import { createNativeTestClient, FakeDiscordHttp } from '@bronto/core/testing';
+import { createNativeTestClient, FakeDiscordHttp, type RecordedRequest } from '@bronto/core/testing';
 import type { GuildTextBasedChannel } from 'discord.js';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { MAX_MESSAGES } from '../src/limits.js';
 import { parseMessageLink, readRange } from '../src/range.js';
 import { addHistory, addMoveFixtures, SOURCE } from './harness.js';
+
+const sortedAscending = (ids: string[]) => ids.every((id, index) => index === 0 || BigInt(id) > BigInt(ids[index - 1]!));
 
 const ID = ['100000000000000001', '100000000000000002', '100000000000000003'] as const;
 
@@ -38,11 +40,14 @@ describe('parseMessageLink', () => {
 describe('readRange', () => {
   let discord: FakeDiscordHttp;
   let channel: GuildTextBasedChannel;
+  let requests: RecordedRequest[];
 
   beforeEach(async () => {
     discord = new FakeDiscordHttp();
     addMoveFixtures(discord);
-    const { client } = await createNativeTestClient(discord);
+    const native = await createNativeTestClient(discord);
+    const { client } = native;
+    requests = native.requests;
     channel = (await client.channels.fetch(SOURCE)) as GuildTextBasedChannel;
   });
 
@@ -83,5 +88,38 @@ describe('readRange', () => {
     for (const [from, to] of [[missing, null], [missing, ids[4]!], [ids[0]!, missing], [ids[0]!, String(BigInt(ids[4]!) + 1_000_000n)]] as const) {
       await expect(readRange(channel, from, to)).rejects.toThrow("That message doesn't exist.");
     }
+  });
+
+  const pagesRead = () => requests.filter((request) => request.method === 'GET' && request.path.endsWith(`/channels/${SOURCE}/messages`)).length;
+
+  it('stops reading once the cap is exceeded', async () => {
+    const ids = fill(1000);
+    await readRange(channel, ids[0]!, ids[999]!).catch(() => undefined);
+    expect(pagesRead()).toBe(3);
+  });
+
+  it('stops reading after the end of the range', async () => {
+    const ids = fill(1000);
+    expect(await idsOf(ids[10]!, ids[40]!)).toHaveLength(31);
+    expect(pagesRead()).toBe(1);
+  });
+});
+
+describe('addHistory', () => {
+  it('keeps ids increasing across calls', () => {
+    const discord = new FakeDiscordHttp();
+    addMoveFixtures(discord);
+    const all = [...addHistory(discord, SOURCE, [{}, {}, {}]), ...addHistory(discord, SOURCE, [{}, {}]), ...addHistory(discord, SOURCE, [{}])];
+    expect(sortedAscending(all)).toBe(true);
+  });
+
+  it('puts old messages first and rejects an old one after a fresh one', () => {
+    const discord = new FakeDiscordHttp();
+    addMoveFixtures(discord);
+    const first = addHistory(discord, SOURCE, [{ old: true }, { old: true }, {}, {}]);
+    const second = addHistory(discord, SOURCE, [{ old: true }, {}]);
+    expect(sortedAscending(first)).toBe(true);
+    expect(BigInt(second[0]!)).toBeLessThan(BigInt(first[2]!));
+    expect(() => addHistory(discord, SOURCE, [{}, { old: true }])).toThrow('old messages must come before');
   });
 });

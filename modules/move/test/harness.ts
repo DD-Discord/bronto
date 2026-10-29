@@ -133,27 +133,38 @@ export interface HistorySpec {
   [option: string]: unknown;
 }
 
-const DISCORD_EPOCH = 1420070400000n;
+const DISCORD_EPOCH = 1420070400000;
 let sequence = 0n;
+let lastFresh = 0;
+let lastOld = 0;
 
-/** A snowflake for the given time that sorts after every earlier one from this helper. */
-function snowflake(time: number, offset: number): string {
-  return String(((BigInt(time) - DISCORD_EPOCH + BigInt(offset)) << 22n) + (sequence++ % 4096n));
+/** A snowflake for the given time (ms) with a unique sequence part. */
+function snowflake(time: number): string {
+  return String((BigInt(time - DISCORD_EPOCH) << 22n) + (sequence++ % 4096n));
 }
 
 /**
- * Adds messages to a channel with increasing snowflakes dated from the current time (or 30 days ago for `old`),
- * oldest first, and returns their IDs. Other fields go to `addMessage`.
+ * Adds messages to a channel and returns their IDs. Fresh messages get strictly increasing snowflakes dated about a
+ * minute ago, across calls too. `old` messages are dated 30 days back on a clock of their own, so they sort below
+ * every fresh one; within a call they must therefore come before the fresh ones (a fresh spec followed by an old one
+ * throws). Other fields go to `addMessage`.
  */
 export function addHistory(discord: FakeDiscordHttp, channelId: string, specs: HistorySpec[]): string[] {
   const now = Date.now();
   const ids: string[] = [];
-  specs.forEach((spec, index) => {
+  let sawFresh = false;
+  for (const spec of specs) {
     const { old, ...options } = spec;
-    const time = old === true ? now - 30 * 86_400_000 : now - 60_000;
-    const id = snowflake(time, index);
-    discord.addMessage(channelId, id, { ...options, timestamp: new Date(time + index).toISOString() } as never);
+    if (old === true && sawFresh) throw new Error('addHistory: old messages must come before fresh ones');
+    let time: number;
+    if (old === true) time = lastOld = Math.max(now - 30 * 86_400_000, lastOld + 1);
+    else {
+      sawFresh = true;
+      time = lastFresh = Math.max(now - 60_000, lastFresh + 1);
+    }
+    const id = snowflake(time);
+    discord.addMessage(channelId, id, { ...options, timestamp: new Date(time).toISOString() } as never);
     ids.push(id);
-  });
+  }
   return ids;
 }
