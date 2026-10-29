@@ -10,6 +10,17 @@ const MAX_LISTED = 50;
 // Discord's limit for message content.
 const MAX_CONTENT = 2000;
 
+/** Whether the channel still exists on Discord; only Unknown Channel counts as gone. */
+export async function channelExists(client: Client, channelId: string): Promise<boolean> {
+  try {
+    await client.channels.fetch(channelId, { force: true });
+    return true;
+  } catch (error) {
+    if (isUnknownChannel(error)) return false;
+    throw error;
+  }
+}
+
 /** Deletes a thread; one that is already gone counts as done. */
 export async function deleteThread(client: Client, threadId: string): Promise<void> {
   try {

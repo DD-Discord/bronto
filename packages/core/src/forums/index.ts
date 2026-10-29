@@ -8,6 +8,7 @@ export {
   type ManagedForumOptions,
 } from './managed-forum.js';
 export {
+  channelExists,
   deleteThread,
   escapeLinkText,
   exportFileName,

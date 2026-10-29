@@ -2,9 +2,27 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DiscordAPIError, type Client } from 'discord.js';
 import { UserError } from '../interactions/errors.js';
 import type { ModalContext } from '../interactions/context.js';
-import { deleteThread, escapeLinkText, exportFileName, importModal, MAX_IMPORT_TEXT, recordList, uploadedJson } from './ui.js';
+import { channelExists, deleteThread, escapeLinkText, exportFileName, importModal, MAX_IMPORT_TEXT, recordList, uploadedJson } from './ui.js';
 
 const clientFetching = (fetch: () => Promise<unknown>) => ({ channels: { fetch } }) as unknown as Client;
+
+describe('channelExists', () => {
+  it('is true when the channel can be fetched', async () => {
+    const fetch = vi.fn().mockResolvedValue({ id: 'c1' });
+    expect(await channelExists(clientFetching(fetch), 'c1')).toBe(true);
+    expect(fetch).toHaveBeenCalledWith('c1', { force: true });
+  });
+
+  it('is false on Unknown Channel', async () => {
+    const unknown = new DiscordAPIError({ code: 10003, message: 'Unknown Channel' }, 10003, 404, 'GET', '/channels/c1', {});
+    expect(await channelExists(clientFetching(() => Promise.reject(unknown)), 'c1')).toBe(false);
+  });
+
+  it('rethrows other errors', async () => {
+    const missing = new DiscordAPIError({ code: 50001, message: 'Missing Access' }, 50001, 403, 'GET', '/channels/c1', {});
+    await expect(channelExists(clientFetching(() => Promise.reject(missing)), 'c1')).rejects.toBe(missing);
+  });
+});
 
 describe('deleteThread', () => {
   it('deletes the thread', async () => {

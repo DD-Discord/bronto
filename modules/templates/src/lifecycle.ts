@@ -11,6 +11,7 @@ export const templateForum = defineManagedForum({
   forumName: 'templates',
   tables: { forums, records: templates },
   wording: { noun: 'template', forumLabel: 'template forum', logKey: 'templateId' },
+  // new-post imports posts, which imports this file: a cycle that is safe because each use happens at call time.
   createFromPost: (ctx, thread) => createFromPost(ctx, thread),
   forgotOne: (ctx, record) => ctx.emit(templatesEvents.deleted, { id: record.id }),
   forgotAll: (ctx, records) => {

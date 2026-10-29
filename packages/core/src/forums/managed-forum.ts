@@ -11,10 +11,10 @@ import {
 import { and, eq, ne, type InferSelectModel } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import type { Tx } from '../db/database.js';
-import { isUnknownChannel } from '../discord/errors.js';
 import { UserError } from '../interactions/errors.js';
 import { gatewayEvent, on, type Listener } from '../runtime/events.js';
 import type { HandlerContext } from '../runtime/types.js';
+import { channelExists as channelExistsOn } from './ui.js';
 
 /** A per-guild table holding the server's one forum; its guild_id needs a unique index. */
 export type ForumTable = PgTable & { guildId: PgColumn; forumChannelId: PgColumn };
@@ -103,13 +103,7 @@ export function defineManagedForum<TRecords extends ForumRecordTable, TAll = und
   }
 
   async function channelExists(ctx: HandlerContext, channelId: string): Promise<boolean> {
-    try {
-      await ctx.client.channels.fetch(channelId, { force: true });
-      return true;
-    } catch (error) {
-      if (isUnknownChannel(error)) return false;
-      throw error;
-    }
+    return channelExistsOn(ctx.client, channelId);
   }
 
   async function ensure(ctx: HandlerContext): Promise<string> {
