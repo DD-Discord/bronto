@@ -137,8 +137,13 @@ export class DiscordState {
     attachment.proxy_url = attachment.url.replace('cdn.discordapp.com', 'media.discordapp.net');
     return attachment;
   }
-  /** Adds a webhook unless its ID exists already; returns the stored webhook, which carries the credentials. */
-  addWebhook(channelId: string, credentials?: WebhookCredentials, options: { applicationId?: string | null; name?: string } = {}): APIWebhook & WebhookCredentials {
+  /**
+   * Adds a webhook unless its ID exists already; returns the stored webhook, which carries the credentials.
+   * The second argument is either existing credentials or the options.
+   */
+  addWebhook(channelId: string, second?: WebhookCredentials | WebhookOptions, third: WebhookOptions = {}): APIWebhook & WebhookCredentials {
+    const credentials = second && 'id' in second ? second : undefined;
+    const options = credentials ? third : (second as WebhookOptions | undefined) ?? third;
     const { id, token } = credentials ?? { id: this.newId(), token: `synthetic-token-${this.nextId}` };
     if (!this.channels.has(channelId)) this.addChannel(channelId, { guildId: this.guildIds[0] ?? '100000000000000001', type: ChannelType.GuildText });
     const channel = this.channels.get(channelId);
@@ -161,6 +166,7 @@ export class DiscordState {
   }
 }
 
+export interface WebhookOptions { applicationId?: string | null; name?: string }
 export interface NewFile { filename: string; data: Buffer | Uint8Array | string; contentType?: string }
 export interface StoredFile { channelId: string; filename: string; contentType: string; data: Buffer }
 

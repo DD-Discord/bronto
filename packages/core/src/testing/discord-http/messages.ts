@@ -25,7 +25,8 @@ export function messageRoutes(state: DiscordState) {
       if (after) page = inChannel.filter(m => BigInt(m.id) > BigInt(after)).slice(-limit);
       else if (before) page = inChannel.filter(m => BigInt(m.id) < BigInt(before)).slice(0, limit);
       else if (around) {
-        const newer = inChannel.filter(m => BigInt(m.id) > BigInt(around)).slice(-Math.floor(limit / 2));
+        const half = Math.floor(limit / 2);
+        const newer = half > 0 ? inChannel.filter(m => BigInt(m.id) > BigInt(around)).slice(-half) : [];
         page = [...newer, ...inChannel.filter(m => BigInt(m.id) <= BigInt(around)).slice(0, limit - newer.length)];
       } else page = inChannel.slice(0, limit);
       return ok(page.map(m => state.present(m)));
@@ -36,8 +37,9 @@ export function messageRoutes(state: DiscordState) {
       const ids = Array.isArray(body.messages) ? body.messages as string[] : [];
       if (ids.length < 2 || ids.length > 100) return error(50035, 400);
       const cutoff = Date.now() - BULK_DELETE_MAX_AGE_MS;
-      if (ids.some(id => state.messages.get(id)?.channel_id !== channelId || snowflakeTime(id) < cutoff)) return error(50034, 400);
-      for (const id of ids) {
+      const present = [...new Set(ids)].filter(id => state.messages.get(id)?.channel_id === channelId);
+      if (present.some(id => snowflakeTime(id) < cutoff)) return error(50034, 400);
+      for (const id of present) {
         state.messages.delete(id);
         state.botDeleted.push(id);
       }

@@ -385,7 +385,27 @@ describe('message listing and bulk delete', () => {
     expect(http.messages.size).toBe(2);
     expect(http.botDeleted).toEqual([]);
     expect(await request('POST', `/channels/${CHANNEL}/messages/bulk-delete`, { messages: [young] })).toMatchObject({ status: 400, json: { code: 50035 } });
-    expect(await request('POST', `/channels/${CHANNEL}/messages/bulk-delete`, { messages: [young, snowflake(5)] })).toMatchObject({ status: 400, json: { code: 50034 } });
+  });
+
+  it('ignores unknown and foreign ids and deletes duplicates once', async () => {
+    const { http, request } = setup();
+    const [a, b] = [3000, 2000].map(snowflake) as [string, string];
+    const foreign = snowflake(1000);
+    http.addMessage(CHANNEL, a); http.addMessage(CHANNEL, b); http.addMessage(OTHER, foreign);
+    expect(await request('POST', `/channels/${CHANNEL}/messages/bulk-delete`, { messages: [a, a, snowflake(5), foreign] })).toMatchObject({ status: 204 });
+    expect(http.botDeleted).toEqual([a]);
+    expect([...http.messages.keys()].sort()).toEqual([b, foreign].sort());
+  });
+
+  it('lists messages around an id', async () => {
+    const { http, request } = setup();
+    const all = [5000, 4000, 3000, 2000, 1000].map(snowflake) as [string, string, string, string, string];
+    for (const id of all) http.addMessage(CHANNEL, id);
+    const [a, b, c, d, e] = all;
+    const around = async (limit: number) => ids(await request('GET', `/channels/${CHANNEL}/messages`, undefined, `?around=${c}&limit=${limit}`));
+    expect(await around(1)).toEqual([c]);
+    expect(await around(3)).toEqual([d, c, b]);
+    expect(await around(5)).toEqual([e, d, c, b, a]);
   });
 });
 
@@ -398,8 +418,9 @@ describe('webhook listing and sends', () => {
 
   it("lists a channel's webhooks", async () => {
     const http = setup();
-    const own = http.addWebhook(CHANNEL, undefined, { name: 'Move' });
+    const own = http.addWebhook(CHANNEL, { name: 'Move' });
     http.addWebhook(CHANNEL, undefined, { name: 'Foreign', applicationId: null });
+    http.addWebhook(OTHER, { name: 'Sticky', applicationId: '100000000000000999' });
     http.addWebhook(OTHER);
     expect(http.addWebhook(CHANNEL, own)).toMatchObject({ id: own.id, name: 'Move' });
     const answer = await http.answer({ method: 'GET', path: `/channels/${CHANNEL}/webhooks`, query: '', body: undefined, authorized: true });
