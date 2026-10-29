@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { rejection, type CheckedMessage, type MediaProblem } from './check.js';
 import type { MediaonlyConfig } from './config.js';
 import { rules, type Rule } from './db/schema.js';
+import { mediaonlyGates } from './gates.js';
 import { dmMessage, noticeText, reportMessage, type ReportNote } from './messages.js';
 import type { RuleIndex } from './rule-index.js';
 
@@ -34,6 +35,16 @@ export class Enforcer {
     if (found === null) return;
     const { rule, problem } = found;
     const { channelId } = message;
+    const verdict = await ctx.check(mediaonlyGates.removing, {
+      channelId,
+      messageId: message.id,
+      webhookId: message.webhookId,
+      authorId: message.author.id,
+    });
+    if (!verdict.allowed) {
+      ctx.log.debug({ channelId, messageId: message.id, reasons: verdict.reasons }, 'Another module keeps the post');
+      return;
+    }
     const outcome = await deleteMessage(ctx.client, channelId, message.id);
     if (outcome === 'gone') return;
 

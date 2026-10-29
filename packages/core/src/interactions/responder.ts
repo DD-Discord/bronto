@@ -48,7 +48,7 @@ export interface ResponseTarget {
   showModal?(modal: ModalPayload): Promise<unknown>;
 }
 
-type State = 'open' | 'deferred' | 'deferredUpdate' | 'answered';
+type State = 'open' | 'deferred' | 'deferredUpdate' | 'updated' | 'answered';
 
 // Content can come from users (names, notes), so nothing pings unless the reply names who may be pinged.
 function mentions(message: ReplyMessage): InteractionEditReplyOptions['allowedMentions'] {
@@ -131,19 +131,19 @@ export class Responder {
     });
   }
 
-  /** Replaces the message the component is on; the first answer, or the one after `deferUpdate`. */
+  /** Replaces the message the component is on; the first answer, after `deferUpdate`, or again after an update. */
   update(reply: Reply): Promise<void> {
     return this.enqueue(async () => {
       const options = editBody(toMessage(reply));
       if (this.state === 'open') {
         if (this.target.update === undefined) throw new Error('This interaction cannot update its message.');
         await this.target.update(options as InteractionUpdateOptions);
-      } else if (this.state === 'deferredUpdate') {
+      } else if (this.state === 'deferredUpdate' || this.state === 'updated') {
         await this.target.editReply(options);
       } else {
         throw new Error('update must be the first answer or follow deferUpdate.');
       }
-      this.state = 'answered';
+      this.state = 'updated';
     });
   }
 
@@ -169,7 +169,7 @@ export class Responder {
   /** Makes sure Discord got an answer after the handler finished. */
   finish(): Promise<void> {
     return this.enqueue(async () => {
-      if (this.state === 'answered' || this.state === 'deferredUpdate') return;
+      if (this.state === 'answered' || this.state === 'deferredUpdate' || this.state === 'updated') return;
       await this.answerPrivately(DONE);
     });
   }

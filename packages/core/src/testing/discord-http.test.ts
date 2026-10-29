@@ -306,3 +306,145 @@ describe('webhook components', () => {
     expect(await request('PATCH', `${path}/messages/${id}`, { components: [] })).toMatchObject({ json: { components: [] } });
   });
 });
+
+describe('message listing and bulk delete', () => {
+  const snowflake = (ageMs: number): string => String((BigInt(Date.now() - ageMs) - 1420070400000n) << 22n);
+  const setup = () => {
+    const http = new FakeDiscordHttp();
+    http.addGuild(GUILD); http.addChannel(CHANNEL, { guildId: GUILD, type: ChannelType.GuildText });
+    const request = (method: string, path: string, body?: unknown, query = '') => http.answer({ method, path, query, body, authorized: true });
+    return { http, request };
+  };
+  const ids = (answer: { json?: unknown }) => (answer.json as { id: string }[]).map(message => message.id);
+
+  it('lists messages after an id oldest-last, limited', async () => {
+    const { http, request } = setup();
+    const all = [4000, 3000, 2000, 1000, 500].map(snowflake);
+    for (const id of all) http.addMessage(CHANNEL, id);
+    http.addMessage(OTHER, snowflake(10));
+    const [a, b, c, d, e] = all as [string, string, string, string, string];
+    expect(ids(await request('GET', `/channels/${CHANNEL}/messages`, undefined, `?after=${a}&limit=3`))).toEqual([d, c, b]);
+    expect(ids(await request('GET', `/channels/${CHANNEL}/messages`, undefined, `?after=${a}`))).toEqual([e, d, c, b]);
+    expect(ids(await request('GET', `/channels/${CHANNEL}/messages`, undefined, `?before=${e}&limit=2`))).toEqual([d, c]);
+    expect(ids(await request('GET', `/channels/${CHANNEL}/messages`, undefined, '?limit=1'))).toEqual([e]);
+    expect(await request('GET', `/channels/${CHANNEL}/messages`, undefined, '?limit=101')).toMatchObject({ status: 400, json: { code: 50035 } });
+    expect(await request('GET', '/channels/100000000000000404/messages')).toMatchObject({ status: 404, json: { code: 10003 } });
+  });
+
+  it('serves reactions, replies, polls, stickers, threads and forwards in a form discord.js parses', async () => {
+    const { http } = setup();
+    const original = snowflake(3000);
+    const reply = snowflake(2000);
+    const forward = snowflake(1000);
+    http.addMessage(CHANNEL, original, { content: 'first', threadId: original });
+    http.addMessage(CHANNEL, reply, {
+      referenceId: original, poll: true, flags: 4, components: [{ type: 1, components: [] }],
+      reactions: [{ emoji: { id: null, name: '\u{1F44D}' }, count: 2 }],
+      stickers: [{ id: '100000000000000300', name: 'wave', format: 1 }],
+    });
+    http.addMessage(CHANNEL, forward, { snapshots: [{ content: 'inner', files: [{ filename: 'a.txt', data: 'abc' }] }] });
+    const { client } = await createNativeTestClient(http);
+    try {
+      const channel = await client.channels.fetch(CHANNEL);
+      if (!channel?.isTextBased()) throw new Error('text channel expected');
+      const fetched = [...(await channel.messages.fetch({ after: snowflake(5000), limit: 10 })).values()];
+      expect(fetched.map(message => message.id)).toEqual([forward, reply, original].sort().reverse());
+      const [f, r, o] = [forward, reply, original].map(id => fetched.find(message => message.id === id)!);
+      expect(o!.thread?.id).toBe(original);
+      expect(r!.reference?.messageId).toBe(original);
+      expect(r!.type).toBe(19);
+      expect((await r!.fetchReference()).content).toBe('first');
+      expect(r!.poll).not.toBeNull();
+      expect(r!.flags.bitfield).toBe(4);
+      expect(r!.components).toHaveLength(1);
+      expect(r!.reactions.cache.first()).toMatchObject({ count: 2 });
+      // Message sticker items carry no guild, as on Discord.
+      expect(r!.stickers.first()).toMatchObject({ name: 'wave', guildId: null });
+      expect(f!.reference?.type).toBe(1);
+      expect(f!.messageSnapshots.first()?.content).toBe('inner');
+      expect(f!.messageSnapshots.first()?.attachments.first()?.name).toBe('a.txt');
+    } finally {
+      await client.destroy();
+    }
+  });
+
+  it('bulk deletes young messages', async () => {
+    const { http, request } = setup();
+    const [a, b, c] = [3000, 2000, 1000].map(snowflake) as [string, string, string];
+    for (const id of [a, b, c]) http.addMessage(CHANNEL, id);
+    expect(await request('POST', `/channels/${CHANNEL}/messages/bulk-delete`, { messages: [a, b] })).toMatchObject({ status: 204 });
+    expect([...http.messages.keys()]).toEqual([c]);
+    expect(http.botDeleted).toEqual([a, b]);
+  });
+
+  it('rejects a bulk delete with an old message (50034)', async () => {
+    const { http, request } = setup();
+    const young = snowflake(1000);
+    const old = snowflake(15 * 24 * 3600_000);
+    http.addMessage(CHANNEL, young); http.addMessage(CHANNEL, old);
+    expect(await request('POST', `/channels/${CHANNEL}/messages/bulk-delete`, { messages: [young, old] })).toMatchObject({ status: 400, json: { code: 50034 } });
+    expect(http.messages.size).toBe(2);
+    expect(http.botDeleted).toEqual([]);
+    expect(await request('POST', `/channels/${CHANNEL}/messages/bulk-delete`, { messages: [young] })).toMatchObject({ status: 400, json: { code: 50035 } });
+  });
+
+  it('ignores unknown and foreign ids and deletes duplicates once', async () => {
+    const { http, request } = setup();
+    const [a, b] = [3000, 2000].map(snowflake) as [string, string];
+    const foreign = snowflake(1000);
+    http.addMessage(CHANNEL, a); http.addMessage(CHANNEL, b); http.addMessage(OTHER, foreign);
+    expect(await request('POST', `/channels/${CHANNEL}/messages/bulk-delete`, { messages: [a, a, snowflake(5), foreign] })).toMatchObject({ status: 204 });
+    expect(http.botDeleted).toEqual([a]);
+    expect([...http.messages.keys()].sort()).toEqual([b, foreign].sort());
+  });
+
+  it('lists messages around an id', async () => {
+    const { http, request } = setup();
+    const all = [5000, 4000, 3000, 2000, 1000].map(snowflake) as [string, string, string, string, string];
+    for (const id of all) http.addMessage(CHANNEL, id);
+    const [a, b, c, d, e] = all;
+    const around = async (limit: number) => ids(await request('GET', `/channels/${CHANNEL}/messages`, undefined, `?around=${c}&limit=${limit}`));
+    expect(await around(1)).toEqual([c]);
+    expect(await around(3)).toEqual([d, c, b]);
+    expect(await around(5)).toEqual([e, d, c, b, a]);
+  });
+});
+
+describe('webhook listing and sends', () => {
+  const setup = () => {
+    const http = new FakeDiscordHttp();
+    http.addGuild(GUILD); http.addChannel(CHANNEL, { guildId: GUILD, type: ChannelType.GuildText });
+    return http;
+  };
+
+  it("lists a channel's webhooks", async () => {
+    const http = setup();
+    const own = http.addWebhook(CHANNEL, { name: 'Move' });
+    http.addWebhook(CHANNEL, undefined, { name: 'Foreign', applicationId: null });
+    http.addWebhook(OTHER, { name: 'Sticky', applicationId: '100000000000000999' });
+    http.addWebhook(OTHER);
+    expect(http.addWebhook(CHANNEL, own)).toMatchObject({ id: own.id, name: 'Move' });
+    const answer = await http.answer({ method: 'GET', path: `/channels/${CHANNEL}/webhooks`, query: '', body: undefined, authorized: true });
+    expect((answer.json as { name: string; application_id: string | null }[]).map(w => [w.name, w.application_id]))
+      .toEqual([['Move', http.applicationId], ['Foreign', null]]);
+    expect(await http.answer({ method: 'GET', path: '/channels/100000000000000404/webhooks', query: '', body: undefined, authorized: true }))
+      .toMatchObject({ status: 404, json: { code: 10003 } });
+  });
+
+  it('records files, flags and allowed mentions of webhook sends', async () => {
+    const http = setup();
+    const webhook = http.addWebhook(CHANNEL);
+    const form = new FormData();
+    form.set('payload_json', JSON.stringify({
+      content: 'x', flags: 4096, allowed_mentions: { parse: [] }, attachments: [{ id: 0, filename: 'a.png', description: 'alt' }],
+    }));
+    form.set('files[0]', new File(['abcd'], 'a.png', { type: 'image/png' }));
+    await http.answer({ method: 'POST', path: `/webhooks/${webhook.id}/${webhook.token}`, query: '', body: form, authorized: false });
+    await http.answer({ method: 'POST', path: `/webhooks/${webhook.id}/${webhook.token}`, query: '', body: { content: 'y' }, authorized: false });
+    expect(http.sent[0]).toMatchObject({
+      options: { silent: true, flags: 4096, allowedMentions: { parse: [] } },
+      files: [{ name: 'a.png', description: 'alt', size: 4 }],
+    });
+    expect(http.sent[1]).toMatchObject({ options: { silent: false, flags: 0, allowedMentions: undefined }, files: [] });
+  });
+});

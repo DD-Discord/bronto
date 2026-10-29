@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { ChannelType, PermissionFlagsBits, type MessageFlags, type APIAttachment, type APIChannel, type APIEmbed, type APIGuild, type APIGuildMember, type APIOverwrite, type APIRole, type APIMessage, type APIUser, type APIWebhook } from 'discord.js';
+import { ChannelType, MessageType, PermissionFlagsBits, type MessageFlags, type APIAttachment, type APIChannel, type APIEmbed, type APIGuild, type APIGuildMember, type APIOverwrite, type APIRole, type APIMessage, type APIUser, type APIWebhook } from 'discord.js';
 import type { WebhookMessage, WebhookSendOptions, WebhookTarget, WebhookCredentials } from '../../webhooks/types.js';
 
 /** What @everyone may do in a new guild: read and write in channels and threads. */
@@ -15,7 +15,7 @@ export class DiscordState {
   readonly messages = new Map<string, APIMessage>();
   readonly webhooks = new Map<string, APIWebhook>();
   readonly commands = new Map<string, unknown>();
-  readonly sent: { id: string; webhookId: string; channelId: string; threadId: string | null; message: { content: string; embeds: APIEmbed[] }; options: { silent: boolean; username?: string; avatarUrl?: string }; startedAt: number }[] = [];
+  readonly sent: { id: string; webhookId: string; channelId: string; threadId: string | null; message: { content: string; embeds: APIEmbed[] }; options: { silent: boolean; flags: number; allowedMentions: unknown; username?: string; avatarUrl?: string }; files: { name: string; description?: string; size: number }[]; startedAt: number }[] = [];
   readonly reports: { target: WebhookTarget; message: WebhookMessage; options: WebhookSendOptions }[] = [];
   readonly dms: { userId: string; message: WebhookMessage }[] = [];
   readonly deleted: string[] = [];
@@ -58,11 +58,41 @@ export class DiscordState {
   addChannel(id: string, options: { guildId: string; type: ChannelType; parentId?: string | null; name?: string; ownerId?: string; permissionOverwrites?: APIOverwrite[]; archived?: boolean; locked?: boolean; extra?: Record<string, unknown> }): void {
     this.channels.set(id, { id, guild_id: options.guildId, type: options.type, parent_id: options.parentId ?? null, name: options.name ?? 'synthetic-channel', position: 0, permission_overwrites: options.permissionOverwrites ?? [], owner_id: options.ownerId ?? this.botId, thread_metadata: { archived: options.archived ?? false, locked: options.locked ?? false, auto_archive_duration: 60, archive_timestamp: '2026-01-01T00:00:00Z' }, ...(options.type === ChannelType.GuildForum ? { available_tags: [], default_auto_archive_duration: 1440, flags: 0 } : {}), ...options.extra } as APIChannel);
   }
-  addMessage(channelId: string, id: string, options: { content?: string; authorId?: string; webhookId?: string | null; embeds?: APIEmbed[]; attachmentCount?: number; files?: NewFile[] } = {}): void {
+  /**
+   * Adds a message. `referenceId` makes it a reply, `snapshots` a forward, `threadId` attaches the thread it started,
+   * and `poll` a one-answer poll. Snapshots take the same embed, sticker, component and poll fields.
+   */
+  addMessage(channelId: string, id: string, options: {
+    content?: string; authorId?: string; webhookId?: string | null; embeds?: APIEmbed[]; attachmentCount?: number; files?: NewFile[];
+    reactions?: { emoji: { id: string | null; name: string }; count: number }[]; referenceId?: string; poll?: boolean;
+    stickers?: { id: string; name: string; format: number }[]; components?: unknown[]; flags?: number;
+    type?: MessageType; snapshots?: SnapshotSpec[]; threadId?: string; timestamp?: string;
+  } = {}): void {
     const authorId = options.authorId ?? this.botId;
     if (!this.users.has(authorId)) this.addUser(authorId);
-    this.messages.set(id, { id, channel_id: channelId, author: this.users.get(authorId)!, content: options.content ?? '', timestamp: '2026-03-01T12:00:00Z', edited_timestamp: null, tts: false, mention_everyone: false, mentions: [], mention_roles: [], attachments: Array.from({ length: options.attachmentCount ?? 0 }, (_, i) => ({ id: String(i), filename: 'synthetic.txt', size: 0, url: 'https://example.test/file', proxy_url: 'https://example.test/file' })), embeds: options.embeds ?? [], pinned: false, type: 0, flags: 0 as MessageFlags, ...(options.webhookId ? { webhook_id: options.webhookId } : {}) } as APIMessage);
-    for (const file of options.files ?? []) this.messages.get(id)!.attachments.push(this.addFile(channelId, file));
+    const timestamp = options.timestamp ?? '2026-03-01T12:00:00Z';
+    const message = { id, channel_id: channelId, author: this.users.get(authorId)!, content: options.content ?? '', timestamp, edited_timestamp: null, tts: false, mention_everyone: false, mentions: [], mention_roles: [], attachments: Array.from({ length: options.attachmentCount ?? 0 }, (_, i) => ({ id: String(i), filename: 'synthetic.txt', size: 0, url: 'https://example.test/file', proxy_url: 'https://example.test/file' })), embeds: options.embeds ?? [], pinned: false, type: options.type ?? (options.referenceId ? MessageType.Reply : MessageType.Default), flags: (options.flags ?? 0) as MessageFlags, ...(options.webhookId ? { webhook_id: options.webhookId } : {}) } as APIMessage;
+    const extra: Record<string, unknown> = {};
+    const guildId = this.guildOf(channelId);
+    if (options.reactions) extra.reactions = options.reactions.map(({ emoji, count }) => ({ emoji, count, count_details: { burst: 0, normal: count }, me: false, me_burst: false, burst_colors: [] }));
+    if (options.referenceId) extra.message_reference = { type: 0, message_id: options.referenceId, channel_id: channelId, guild_id: guildId };
+    Object.assign(extra, contentExtras(options));
+    if (options.snapshots) {
+      extra.message_reference = { type: 1, message_id: this.newId(), channel_id: channelId, guild_id: guildId };
+      extra.message_snapshots = options.snapshots.map((snapshot) => ({
+        message: {
+          type: MessageType.Default, content: snapshot.content, embeds: snapshot.embeds ?? [], attachments: (snapshot.files ?? []).map((file) => this.addFile(channelId, file)),
+          timestamp, edited_timestamp: null, flags: snapshot.flags ?? 0, mentions: [], mention_roles: [], ...contentExtras(snapshot),
+        },
+      }));
+    }
+    if (options.threadId) extra.thread = this.channels.get(options.threadId) ?? { id: options.threadId, guild_id: guildId, parent_id: channelId, type: ChannelType.PublicThread, name: 'synthetic-thread', owner_id: this.botId, thread_metadata: { archived: false, locked: false, auto_archive_duration: 60, archive_timestamp: timestamp } };
+    this.messages.set(id, Object.assign(message, extra));
+    for (const file of options.files ?? []) message.attachments.push(this.addFile(channelId, file));
+  }
+  private guildOf(channelId: string): string | undefined {
+    const channel = this.channels.get(channelId);
+    return channel && 'guild_id' in channel ? channel.guild_id : undefined;
   }
   /** Stores attachment bytes for the fake CDN and returns the attachment object. */
   addFile(channelId: string, file: NewFile): APIAttachment {
@@ -75,7 +105,7 @@ export class DiscordState {
    * The message as Discord serves it: attachment URLs signed afresh, and attachments an embed shows through
    * `attachment://<name>` moved out of `attachments` into that embed URL. The stored message keeps the references.
    */
-  present<T extends APIMessage>(message: T): T {
+  present<T extends APIMessage>(message: T, withReference = true): T {
     for (const attachment of message.attachments) if (this.files.has(attachment.id)) this.signAttachment(attachment, message.channel_id);
     const shown = new Set<string>();
     const resolve = (url: string | undefined): string | undefined => {
@@ -93,7 +123,12 @@ export class DiscordState {
       if (copy.footer?.icon_url) copy.footer.icon_url = resolve(copy.footer.icon_url);
       return copy;
     });
-    return { ...message, embeds, attachments: message.attachments.filter((attachment) => !shown.has(attachment.id)) };
+    const reference = message.message_reference;
+    const replied = withReference && reference?.type !== 1 && reference?.message_id ? this.messages.get(reference.message_id) : undefined;
+    return {
+      ...message, embeds, attachments: message.attachments.filter((attachment) => !shown.has(attachment.id)),
+      ...(withReference && reference?.type !== 1 && reference?.message_id ? { referenced_message: replied ? this.present(replied, false) : null } : {}),
+    };
   }
   private signAttachment(attachment: APIAttachment, channelId: string): APIAttachment {
     const issued = Math.floor(Date.now() / 1000);
@@ -103,12 +138,18 @@ export class DiscordState {
     attachment.proxy_url = attachment.url.replace('cdn.discordapp.com', 'media.discordapp.net');
     return attachment;
   }
-  addWebhook(channelId: string, credentials?: WebhookCredentials, options: { applicationId?: string | null } = {}): WebhookCredentials {
+  /**
+   * Adds a webhook unless its ID exists already; returns the stored webhook, which carries the credentials.
+   * The second argument is either existing credentials or the options.
+   */
+  addWebhook(channelId: string, second?: WebhookCredentials | WebhookOptions, third: WebhookOptions = {}): APIWebhook & WebhookCredentials {
+    const credentials = second && 'id' in second ? second : undefined;
+    const options = credentials ? third : (second as WebhookOptions | undefined) ?? third;
     const { id, token } = credentials ?? { id: this.newId(), token: `synthetic-token-${this.nextId}` };
     if (!this.channels.has(channelId)) this.addChannel(channelId, { guildId: this.guildIds[0] ?? '100000000000000001', type: ChannelType.GuildText });
     const channel = this.channels.get(channelId);
-    this.webhooks.set(id, { id, token, type: 1, name: 'Synthetic webhook', avatar: null, channel_id: channelId, guild_id: channel && 'guild_id' in channel ? channel.guild_id : this.guildIds[0], application_id: 'applicationId' in options ? options.applicationId : this.applicationId } as APIWebhook);
-    return { id, token };
+    if (!this.webhooks.has(id)) this.webhooks.set(id, { id, token, type: 1, name: options.name ?? 'Synthetic webhook', avatar: null, channel_id: channelId, guild_id: channel && 'guild_id' in channel ? channel.guild_id : this.guildIds[0], application_id: 'applicationId' in options ? options.applicationId : this.applicationId } as APIWebhook);
+    return this.webhooks.get(id)! as APIWebhook & WebhookCredentials;
   }
   removeWebhook(id: string): void { this.webhooks.delete(id); }
   liveMessages(channelId?: string): string[] { return [...this.messages.values()].filter(m => !this.templates.has(m.id) && (channelId === undefined || m.channel_id === channelId)).map(m => m.id); }
@@ -126,6 +167,21 @@ export class DiscordState {
   }
 }
 
+/** What a forwarded message carries in the fake. */
+export interface SnapshotSpec {
+  content: string; files?: NewFile[]; embeds?: APIEmbed[]; stickers?: { id: string; name: string; format: number }[]; components?: unknown[]; poll?: boolean; flags?: number;
+}
+
+/** The poll, sticker and component fields of a message or snapshot as Discord serves them. */
+function contentExtras(options: { poll?: boolean; stickers?: { id: string; name: string; format: number }[]; components?: unknown[] }): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
+  if (options.poll) extra.poll = { question: { text: 'Synthetic poll' }, answers: [{ answer_id: 1, poll_media: { text: 'Yes' } }], expiry: null, allow_multiselect: false, layout_type: 1 };
+  if (options.stickers) extra.sticker_items = options.stickers.map(({ id: stickerId, name, format }) => ({ id: stickerId, name, format_type: format }));
+  if (options.components) extra.components = options.components;
+  return extra;
+}
+
+export interface WebhookOptions { applicationId?: string | null; name?: string }
 export interface NewFile { filename: string; data: Buffer | Uint8Array | string; contentType?: string }
 export interface StoredFile { channelId: string; filename: string; contentType: string; data: Buffer }
 

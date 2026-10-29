@@ -26,6 +26,7 @@ picks the modules it loads in its `config.yaml`.
 - [`@bronto/autoreact`](modules/autoreact/README.md): adds fixed emoji reactions to every post in a channel or thread.
 - [`@bronto/autothread`](modules/autothread/README.md): opens a thread for every post in a channel, with an optional first message.
 - [`@bronto/mediaonly`](modules/mediaonly/README.md): removes posts without an attachment or link from a channel, tells the poster and reports it.
+- [`@bronto/move`](modules/move/README.md): moves a range of messages to another channel or thread with their authors, files and reactions.
 - [`examples/notes`](examples/notes): a small example module showing commands, CRUD, buttons and modals.
 
 ## Development

@@ -156,6 +156,28 @@ describe('Responder', () => {
     await expect(deferred.responder.update('new')).rejects.toThrow('update must be the first answer');
   });
 
+  it('edits the message again on a second update', async () => {
+    const { fake, responder: r } = responder();
+    await r.update('a');
+    await r.update('b');
+    expect(kinds(fake)).toEqual(['update', 'editReply']);
+    expect(fake.responses[1]!.payload).toEqual({ content: 'b', allowedMentions: NO_PINGS });
+  });
+
+  it('edits again after deferUpdate and update', async () => {
+    const { fake, responder: r } = responder();
+    await r.deferUpdate();
+    await r.update('a');
+    await r.update('b');
+    expect(kinds(fake)).toEqual(['deferUpdate', 'editReply', 'editReply']);
+  });
+
+  it('still refuses update after a reply', async () => {
+    const { responder: r } = responder();
+    await r.send('x');
+    await expect(r.update('y')).rejects.toThrow('update must be the first answer or follow deferUpdate.');
+  });
+
   it('does not deferUpdate once answered', async () => {
     const { fake, responder: r } = responder();
     await r.send('hi');
