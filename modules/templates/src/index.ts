@@ -61,3 +61,4 @@ export type { ImageSlot, Template, TemplateImage } from './db/schema.js';
 export { escapeLinkText } from './commands.js';
 export { templatesEvents, templatesGates } from './events.js';
 export { fillPlaceholders, postPlaceholders, TIMESTAMP_PLACEHOLDERS } from './placeholders.js';
+export { suggestTemplates } from './autocomplete.js';

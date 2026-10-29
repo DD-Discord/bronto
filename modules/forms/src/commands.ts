@@ -1,9 +1,10 @@
 import { defineCommand, defineSubcommand, opt, UserError, type CommandDefinition } from '@bronto/core';
+import { suggestTemplates } from '@bronto/templates';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import type { FormsContext } from './context.js';
 import { forms } from './db/schema.js';
 import { channelExists, ensureForum, storedForumId } from './forum.js';
-import { buttonsMessage, postOpener, suggestForms, suggestTemplates } from './post.js';
+import { buttonsMessage, postOpener, suggestForms } from './post.js';
 
 const MAX_LISTED = 50;
 const OPENER_CHANNEL_TYPES = [

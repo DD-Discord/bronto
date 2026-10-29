@@ -32,13 +32,6 @@ export const suggestForms: Autocomplete = async (ctx, query) => {
   return rows.map((row) => ({ name: clip(row.name, 100), value: row.id }));
 };
 
-/** Templates whose name contains the query, as `name · created date` (UTC). */
-export const suggestTemplates: Autocomplete = async (ctx, query) =>
-  (await ctx.modules.get(templates).search(query)).map((template) => ({
-    name: `${template.name} · ${template.createdAt.toISOString().slice(0, 10)}`,
-    value: template.id,
-  }));
-
 async function findForm(ctx: FormsContext, value: string): Promise<Form> {
   const [form] = await ctx.db.run(async (tx) =>
     tx.select().from(forms).where(UUID.test(value) ? eq(forms.id, value) : eq(sql`lower(${forms.name})`, value.toLowerCase())).limit(1),
