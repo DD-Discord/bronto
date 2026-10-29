@@ -1,4 +1,5 @@
 import { defineModule } from '@bronto/core';
+import { eq } from 'drizzle-orm';
 import { FakeDiscordHttp } from '@bronto/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../packages/core/test/test-db.js';
@@ -29,7 +30,7 @@ describe('suggestTemplates', () => {
   it('lists matching templates with their date', async () => {
     const { id } = await inHandler(tb, (ctx) => templatesApi(ctx).create({ name: 'welcome', content: 'Hi', embed: null }));
     await inHandler(tb, (ctx) => templatesApi(ctx).create({ name: 'rules', content: 'Hi', embed: null }));
-    const [row] = await templatesDb(t).run(async (tx) => tx.select().from(templates));
+    const [row] = await templatesDb(t).run(async (tx) => tx.select().from(templates).where(eq(templates.id, id)));
     const runtime = tb.bot.runtimes.find((entry) => entry.name === 'consumer')!;
     let choices: unknown;
     const outcome = await tb.bot.dispatcher.runHandler(runtime, GUILD, null, 'test', async (ctx) => {

@@ -51,7 +51,6 @@ export default createTemplatesModule();
 export type { TemplatesApi } from './api.js';
 export type { TemplateMessage } from './content.js';
 export type { ImageSlot, Template, TemplateImage } from './db/schema.js';
-export { escapeLinkText } from '@bronto/core';
 export { templatesEvents, templatesGates } from './events.js';
 export { fillPlaceholders, postPlaceholders, TIMESTAMP_PLACEHOLDERS } from './placeholders.js';
 export { suggestTemplates } from './autocomplete.js';

@@ -1,5 +1,5 @@
-import { defineEntity, formatDuration, yesNo } from '@bronto/core';
-import templates, { escapeLinkText } from '@bronto/templates';
+import { defineEntity, escapeLinkText, formatDuration, yesNo } from '@bronto/core';
+import templates from '@bronto/templates';
 import { rules } from './db/schema.js';
 
 export const ruleEntity = defineEntity({

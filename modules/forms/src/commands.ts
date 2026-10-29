@@ -14,6 +14,7 @@ const OPENER_CHANNEL_TYPES = [
   ChannelType.PrivateThread,
   ChannelType.AnnouncementThread,
 ];
+
 /** The reply of `/forms list`: one line per form with its state and a link, cut to fit a message. */
 async function listReply(ctx: FormsContext): Promise<string> {
   const rows = await ctx.db.run(async (tx) =>
