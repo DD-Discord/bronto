@@ -1,0 +1,6 @@
+{
+  "path": ["packages", "modules", "examples"],
+  "format": ["typescript"],
+  "reporters": ["console"],
+  "output": ".jscpd-report"
+}

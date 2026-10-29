@@ -37,6 +37,7 @@ Requirements: Node 24 (22.12+ works), pnpm 12, Docker (integration tests start P
 pnpm install
 pnpm typecheck
 pnpm test
+pnpm dupes   # copy/paste report (jscpd, config in .jscpd.json)
 ```
 
 `examples/notes` is a small module using commands, CRUD, buttons and modals. `config.example.yaml` loads it, so
